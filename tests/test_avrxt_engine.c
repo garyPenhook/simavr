@@ -1372,6 +1372,51 @@ int main(void)
 		#undef ADC_RES
 	}
 
+	printf("== modern ADC0 reference select (CTRLC.REFSEL + VREF) (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t A = 0x600, V = 0x0a0;
+		enum { ENABLE = 0x01, STCONV = 0x01, CTRLC = 0x02 };
+		enum { F_RESRDY = 0x01 };
+		enum { REFSEL_VDD = (1 << 4) };		/* CTRLC.REFSEL = VDD */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		#define ADC_CONVERT() do { \
+			cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY); \
+			cpu_write(m, A + ADCMR_COMMAND, STCONV); \
+			for (int i = 0; i < 4000 && \
+				 !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++) avr_run(m); \
+		} while (0)
+		#define ADC_RES() (cpu_read(m, A + ADCMR_RESL) | \
+						   (cpu_read(m, A + ADCMR_RESH) << 8))
+
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), 0), 550);
+		cpu_write(m, A + ADCMR_MUXPOS, 0);
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);
+
+		/* Default REFSEL=INTREF, internal ref defaults to 3300 mV: 550 -> 170. */
+		ADC_CONVERT();
+		check("INTREF defaults to 3300 mV", ADC_RES(), 170);
+
+		/* Program VREF.ADC0REFSEL=1 (1.1 V): the ADC internal ref follows it, so
+		 * 550 mV -> 550*1024/1100 = 512. */
+		cpu_write(m, V + 0x00, (1 << 4));	/* VREF.CTRLA ADC0REFSEL = 1.1V */
+		ADC_CONVERT();
+		check("INTREF tracks VREF (1.1V) => 512", ADC_RES(), 512);
+
+		/* Switching REFSEL to VDD ignores VREF and uses the 3300 mV supply ref. */
+		cpu_write(m, A + CTRLC, REFSEL_VDD);
+		ADC_CONVERT();
+		check("REFSEL=VDD uses 3300 mV => 170", ADC_RES(), 170);
+
+		#undef ADC_CONVERT
+		#undef ADC_RES
+	}
+
 	printf("== modern SPI0 host (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t S = 0x820;

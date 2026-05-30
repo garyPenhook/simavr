@@ -19,10 +19,14 @@
 	settable millivolt inputs like the pin channels (sim_tiny3217 wires DAC0's
 	output to its ADC channel).
 
-	Not modelled: exact reference selection (CTRLC.REFSEL / the VREF peripheral —
-	a plain settable vref_mv is used instead), event-triggered start, and the
-	temperature-sensor transfer function (the 0x1E channel returns its raw settable
-	input, not a SIGROW-calibrated temperature).
+	The reference is selected by CTRLC.REFSEL: the internal reference (INTREF,
+	driven by the VREF peripheral) or VDD / external VREFA (both modelled by the
+	settable vref_mv). sim_tiny3217 wires VREF.ADC0REFSEL to the ADC internal
+	reference; both references default to 3300 mV until programmed.
+
+	Not modelled: event-triggered start, and the temperature-sensor transfer
+	function (the 0x1E channel returns its raw settable input, not a
+	SIGROW-calibrated temperature).
 
 	Copyright 2026 simavr authors
 
@@ -89,7 +93,8 @@ typedef struct avr_adc_modern_t {
 	avr_int_vector_t	resrdy;	/* ADCn_RESRDY */
 	avr_int_vector_t	wcomp;	/* ADCn_WCOMP (window comparator) */
 
-	uint32_t	vref_mv;	/* reference voltage in mV (default 3300) */
+	uint32_t	vref_mv;	/* VDD / external reference in mV (default 3300) */
+	uint32_t	intref_mv;	/* internal reference (CTRLC.REFSEL=INTREF, from VREF) */
 	uint16_t	chan_mv[AVR_ADCM_CHANNELS];	/* per-channel input (mV) */
 	int			base_irq;	/* global irq number of channel 0 */
 
@@ -113,9 +118,13 @@ avr_adc_modern_init(
 		uint8_t vec_wcomp,
 		char name);
 
-/* Override the modelled reference voltage (millivolts). */
+/* Override the modelled VDD / external reference voltage (millivolts). */
 void
 avr_adc_modern_set_vref(avr_adc_modern_t * p, uint32_t vref_mv);
+
+/* Set the internal reference (CTRLC.REFSEL=INTREF), driven by the VREF block. */
+void
+avr_adc_modern_set_intref(avr_adc_modern_t * p, uint32_t intref_mv);
 
 /* Raise AINn (channel 'n') with a millivolt value to drive that analog input. */
 #define AVR_IOCTL_ADCM_GETIRQ(_name) AVR_IOCTL_DEF('a','d','m',(_name))

@@ -44,6 +44,9 @@
 
 /* CTRLC */
 #define PRESC_gm	0x07
+#define REFSEL_gm	0x30
+#define REFSEL_gp	4
+#define REFSEL_INTREF	0	/* internal reference (VREF); 1=VDD, 2=VREFA */
 
 /* CTRLE */
 #define WINCM_gm	0x07
@@ -91,11 +94,19 @@ static uint32_t adc_channel_mv(avr_adc_modern_t *p)
 	return ch < AVR_ADCM_CHANNELS ? p->chan_mv[ch] : 0;
 }
 
+/* The active reference voltage (mV) per CTRLC.REFSEL. */
+static uint32_t adc_ref_mv(avr_adc_modern_t *p)
+{
+	uint8_t sel = (rd(p->io.avr, p->r_ctrlc) & REFSEL_gm) >> REFSEL_gp;
+	uint32_t ref = (sel == REFSEL_INTREF) ? p->intref_mv : p->vref_mv;
+	return ref ? ref : 3300;
+}
+
 /* One sample of the selected channel, as an 8- or 10-bit code. */
 static uint32_t adc_one_sample(avr_adc_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
-	uint32_t vref = p->vref_mv ? p->vref_mv : 3300;
+	uint32_t vref = adc_ref_mv(p);
 	uint32_t maxc = (rd(avr, p->r_ctrla) & RESSEL_bm) ? 255 : 1023;
 	uint32_t res = (adc_channel_mv(p) * (maxc + 1)) / vref;
 	return res > maxc ? maxc : res;
@@ -278,6 +289,12 @@ avr_adc_modern_set_vref(avr_adc_modern_t * p, uint32_t vref_mv)
 }
 
 void
+avr_adc_modern_set_intref(avr_adc_modern_t * p, uint32_t intref_mv)
+{
+	p->intref_mv = intref_mv;
+}
+
+void
 avr_adc_modern_init(
 		avr_t * avr,
 		avr_adc_modern_t * p,
@@ -302,6 +319,7 @@ avr_adc_modern_init(
 	p->r_winlt = base + ADCMR_WINLTL;
 	p->r_winht = base + ADCMR_WINHTL;
 	p->vref_mv = 3300;
+	p->intref_mv = 3300;	/* until VREF.ADC0REFSEL is programmed */
 
 	/* RESRDY: enabled by INTCTRL.RESRDY(0), flagged in INTFLAGS.RESRDY(0). */
 	p->resrdy.vector = vec_resrdy;

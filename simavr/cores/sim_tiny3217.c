@@ -109,9 +109,8 @@ tiny3217_dac_to_ac(struct avr_irq_t * irq, uint32_t value, void * param)
  * On-chip routing: VREF.CTRLA.DAC0REFSEL selects the internal reference for
  * both DAC0 and AC0 (their reference is always the internal VREF). Push the
  * decoded reference voltage (millivolts) to both whenever firmware programs it.
- * ADC0's reference additionally depends on ADC.CTRLC.REFSEL (internal vs VDD),
- * which the ADC model does not yet distinguish, so AVR_VREF_IRQ_ADC0_MV is left
- * unwired.
+ * VREF.ADC0REFSEL feeds ADC0's internal reference (used when ADC.CTRLC.REFSEL
+ * selects INTREF) and is wired separately below.
  */
 static void
 tiny3217_vref_to_dac_ac(struct avr_irq_t * irq, uint32_t value, void * param)
@@ -120,6 +119,15 @@ tiny3217_vref_to_dac_ac(struct avr_irq_t * irq, uint32_t value, void * param)
 	(void)irq;
 	avr_dac_set_vref(&mcu->dac0, value);
 	avr_ac_set_refs(&mcu->ac0, value, mcu->ac0.dacref_mv);
+}
+
+/* VREF.ADC0REFSEL → ADC0 internal reference (used when CTRLC.REFSEL = INTREF). */
+static void
+tiny3217_vref_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_adc_modern_set_intref(&mcu->adc0, value);
 }
 
 /*
@@ -211,6 +219,9 @@ tiny3217_init(struct avr_t * avr)
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC0_MV),
 			tiny3217_vref_to_dac_ac, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_ADC0_MV),
+			tiny3217_vref_to_adc, mcu);
 
 	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector. */
 	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, '0');

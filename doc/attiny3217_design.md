@@ -636,9 +636,10 @@ presented by raising the matching AINn IRQ (`AVR_IOCTL_ADCM_GETIRQ(name)`).
 - **Window comparator (CTRLE.WINCM):** BELOW / ABOVE / INSIDE / OUTSIDE evaluated
   against WINLT/WINHT after each conversion; a hit sets INTFLAGS.WCMP and raises
   ADC0_WCOMP if enabled. Both flags are W1C; both vectors use `raise_sticky`.
-- **Reference:** `vref_mv` defaults to 3300 mV and is settable via
-  `avr_adc_modern_set_vref()` (the VREF peripheral / CTRLC.REFSEL is not
-  modelled).
+- **Reference (CTRLC.REFSEL):** INTREF uses the internal reference driven by the
+  VREF peripheral (`sim_tiny3217` wires VREF.ADC0REFSEL → `avr_adc_modern_set_intref`);
+  VDD / external VREFA use the settable `vref_mv`. Both default to 3300 mV until
+  programmed, so firmware that leaves the default reference is unaffected.
 - **Sample accumulation (CTRLB.SAMPNUM):** a conversion now accumulates 1..64
   samples — the completion handler takes one sample per per-sample interval and
   sums them, raising RESRDY (and re-arming free-running) only once the whole
@@ -650,9 +651,9 @@ presented by raising the matching AINn IRQ (`AVR_IOCTL_ADCM_GETIRQ(name)`).
   32). `sim_tiny3217` wires DAC0's output IRQ to the ADC's DAC0 channel, so
   firmware can measure the DAC through the ADC.
 
-Deliberate simplifications: exact reference selection (CTRLC.REFSEL) and
-event-triggered start are not modelled; the temperature-sensor channel returns
-its raw settable input rather than a SIGROW-calibrated temperature.
+Deliberate simplifications: event-triggered start is not modelled; the
+temperature-sensor channel returns its raw settable input rather than a
+SIGROW-calibrated temperature.
 
 Verified in `tests/test_avrxt_engine.c` (now 175 checks): AIN IRQ wiring, 10-bit
 result 512 and 8-bit result 128 from 1650 mV against the 3300 mV vref, RESRDY
