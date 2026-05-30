@@ -16,6 +16,52 @@ load multipart HEX files.
 - anyone checking the CV you brag about it will see this paragraph, first.
 ```
 
+Modern AVR (AVRxt) / ATtiny3217 support — *this fork*
+-----------------------------------------------------
+
+This fork adds the first **modern AVR (AVRxt)** core to _simavr_: the
+**ATtiny3217** (tinyAVR® 1-series). Every stock _simavr_ target is a classic
+AVRe/AVRe+ part; the tinyAVR / megaAVR‑0 / AVR‑Dx families use the AVRxt core
+with a completely different, register‑block peripheral architecture, so this
+needed engine work as well as new peripheral models. The full design notes and
+implementation log are in
+[`doc/attiny3217_design.md`](doc/attiny3217_design.md).
+
+**Engine — a "modern AVR" mode (the classic path is left byte‑for‑byte unchanged):**
+* modern addressing model (no `0x20` I/O offset, per‑core SP/SREG, enlarged I/O map)
+* AVRxt instruction timing
+* Configuration Change Protection (CCP) unlock window
+* the **CPUINT** interrupt controller (LVL0/LVL1/NMI, round‑robin), flash mapped
+  into data space, and SLEEP gated by `SLPCTRL`
+
+**Modern peripherals modelled for the ATtiny3217:** CLKCTRL, PORT/VPORT +
+PORTMUX, TCA0, TCB0/1, TCD0, RTC + PIT, USART0, SPI0, TWI0, ADC0, AC0, DAC0,
+NVMCTRL (EEPROM), CCL, EVSYS, WDT, CRCSCAN, SLPCTRL, RSTCTRL.
+
+It loads ordinary `avr-gcc -mmcu=attiny3217` ELF files. A blink, end to end:
+
+```c
+#include <avr/io.h>
+int main(void) {
+    PORTA.DIRSET = PIN0_bm;          // PA0 = output
+    for (;;) {
+        PORTA.OUTTGL = PIN0_bm;      // toggle the LED on PA0
+        for (volatile uint16_t i = 0; i < 300; i++) ;   // delay
+    }
+}
+```
+
+```sh
+avr-gcc -mmcu=attiny3217 -Os -o blink.elf blink.c
+# run it and trace PA0 to a VCD you can open in GTKWave:
+simavr/run_avr -m attiny3217 -f 3333333 \
+    --add-trace 'PA0=portpin@0x0/0x41' -o blink.vcd blink.elf
+```
+
+The modern engine and every peripheral above are covered by
+`tests/test_avrxt_engine.c` (260 self‑checks); run the suite with
+`make -C tests run_tests`.
+
 Installation
 ------------
 On OSX, we recommend using [homebrew](https://brew.sh):
