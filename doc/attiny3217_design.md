@@ -395,9 +395,18 @@ firmware loads and runs end-to-end.
   write then waits on `MCLKSTATUS.OSC20MS` before blinking — exercising both
   CCP-protected writes and the status model.
 
+**TCA added:**
+- **`sim/avr_tca.{c,h}`**: 16-bit TCA timer, Normal mode. Counter on CLK_PER
+  with the CLKSEL prescale (1..1024), overflow at PER (OVF) + wrap, and CMP0/1/2
+  compare-match interrupts; live CNT read; PER resets to 0xFFFF. Split mode and
+  the PWM waveform-pin output are not yet modelled (PWM needs PORTMUX/port
+  override). TCA0 wired with vectors 8/10/11/12.
+- **Verified:** `tests/attiny3217_tca.c` — TCA0 overflow ISR toggles PA3 and a
+  CMP0 compare ISR toggles PA4; the host observes both.
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
-Phase 1), prescaler→frequency in CLKCTRL, TCA, RTC/PIT, NVMCTRL, SPI0/TWI0,
-ADC0, USART RX-path test, and stubs for the rest. See the priority order earlier.
+Phase 1), prescaler→frequency in CLKCTRL, TCA split/PWM modes, RTC/PIT,
+NVMCTRL, SPI0/TWI0, ADC0, USART RX-path test, and stubs for the rest.
 
 ## 9. Files touched (summary)
 
