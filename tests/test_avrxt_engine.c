@@ -35,6 +35,7 @@
 #include "avr_adc_modern.h"
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
+#include "avr_dac.h"
 
 static int failures;
 
@@ -63,6 +64,14 @@ static void spi_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
 {
 	(void)irq; (void)param;
 	g_spi_out = value & 0xff;
+}
+
+/* Captures the DAC output (millivolts, full width). */
+static uint32_t g_dac_out;
+static void dac_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq; (void)param;
+	g_dac_out = value;
 }
 
 static void check(const char *what, long got, long want)
@@ -1355,6 +1364,73 @@ int main(void)
 		check("STATE 1 vs VREF (2000 > 1100)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
 		avr_raise_irq(ainp0, 800);			/* 800 < 1100 */
 		check("STATE 0 vs VREF (800 < 1100)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+	}
+
+	printf("== modern DAC0 (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t D = 0x6a0;
+		enum { ENABLE = 0x01 };
+		/* default vref = 1100 mV; out = DATA * 1100 / 256. */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		g_dac_out = 0xffffffff;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
+			dac_capture_hook, NULL);
+
+		/* DATA written while disabled produces no output. */
+		cpu_write(m, D + DACR_DATA, 128);
+		check("no DAC output while disabled", g_dac_out, 0xffffffff);
+
+		/* Enable: 128 * 1100 / 256 = 550 mV. */
+		cpu_write(m, D + DACR_CTRLA, ENABLE);
+		check("DAC out 550 mV (DATA=128)", g_dac_out, 550);
+
+		/* Full-scale: 255 * 1100 / 256 = 1095 mV. */
+		cpu_write(m, D + DACR_DATA, 255);
+		check("DAC out 1095 mV (DATA=255)", g_dac_out, 1095);
+
+		/* Zero. */
+		cpu_write(m, D + DACR_DATA, 0);
+		check("DAC out 0 mV (DATA=0)", g_dac_out, 0);
+
+		/* Disable forces the output to 0 even with DATA set. */
+		cpu_write(m, D + DACR_DATA, 200);
+		cpu_write(m, D + DACR_CTRLA, 0x00);
+		check("DAC out 0 after disable", g_dac_out, 0);
+	}
+
+	printf("== modern DAC0 -> AC0 routing (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t C = 0x680, D = 0x6a0;
+		enum { AC_ENABLE = 0x01, DAC_ENABLE = 0x01 };
+		enum { MUXNEG_DAC = 0x03 };
+		enum { STATE = 0x10 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* AC0: V+ = AINP0 = 800 mV, V- = DAC output. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0), 800);
+		cpu_write(m, C + ACR_MUXCTRLA, MUXNEG_DAC);
+		cpu_write(m, C + ACR_CTRLA, AC_ENABLE);
+
+		/* DAC = 128 -> 550 mV; 800 > 550 => STATE 1. */
+		cpu_write(m, D + DACR_CTRLA, DAC_ENABLE);
+		cpu_write(m, D + DACR_DATA, 128);
+		check("AC STATE 1 (800 > DAC 550)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+
+		/* DAC = 255 -> 1095 mV; 800 < 1095 => STATE 0. */
+		cpu_write(m, D + DACR_DATA, 255);
+		check("AC STATE 0 (800 < DAC 1095)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

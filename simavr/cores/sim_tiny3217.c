@@ -46,11 +46,12 @@
 #include "avr_adc_modern.h"
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
+#include "avr_dac.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
- * TWI0, the RTC (+PIT), ADC0, SPI0 and AC0.
+ * TWI0, the RTC (+PIT), ADC0, SPI0, AC0 and DAC0.
  */
 struct mcu_t {
 	avr_t				core;
@@ -65,7 +66,21 @@ struct mcu_t {
 	avr_adc_modern_t	adc0;
 	avr_spi_modern_t	spi0;
 	avr_ac_t			ac0;
+	avr_dac_t			dac0;
 };
+
+/*
+ * On-chip routing: the DAC output feeds the analog comparator's "DAC" negative
+ * input. Mirror that by updating AC0's DAC reference whenever DAC0's output
+ * (millivolts) changes.
+ */
+static void
+tiny3217_dac_to_ac(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avr_ac_t * ac = (avr_ac_t *)param;
+	(void)irq;
+	avr_ac_set_refs(ac, ac->vref_mv, value);
+}
 
 static void
 tiny3217_init(struct avr_t * avr)
@@ -117,6 +132,12 @@ tiny3217_init(struct avr_t * avr)
 
 	/* AC0 (analog comparator) at 0x0680: AC0_AC vector. */
 	avr_ac_init(avr, &mcu->ac0, 0x0680, AC0_AC_vect_num, '0');
+
+	/* DAC0 (8-bit) at 0x06A0; its output feeds AC0's DAC negative input. */
+	avr_dac_init(avr, &mcu->dac0, 0x06a0, '0');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
+			tiny3217_dac_to_ac, &mcu->ac0);
 }
 
 static void

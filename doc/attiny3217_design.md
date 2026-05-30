@@ -691,9 +691,28 @@ disabled, STATE high/low tracking V+ vs V- with the OUT IRQ following, INVERT
 flipping the output, a positive-edge interrupt (CMP flag + AC0_AC raise, W1C,
 negedge ignored in POSEDGE mode), and comparison against the internal VREF.
 
+### Phase 4 — peripheral: DAC0 (8-bit DAC) — **DONE**
+`avr_dac.[ch]`, wired into `sim_tiny3217` at 0x6A0 (no interrupt). Models the
+converted output voltage: when CTRLA.ENABLE is set, the output is
+(DATA / 256) * VREF millivolts, otherwise 0. The value is published on the OUT
+IRQ (`AVR_IOCTL_DAC_GETIRQ(name)`) whenever it changes.
+- **Reference:** `vref_mv` defaults to 1100 mV and is settable via
+  `avr_dac_set_vref()` (the VREF peripheral is not modelled).
+- **On-chip routing:** the core wires DAC0's OUT IRQ to AC0's DAC negative input
+  (`tiny3217_dac_to_ac` → `avr_ac_set_refs`), so an AC comparison with
+  MUXNEG = DAC tracks the live DAC output — exactly as the silicon routes it.
+
+Deliberate simplifications: the physical output pin buffer (CTRLA.OUTEN — the
+OUT IRQ is always emitted), run-standby, and exact reference selection are not
+modelled (the configuration still stores).
+
+Verified in `tests/test_avrxt_engine.c` (now 207 checks): no output while
+disabled, 550 mV at DATA=128 and 1095 mV at full-scale against the 1100 mV vref,
+zero, output forced to 0 on disable; and the DAC0→AC0 routing (an AC0 comparison
+of 800 mV against the DAC output flips as the DAC moves 550 → 1095 mV).
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): DAC, CCL, EVSYS, and the rest — added incrementally
-next.
+RAM at those addresses): CCL, EVSYS, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -709,8 +728,9 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 `avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
 DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
-`avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**;
-remaining peripherals (DAC, CCL, EVSYS, …) to be added as stubs then deepened.
+`avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
+**new `avr_dac.[ch]` (DAC0 — DONE)**; remaining peripherals (CCL, EVSYS, …) to
+be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217
