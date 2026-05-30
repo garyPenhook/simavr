@@ -50,6 +50,7 @@
 #include "avr_ccl.h"
 #include "avr_evsys.h"
 #include "avr_portmux.h"
+#include "avr_vref.h"
 #include "avr_tcd.h"
 #include "avr_wdt.h"
 #include "avr_crcscan.h"
@@ -59,7 +60,7 @@
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
- * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX, TCD0,
+ * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX, VREF, TCD0,
  * the WDT, CRCSCAN, SLPCTRL and RSTCTRL.
  */
 struct mcu_t {
@@ -79,6 +80,7 @@ struct mcu_t {
 	avr_ccl_t			ccl;
 	avr_evsys_t			evsys;
 	avr_portmux_t		portmux;
+	avr_vref_t			vref;
 	avr_tcd_t			tcd0;
 	avr_wdt_modern_t	wdt;
 	avr_crcscan_t		crcscan;
@@ -97,6 +99,23 @@ tiny3217_dac_to_ac(struct avr_irq_t * irq, uint32_t value, void * param)
 	avr_ac_t * ac = (avr_ac_t *)param;
 	(void)irq;
 	avr_ac_set_refs(ac, ac->vref_mv, value);
+}
+
+/*
+ * On-chip routing: VREF.CTRLA.DAC0REFSEL selects the internal reference for
+ * both DAC0 and AC0 (their reference is always the internal VREF). Push the
+ * decoded reference voltage (millivolts) to both whenever firmware programs it.
+ * ADC0's reference additionally depends on ADC.CTRLC.REFSEL (internal vs VDD),
+ * which the ADC model does not yet distinguish, so AVR_VREF_IRQ_ADC0_MV is left
+ * unwired.
+ */
+static void
+tiny3217_vref_to_dac_ac(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_dac_set_vref(&mcu->dac0, value);
+	avr_ac_set_refs(&mcu->ac0, value, mcu->ac0.dacref_mv);
 }
 
 static void
@@ -164,6 +183,12 @@ tiny3217_init(struct avr_t * avr)
 
 	/* PORTMUX (peripheral pin routing) config store at 0x0200. */
 	avr_portmux_init(avr, &mcu->portmux, 0x0200, '0');
+
+	/* VREF (voltage reference selection) at 0x00A0; DAC0REFSEL feeds DAC0/AC0. */
+	avr_vref_init(avr, &mcu->vref, 0x00a0, '0');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC0_MV),
+			tiny3217_vref_to_dac_ac, mcu);
 
 	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector. */
 	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, '0');

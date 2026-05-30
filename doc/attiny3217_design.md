@@ -868,8 +868,35 @@ Verified in `tests/test_avrxt_engine.c` (now 260 checks): PORF set at power-on,
 RSTFR W1C, and a software reset zeroing the cycle counter and setting SWRF
 (without re-setting PORF). Full suite regression-clean.
 
+### Phase 4 — peripheral: VREF (voltage reference) — **DONE**
+`avr_vref.[ch]`, wired into `sim_tiny3217` at 0x00A0. VREF.CTRLA selects the
+internal reference voltage for ADC0 (ADC0REFSEL[6:4]) and for DAC0/AC0
+(DAC0REFSEL[2:0]); the codes 0..4 map to 0.55 / 1.1 / 2.5 / 4.3 / 1.5 V
+(`avr_vref_sel_to_mv`). CTRLB holds the per-peripheral force-enable bits and
+CTRLC/CTRLD select references for ADC1/DAC1/DAC2 (absent on the ATtiny3217); all
+reset to 0x00 and are modelled as a store.
+- **DAC0/AC0 coupling:** their reference is *always* the internal VREF, so on a
+  CTRLA write the decoded DAC0REFSEL voltage is published on a VREF IRQ that
+  `sim_tiny3217` wires to `avr_dac_set_vref` and `avr_ac_set_refs` (mirroring the
+  existing DAC→AC routing). Firmware that programs VREF now changes the modelled
+  DAC output and AC comparison reference.
+- **ADC0 deliberately left unwired:** ADC0's reference also depends on
+  ADC.CTRLC.REFSEL (internal VREF vs VDD vs external), which the ADC model does
+  not yet distinguish. ADC0REFSEL is decoded onto its own IRQ but not connected —
+  pushing it unconditionally would clobber the ADC's VDD-referenced default. This
+  is the hook to wire once the ADC models REFSEL.
+- **No push at reset:** the selection is published only on a register write, so a
+  device that never programs VREF keeps each peripheral's own reference default
+  (ADC0 3300 mV, DAC0/AC0 1100 mV) — avoids a reset-time regression.
+
+Verified in `tests/test_avrxt_engine.c` (now 275 checks): the decode helper maps
+all five defined selections (and reserved→0), CTRLA..CTRLD reset to 0 and store,
+and a CTRLA write moves AC0's comparison reference (STATE flips at 1.1 V vs 4.3 V
+against a 1.2 V input) and the DAC0 output (DATA=128 → 550 mV at the 1.1 V ref).
+Full suite regression-clean.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): BOD, VREF, and the rest — added incrementally next.
+RAM at those addresses): BOD, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -888,7 +915,7 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
-config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
+config store)**, **new `avr_vref.[ch]` (VREF — DONE)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
 always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**, **new `avr_rstctrl.[ch]` (RSTCTRL —
 DONE)**; remaining peripherals (BOD, VREF, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new

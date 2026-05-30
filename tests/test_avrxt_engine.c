@@ -39,6 +39,7 @@
 #include "avr_ccl.h"
 #include "avr_evsys.h"
 #include "avr_portmux.h"
+#include "avr_vref.h"
 #include "avr_tcd.h"
 #include "avr_wdt.h"
 #include "avr_watchdog.h"	/* AVR_IOCTL_WATCHDOG_RESET */
@@ -1591,6 +1592,71 @@ int main(void)
 
 		/* A neighbouring register is unaffected. */
 		check("PORTMUX CTRLD untouched", cpu_read(m, P + PORTMUXR_CTRLD), 0);
+	}
+
+	printf("== modern VREF (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t V = 0x0a0, C = 0x680, D = 0x6a0;
+		enum { CTRLA = 0x00, CTRLB = 0x01, CTRLC = 0x02, CTRLD = 0x03 };
+		enum { AC_ENABLE = 0x01, DAC_ENABLE = 0x01 };
+		enum { MUXNEG_VREF = 0x02, STATE = 0x10 };
+		/* CTRLA: ADC0REFSEL[6:4], DAC0REFSEL[2:0]; codes 0..4 ->
+		 * 0.55/1.1/2.5/4.3/1.5 V. */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* The decode helper maps the five defined reference selections. */
+		check("VREF sel 0 -> 550 mV", avr_vref_sel_to_mv(0), 550);
+		check("VREF sel 1 -> 1100 mV", avr_vref_sel_to_mv(1), 1100);
+		check("VREF sel 2 -> 2500 mV", avr_vref_sel_to_mv(2), 2500);
+		check("VREF sel 3 -> 4300 mV", avr_vref_sel_to_mv(3), 4300);
+		check("VREF sel 4 -> 1500 mV", avr_vref_sel_to_mv(4), 1500);
+		check("VREF sel 5 reserved -> 0", avr_vref_sel_to_mv(5), 0);
+
+		/* All CTRL registers reset to 0. */
+		check("VREF CTRLA reset 0", cpu_read(m, V + CTRLA), 0);
+		check("VREF CTRLB reset 0", cpu_read(m, V + CTRLB), 0);
+
+		/* CTRLB force-enable bits and CTRLC/CTRLD store and read back. */
+		cpu_write(m, V + CTRLB, 0x03);	/* ADC0REFEN | DAC0REFEN */
+		check("VREF CTRLB stores force-enable", cpu_read(m, V + CTRLB), 0x03);
+		cpu_write(m, V + CTRLC, 0x12);
+		check("VREF CTRLC stores", cpu_read(m, V + CTRLC), 0x12);
+		cpu_write(m, V + CTRLD, 0x04);
+		check("VREF CTRLD stores", cpu_read(m, V + CTRLD), 0x04);
+
+		/* CTRLA stores its selection and drives DAC0/AC0's reference. AC0 with
+		 * V+ = AINP0 = 1200 mV, V- = internal VREF lets us observe the change. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0), 1200);
+		cpu_write(m, C + ACR_MUXCTRLA, MUXNEG_VREF);
+		cpu_write(m, C + ACR_CTRLA, AC_ENABLE);
+
+		/* DAC0REFSEL = 1 (1.1V), ADC0REFSEL = 2 (2.5V). */
+		cpu_write(m, V + CTRLA, (0x2 << 4) | 0x1);
+		check("VREF CTRLA stores selection", cpu_read(m, V + CTRLA), 0x21);
+		/* AC0 VREF now 1100 mV: 1200 > 1100 => STATE 1. */
+		check("AC STATE 1 (1200 > VREF 1100)",
+				!!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+
+		/* Re-select DAC0REFSEL = 3 (4.3V): 1200 < 4300 => STATE 0. */
+		cpu_write(m, V + CTRLA, 0x03);
+		check("AC STATE 0 (1200 < VREF 4300)",
+				!!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+
+		/* DAC0 also picks up the selected reference: with DAC0REFSEL = 1
+		 * (1100 mV), DATA = 128 -> 128 * 1100 / 256 = 550 mV. */
+		g_dac_out = 0xffffffff;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
+			dac_capture_hook, NULL);
+		cpu_write(m, V + CTRLA, 0x01);		/* DAC0REFSEL = 1 -> 1100 mV */
+		cpu_write(m, D + DACR_CTRLA, DAC_ENABLE);
+		cpu_write(m, D + DACR_DATA, 128);
+		check("DAC out 550 mV with VREF 1100 (DATA=128)", g_dac_out, 550);
 	}
 
 	printf("== modern TCD0 (sim_tiny3217) ==\n");
