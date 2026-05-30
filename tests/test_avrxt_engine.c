@@ -1943,15 +1943,25 @@ int main(void)
 		enum { CTRLA = 0x00, STATUS = 0x02 };
 		enum { ENABLE = 0x01, NMIEN = 0x02, RESET = 0x80 };
 		enum { BUSY = 0x01, OK = 0x02 };
+		const uint32_t FEND = 0x7fff;	/* full-flash last byte (32 KB) */
+
+		/* The CRC helper is a real CRC-16/CCITT-FALSE (known check value). */
+		check("CRC16 of \"123456789\" == 0x29B1",
+			  avr_crcscan_crc16((const uint8_t *)"123456789", 9), 0x29b1);
 
 		avr_t *m = avr_make_mcu_by_name("attiny3217");
 		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
 		m->log = LOG_ERROR;
-		avr_init(m);
+		avr_init(m);	/* flash is all 0xFF */
 
-		/* Enabling completes instantly: OK set, never BUSY. */
+		/* Program a valid full-flash checksum (big-endian) in the last 2 bytes. */
+		uint16_t sum = avr_crcscan_crc16(m->flash, FEND - 1);
+		m->flash[FEND - 1] = sum >> 8;
+		m->flash[FEND] = sum & 0xff;
+
+		/* A matching checksum: enable completes instantly with OK, never BUSY. */
 		cpu_write(m, C + CTRLA, ENABLE);
-		check("CRCSCAN OK after enable", !!(m->data[C + STATUS] & OK), 1);
+		check("CRCSCAN OK on matching checksum", !!(m->data[C + STATUS] & OK), 1);
 		check("CRCSCAN never BUSY", !!(m->data[C + STATUS] & BUSY), 0);
 
 		/* Disabling clears the result. */
@@ -1964,12 +1974,42 @@ int main(void)
 		check("CRCSCAN OK cleared by RESET", !!(m->data[C + STATUS] & OK), 0);
 		check("CRCSCAN RESET self-clears CTRLA", m->data[C + CTRLA], 0);
 
+		/* Corrupting a scanned byte makes the checksum mismatch: OK clears. */
+		m->flash[0x100] ^= 0xff;
+		cpu_write(m, C + CTRLA, ENABLE);
+		check("CRCSCAN OK cleared on mismatch", !!(m->data[C + STATUS] & OK), 0);
+		check("no NMI without NMIEN", avr_has_pending_interrupts(m), 0);
+		cpu_write(m, C + CTRLA, RESET);
+		m->flash[0x100] ^= 0xff;		/* repair */
+
 		/* NMIEN locks CTRLA: the scan cannot be disabled until reset. */
 		cpu_write(m, C + CTRLA, ENABLE | NMIEN);
-		check("CRCSCAN OK with NMIEN", !!(m->data[C + STATUS] & OK), 1);
+		check("CRCSCAN OK with NMIEN (valid)", !!(m->data[C + STATUS] & OK), 1);
 		cpu_write(m, C + CTRLA, 0x00);	/* attempt to disable */
 		check("CTRLA locked by NMIEN", m->data[C + CTRLA], ENABLE | NMIEN);
 		check("CRCSCAN still OK (locked)", !!(m->data[C + STATUS] & OK), 1);
+	}
+
+	printf("== modern CRCSCAN failure raises NMI (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t C = 0x120;
+		enum { CTRLA = 0x00, STATUS = 0x02 };
+		enum { ENABLE = 0x01, NMIEN = 0x02 };
+		enum { OK = 0x02 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		/* Leave a deliberately wrong checksum (0x0000) at the flash end. */
+		m->flash[0x7ffe] = 0x00;
+		m->flash[0x7fff] = 0x00;
+
+		/* Enable with the NMI armed: the mismatch clears OK and raises the NMI. */
+		cpu_write(m, C + CTRLA, ENABLE | NMIEN);
+		check("OK cleared on CRC failure", !!(m->data[C + STATUS] & OK), 0);
+		check("CRC failure raises NMI", avr_has_pending_interrupts(m), 1);
 	}
 
 	printf("== modern SLPCTRL (sim_tiny3217) ==\n");

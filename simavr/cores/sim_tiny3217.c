@@ -202,8 +202,10 @@ tiny3217_init(struct avr_t * avr)
 	/* WDT (modern reset-only watchdog) at 0x0100. */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
 
-	/* CRCSCAN (flash CRC memory scan) at 0x0120. */
-	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, '0');
+	/* CRCSCAN (flash CRC memory scan) at 0x0120; 32 KB flash, APPEND/BOOTEND
+	 * fuses (indices 7/8) bound the sections, CRC failure raises the NMI. */
+	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, 32768, 7, 8,
+					 NMI_vect_num, '0');
 
 	/* SLPCTRL (sleep controller) at 0x0050. */
 	avr_slpctrl_init(avr, &mcu->slpctrl, 0x0050, '0');

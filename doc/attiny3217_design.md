@@ -842,25 +842,32 @@ the dog in time to prevent the reset. (The test spins on a self-looping `RJMP .-
 so the PC does not overrun flashend during the tens-of-thousands-of-cycles
 timeout.)
 
-### Phase 4 — peripheral: CRCSCAN — **DONE (always-OK model)**
-`avr_crcscan.[ch]`, wired into `sim_tiny3217` at 0x120. On hardware CRCSCAN
-computes a CRC over a flash section and compares it with a programmed checksum,
-resetting or raising the NMI on mismatch. A loaded simulation image has no
-authoritative external checksum, so the scan completes **instantly and reports
-OK** (STATUS.OK set, BUSY never observed), letting firmware that enables CRCSCAN
-and waits for OK proceed.
-- **CTRLA.RESET** strobe clears the result and disables the peripheral (and
-  self-clears).
-- **CTRLA.NMIEN** locks CTRLA read-only until reset (the device cannot disable a
-  scan that arms the NMI).
+### Phase 4 — peripheral: CRCSCAN — **DONE (real CRC)**
+`avr_crcscan.[ch]`, wired into `sim_tiny3217` at 0x120. Enabling the scan
+(CTRLA.ENABLE) now **computes the CRC for real**: a CRC-16-CCITT (poly 0x1021,
+init 0xFFFF, MSB-first, byte-wise ascending — exposed as `avr_crcscan_crc16`) is
+run over the section selected by CTRLB.SRC (full flash / boot+application /
+boot, the latter two bounded by the APPEND/BOOTEND fuses), excluding the trailing
+two checksum bytes, and compared with the big-endian checksum stored at the
+section end (datasheet Table 27-1).
+- **Result:** a match sets STATUS.OK; a mismatch clears OK and, if CTRLA.NMIEN is
+  set, raises the **NMI** (vector 1, registered as a non-maskable sticky vector).
+  Completion is instant (BUSY never observed set).
+- **CTRLA.RESET** strobe clears the result and disables (self-clears).
+- **CTRLA.NMIEN** locks CTRLA read-only until reset.
 
-Deliberate simplification: the actual CRC computation and the mismatch-triggered
-reset/NMI are not modelled (the scan always reports OK on the loaded image).
+Deliberate simplifications: the boot-time fuse-driven scan
+(FUSE.SYSCFG0.CRCSRC) that hangs the CPU before code starts is not modelled
+(only the software-enabled scan + NMI path); the CRC initial value follows
+CRC-16/CCITT-FALSE and can be adjusted to match a particular toolchain's
+convention.
 
-Verified in `tests/test_avrxt_engine.c` (now 251 checks): OK set on enable with
-BUSY never set, OK cleared on disable, the RESET strobe clearing OK and
-self-clearing CTRLA, and the NMIEN lock keeping CTRLA (and OK) fixed against a
-disable attempt.
+Verified in `tests/test_avrxt_engine.c` (now 357 checks): the helper matches the
+CRC-16/CCITT-FALSE check value (0x29B1 for "123456789"); a matching full-flash
+checksum sets OK (never BUSY); OK clears on disable; the RESET strobe clears OK
+and self-clears CTRLA; corrupting a scanned byte clears OK (no NMI without
+NMIEN); the NMIEN lock holds CTRLA; and a wrong checksum with NMIEN clears OK and
+raises the NMI.
 
 ### Phase 4 — peripheral: SLPCTRL (sleep controller) — **DONE**
 `avr_slpctrl.[ch]`, wired into `sim_tiny3217` at 0x50. SLPCTRL.CTRLA holds the
@@ -986,7 +993,7 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM + flash selfprog — DONE)**, 
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
 config store)**, **new `avr_vref.[ch]` (VREF — DONE)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
-always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**, **new `avr_rstctrl.[ch]` (RSTCTRL —
+real CRC)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**, **new `avr_rstctrl.[ch]` (RSTCTRL —
 DONE)**, **new `avr_bod.[ch]` (BOD / VLM — DONE)**, **new `avr_syscfg.[ch]`
 (SYSCFG + SIGROW device identity — DONE)**.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new

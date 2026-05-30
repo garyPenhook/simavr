@@ -4,19 +4,24 @@
 	"Modern" AVR (AVRxt) CRC memory scan (CRCSCAN at 0x0120 on the tinyAVR
 	1-series, also megaAVR-0 and AVR Dx families).
 
-	On hardware CRCSCAN computes a CRC over a flash section and compares it with a
-	checksum programmed into the last bytes of that section; a mismatch either
-	resets the device or raises the NMI (vector 1), depending on CTRLA.NMIEN.
+	CRCSCAN computes a CRC over a flash section and compares it with a checksum
+	programmed into the last two bytes of that section; on a match STATUS.OK is
+	set, on a mismatch OK is cleared and — if CTRLA.NMIEN is set — the NMI
+	(vector 1) is raised.
 
-	A loaded simulation image has no authoritative external checksum to validate
-	against, so this models the scan as completing instantly and reporting OK
-	(STATUS.BUSY is never observed set), which lets firmware that enables CRCSCAN
-	and waits for STATUS.OK proceed. The CTRLA.NMIEN configuration lock (once the
-	NMI is enabled the peripheral cannot be disabled until reset) and the
-	CTRLA.RESET strobe are modelled.
+	This computes the CRC for real. Enabling the scan (CTRLA.ENABLE) runs a
+	CRC-16-CCITT (polynomial 0x1021, initial value 0xFFFF, MSB-first, byte-wise in
+	ascending address order) over the selected section (CTRLB.SRC: full flash /
+	boot+application / boot), excluding the trailing two checksum bytes, and
+	compares it against the stored big-endian checksum at the section end (see
+	datasheet Table 27-1). The completion is instant (STATUS.BUSY never observed
+	set). The CTRLA.NMIEN lock (once the NMI is armed the peripheral cannot be
+	disabled until reset) and the CTRLA.RESET strobe are modelled.
 
-	Not modelled: the actual CRC computation and the mismatch-triggered
-	reset/NMI (the scan always reports OK on the loaded image).
+	Not modelled: the boot-time fuse-driven scan (FUSE.SYSCFG0.CRCSRC) that hangs
+	the CPU on failure before code starts — only the software-enabled scan and its
+	NMI path are modelled. The CRC initial value follows CRC-16/CCITT-FALSE; a
+	toolchain using a different convention can be matched by adjusting it.
 
 	Copyright 2026 simavr authors
 
@@ -57,19 +62,39 @@ typedef struct avr_crcscan_t {
 	char		name;
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_ctrla, r_status;
+	avr_io_addr_t	r_ctrla, r_ctrlb, r_status;
+
+	uint32_t	flash_size;	/* bytes of flash to scan over (full-flash end) */
+	uint8_t		append_idx;	/* FUSE.APPEND index (boot+app section end) */
+	uint8_t		bootend_idx;	/* FUSE.BOOTEND index (boot section end) */
+
+	avr_int_vector_t	nmi;	/* CRC-failure NMI (vector 1) */
 
 	uint8_t		locked;		/* NMIEN set => CTRLA read-only until reset */
 } avr_crcscan_t;
 
 /*
- * Initialise a CRCSCAN block at data address 'base'. 'name' is a tag for debug.
+ * CRC-16-CCITT (poly 0x1021, init 0xFFFF, MSB-first) over 'len' bytes. Exposed
+ * so a test/board can compute a matching section checksum.
+ */
+uint16_t
+avr_crcscan_crc16(const uint8_t * data, uint32_t len);
+
+/*
+ * Initialise a CRCSCAN block at data address 'base'. 'flash_size' is the flash
+ * size (full-flash section end); 'append_fuse_index'/'bootend_fuse_index' locate
+ * the APPEND/BOOTEND fuses that bound the application/boot sections (0xff to
+ * skip). 'nmi_vector' is the CRC-failure NMI vector. 'name' is a debug tag.
  */
 void
 avr_crcscan_init(
 		avr_t * avr,
 		avr_crcscan_t * p,
 		avr_io_addr_t base,
+		uint32_t flash_size,
+		uint8_t append_fuse_index,
+		uint8_t bootend_fuse_index,
+		uint8_t nmi_vector,
 		char name);
 
 #ifdef __cplusplus
