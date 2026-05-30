@@ -31,6 +31,7 @@
 #include "avr_tca.h"
 #include "avr_usart_modern.h"
 #include "avr_nvmctrl.h"
+#include "avr_rtc.h"
 
 static int failures;
 
@@ -927,6 +928,147 @@ int main(void)
 		cpu_write(m, NV + CTRLA, CMD_EEERASE);
 		check("EEERASE wipes byte 0", cpu_read(m, EE + 0), 0xff);
 		check("EEERASE wipes byte 5", cpu_read(m, EE + 5), 0xff);
+	}
+
+	printf("== modern RTC counter (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t R = 0x140;
+		enum { RTCEN = 0x01 };
+		enum { F_OVF = 0x01, F_CMP = 0x02 };
+		/* CLK_PER=3.333MHz, RTC src=32.768kHz => ~101 CPU cycles per RTC tick. */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		/* PER reset value is 0xFFFF. */
+		check("RTC PER resets to 0xFFFF",
+			  (m->data[R + RTCR_PERL] | (m->data[R + RTCR_PERH] << 8)), 0xffff);
+
+		cpu_write(m, R + RTCR_PERL, 4);  cpu_write(m, R + RTCR_PERH, 0);
+		cpu_write(m, R + RTCR_CMPL, 2);  cpu_write(m, R + RTCR_CMPH, 0);
+		cpu_write(m, R + RTCR_INTCTRL, F_CMP);	/* CMP enable, OVF disabled */
+		cpu_write(m, R + RTCR_CLKSEL, 0x00);	/* INT32K (32.768 kHz) */
+		cpu_write(m, R + RTCR_CTRLA, RTCEN);
+
+		/* CMP match at CNT == 2 => ~202 CPU cycles. */
+		long tcmp = -1;
+		for (int i = 0; i < 4000 && tcmp < 0; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_INTFLAGS] & F_CMP) tcmp = (long)m->cycle;
+		}
+		check("CMP match near 202 cycles", tcmp >= 196 && tcmp <= 210, 1);
+		check("CMP raises (enabled) interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* Live CNT read is in [0, PER]. */
+		uint8_t cnt = cpu_read(m, R + RTCR_CNTL);
+		check("RTC CNT live read <= PER", cnt <= 4, 1);
+
+		/* W1C clears the CMP flag (the pending FIFO entry only drains on
+		 * service, so avr_has_pending stays set here — see below for a clean
+		 * masking test on a fresh core). */
+		cpu_write(m, R + RTCR_INTFLAGS, F_CMP);
+		check("CMP cleared by W1C", !!(m->data[R + RTCR_INTFLAGS] & F_CMP), 0);
+
+		/* OVF fires at the wrap (PER+1 == 5) => ~505 cycles. */
+		long tovf = -1;
+		for (int i = 0; i < 4000 && tovf < 0; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_INTFLAGS] & F_OVF) tovf = (long)m->cycle;
+		}
+		check("OVF flag set near 505 cycles", tovf >= 495 && tovf <= 515, 1);
+
+		/* Disable: no further events. */
+		cpu_write(m, R + RTCR_INTFLAGS, F_OVF | F_CMP);	/* clear both */
+		cpu_write(m, R + RTCR_CTRLA, 0x00);
+		int fired = 0;
+		for (int i = 0; i < 4000; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_INTFLAGS] & (F_OVF | F_CMP)) { fired = 1; break; }
+		}
+		check("no RTC counter event after disable", fired, 0);
+	}
+
+	printf("== modern RTC_CNT interrupt gating (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t R = 0x140;
+		enum { RTCEN = 0x01 };
+		enum { F_OVF = 0x01, F_CMP = 0x02 };
+
+		/* Fresh core => the pending FIFO starts empty, so avr_has_pending
+		 * reflects exactly whether this RTC raised anything. */
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		cpu_write(m, R + RTCR_PERL, 4);  cpu_write(m, R + RTCR_PERH, 0);
+		cpu_write(m, R + RTCR_INTCTRL, 0x00);	/* nothing enabled */
+		cpu_write(m, R + RTCR_CLKSEL, 0x00);
+		cpu_write(m, R + RTCR_CTRLA, RTCEN);
+
+		/* OVF flag sets, but with OVF masked no interrupt is raised. */
+		int seen = 0;
+		for (int i = 0; i < 4000 && !seen; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_INTFLAGS] & F_OVF) seen = 1;
+		}
+		check("OVF flag set with OVF masked", seen, 1);
+		check("masked OVF raises nothing", avr_has_pending_interrupts(m), 0);
+
+		/* Enabling OVF while its flag is already set raises immediately. */
+		cpu_write(m, R + RTCR_INTCTRL, F_OVF);
+		check("enabling a set OVF raises now", avr_has_pending_interrupts(m), 1);
+	}
+
+	printf("== modern PIT (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t R = 0x140;
+		enum { PITEN = 0x01, PERIOD_CYC4 = (1 << 3) };	/* PERIOD field = 1 */
+		enum { F_PI = 0x01 };
+		/* CYC4 = 4 RTC ticks => 4*101 ~= 406 CPU cycles. */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		cpu_write(m, R + RTCR_CLKSEL, 0x00);		/* INT32K */
+		cpu_write(m, R + RTCR_PITINTCTRL, F_PI);	/* PI enable */
+		cpu_write(m, R + RTCR_PITCTRLA, PITEN | PERIOD_CYC4);
+
+		long t0 = -1;
+		for (int i = 0; i < 6000 && t0 < 0; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_PITINTFLAGS] & F_PI) t0 = (long)m->cycle;
+		}
+		check("first PI near 406 cycles", t0 >= 396 && t0 <= 416, 1);
+		check("PI raises (enabled) interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* W1C and confirm the periodic cadence (~406 cycles later). */
+		cpu_write(m, R + RTCR_PITINTFLAGS, F_PI);
+		check("PI cleared by W1C", !!(m->data[R + RTCR_PITINTFLAGS] & F_PI), 0);
+		long t1 = -1;
+		for (int i = 0; i < 6000 && t1 < 0; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_PITINTFLAGS] & F_PI) t1 = (long)m->cycle;
+		}
+		check("second PI ~406 cycles later",
+			  (t1 - t0) >= 396 && (t1 - t0) <= 416, 1);
+
+		/* Disable PIT: no further events. */
+		cpu_write(m, R + RTCR_PITINTFLAGS, F_PI);
+		cpu_write(m, R + RTCR_PITCTRLA, 0x00);
+		int fired = 0;
+		for (int i = 0; i < 6000; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_PITINTFLAGS] & F_PI) { fired = 1; break; }
+		}
+		check("no PI after disable", fired, 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

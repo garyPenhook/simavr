@@ -570,8 +570,43 @@ firmware writes two EEPROM bytes via `_PROTECTED_WRITE_SPM(NVMCTRL.CTRLA,
 PAGEERASEWRITE)`, reads them back, and drives their XOR (0x99) onto PORTA —
 EEPROM + CCP + PORT together.
 
+### Phase 4 — peripheral: RTC + PIT — **DONE**
+`avr_rtc.[ch]`, wired into `sim_tiny3217` at 0x140 (vectors RTC_CNT=6, RTC_PIT=7).
+The block hosts two independent functions sharing one clock source. Because the
+RTC clock (~32 kHz) is **decoupled from CLK_PER**, periods are converted to CPU
+cycles via `avr->frequency` captured when each function (re)starts —
+`cpu_cycles = N * avr->frequency / f_rtc`.
+- **Clock source (CLKSEL):** INT32K / TOSC32K / EXTCLK modelled as 32.768 kHz,
+  INT1K as 1.024 kHz.
+- **RTC counter:** a prescaled (DIV1..DIV32768) up-counter 0..PER. Uses the same
+  next-event scheduler as TCA0 — one cycle timer to the next interesting count
+  (the compare value, or the PER+1 wrap). On expiry it sets INTFLAGS.CMP and/or
+  .OVF and raises the **single RTC_CNT vector** if that source is enabled. CNT
+  reads compute the live value (high byte latched). PER resets to 0xFFFF.
+- **Shared vector (the wrinkle):** OVF and CMP both feed RTC_CNT. As with the
+  modern TWI's TWIM/TWIS, `.raised` is left unset and the flags are set/cleared
+  directly; `.enable` spans both INTCTRL bits so the engine sees "either", and
+  the precise flag/enable pairing is enforced in `rtc_cnt_flag()`. Enabling a
+  source whose flag is already set raises immediately (INTCTRL write hook).
+- **PIT:** a free-running periodic source firing every 2^n RTC-clock ticks
+  (PITCTRLA.PERIOD = CYC4..CYC32768), on its own RTC_PIT vector, **independent of
+  the RTC prescaler**. Single PI flag → single vector (standard raised/enable
+  bits + `raise_sticky`). INTFLAGS / PITINTFLAGS are W1C.
+
+Deliberate simplifications: the synchronisation-busy STATUS/PITSTATUS bits are
+never asserted (writes take effect immediately, so the usual busy poll passes); a
+CLK_PER change after the RTC starts is not retro-applied until the function is
+reconfigured; CRYSTERR / external-clock pin behaviour is not modelled.
+
+Verified in `tests/test_avrxt_engine.c` (now 162 checks): PER reset 0xFFFF, CMP
+match near 202 cycles + enabled-interrupt raise, live CNT read, CMP W1C, OVF at
+the PER+1 wrap (~505 cycles), clean stop on disable; the RTC_CNT gating (OVF flag
+sets while masked with nothing raised, then enabling the set flag raises now);
+and the PIT (CYC4 → first PI ~406 cycles, enabled-interrupt raise, W1C, periodic
+cadence, clean stop on disable).
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): ADC0, RTC, AC, and the rest — added incrementally next.
+RAM at those addresses): ADC0, SPI0, AC, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -585,8 +620,8 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 `avr_port_modern.[ch]` (PORT/VPORT — DONE)**, **new `avr_clkctrl.[ch]`
 (CLKCTRL — DONE)**, **new `avr_tcb.[ch]` (TCB0/1 — DONE)**, **new
 `avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
-DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**; planned
-`avr_rtc.[ch]`, `avr_adc_modern.[ch]`, `avr_cpuint.[ch]`, plus stubs.
+DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**; planned
+`avr_adc_modern.[ch]`, `avr_spi_modern.[ch]`, plus stubs.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

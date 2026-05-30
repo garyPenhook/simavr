@@ -42,11 +42,12 @@
 #include "avr_usart_modern.h"
 #include "avr_nvmctrl.h"
 #include "avr_port_modern.h"
+#include "avr_rtc.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
- * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0
- * and TWI0.
+ * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
+ * TWI0 and the RTC (+PIT).
  */
 struct mcu_t {
 	avr_t				core;
@@ -57,6 +58,7 @@ struct mcu_t {
 	avr_tcb_t			tcb0, tcb1;
 	avr_usart_modern_t	usart0;
 	avr_twi_modern_t	twi;
+	avr_rtc_t			rtc;
 };
 
 static void
@@ -95,6 +97,10 @@ tiny3217_init(struct avr_t * avr)
 	/* TWI0 register block at 0x0810; host/client vectors from the DFP header. */
 	avr_twi_modern_init(avr, &mcu->twi, 0x0810,
 						TWI0_TWIM_vect_num, TWI0_TWIS_vect_num, '0');
+
+	/* RTC + PIT at 0x0140: RTC_CNT (OVF/CMP) and RTC_PIT vectors. */
+	avr_rtc_init(avr, &mcu->rtc, 0x0140,
+				 RTC_CNT_vect_num, RTC_PIT_vect_num, '0');
 }
 
 static void
