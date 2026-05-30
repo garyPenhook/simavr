@@ -13,6 +13,8 @@
 	  bit1  temperature-sensor channel decodes to ~25 C via the SIGROW cal
 	  bit2  TCB0 periodic-interrupt-mode CAPT flag (timer actually counts)
 	  bit3  TCA0 overflow flag (timer actually counts)
+	  bit4  DAC0 output measured back through the ADC0 internal DAC0 channel
+	  bit5  EVSYS software event routed to the ADC0 user starts a conversion
 
 	Build with a modern avr-gcc:
 	    avr-gcc -mmcu=attiny3217 -Os -o attiny3217_selftest.axf attiny3217_selftest.c
@@ -80,6 +82,43 @@ static uint8_t test_tca0(void)
 	return WAIT_FLAG(TCA0.SINGLE.INTFLAGS & TCA_SINGLE_OVF_bm, 100000);
 }
 
+/* DAC0 output, measured back through the ADC0 internal DAC0 channel. With the
+ * default DAC reference (~1.1V) and DATA=255 the output is ~1095 mV, which the
+ * ADC (VDD = 3.3V reference) reads as ~339 (10-bit). */
+static uint8_t test_dac_to_adc(void)
+{
+	DAC0.DATA = 255;
+	DAC0.CTRLA = DAC_ENABLE_bm;
+
+	ADC0.CTRLC = ADC_PRESC_DIV4_gc | ADC_REFSEL_VDDREF_gc;
+	ADC0.MUXPOS = ADC_MUXPOS_DAC0_gc;
+	ADC0.EVCTRL = 0;
+	ADC0.CTRLA = ADC_ENABLE_bm;
+	ADC0.INTFLAGS = ADC_RESRDY_bm;
+	ADC0.COMMAND = ADC_STCONV_bm;
+	if (!WAIT_FLAG(ADC0.INTFLAGS & ADC_RESRDY_bm, 100000))
+		return 0;
+	uint16_t res = ADC0.RES;
+	return res >= 320 && res <= 360;
+}
+
+/* A software event on a channel routed to the ADC0 user starts a conversion
+ * (ADC EVCTRL.STARTEI armed). Validates the EVSYS user-delivery path end-to-end
+ * from real firmware. */
+static uint8_t test_evsys_to_adc(void)
+{
+	ADC0.MUXPOS = ADC_MUXPOS_GND_gc;	/* deterministic result */
+	ADC0.CTRLA = ADC_ENABLE_bm;
+	ADC0.EVCTRL = ADC_STARTEI_bm;
+	ADC0.INTFLAGS = ADC_RESRDY_bm;		/* clear */
+
+	EVSYS.ASYNCUSER1 = 1;			/* ADC0 user <- channel 0 (SYNCCH0) */
+	if (ADC0.INTFLAGS & ADC_RESRDY_bm)	/* nothing should have started yet */
+		return 0;
+	EVSYS.SYNCSTROBE = 0x01;		/* software event on SYNCCH0 */
+	return WAIT_FLAG(ADC0.INTFLAGS & ADC_RESRDY_bm, 100000);
+}
+
 int
 main(void)
 {
@@ -89,6 +128,8 @@ main(void)
 	if (test_tempsense())	r |= 1 << 1;
 	if (test_tcb0())	r |= 1 << 2;
 	if (test_tca0())	r |= 1 << 3;
+	if (test_dac_to_adc())	r |= 1 << 4;
+	if (test_evsys_to_adc())r |= 1 << 5;
 
 	GPIOR0 = r;
 	GPIOR1 = 0xa5;		/* done sentinel for the host harness */

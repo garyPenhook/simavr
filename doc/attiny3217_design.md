@@ -1079,8 +1079,8 @@ the device headers, so it also confirms the modelled register layout matches wha
 firmware uses): `tests/attiny3217_blink.c` + `test_attiny3217_blink.c`
 (`make attiny3217-demo` — PA0 toggles), and `tests/attiny3217_selftest.c` +
 `test_attiny3217_selftest.c` (`make attiny3217-selftest` — EEPROM read-back, the
-SIGROW-calibrated temperature sensor, and TCB0/TCA0 counting, each reported as a
-pass bit in GPIOR0).
+SIGROW-calibrated temperature sensor, TCB0/TCA0 counting, DAC0→ADC0 internal
+measurement, and EVSYS event→ADC start, each reported as a pass bit in GPIOR0).
 ```
 
 ## 10. Validation against real firmware
@@ -1094,7 +1094,9 @@ they need a modern avr-gcc with ATtiny3217 support):
 - **`make attiny3217-demo`** — the blink firmware; the host checks PA0 toggles.
 - **`make attiny3217-selftest`** — `attiny3217_selftest.c` pokes the peripherals
   through `<avr/io.h>` register structs (so a register-layout mismatch would fail
-  to compile or misbehave) and self-checks EEPROM write/read-back via NVMCTRL, the
-  temperature-sensor channel decoded with the datasheet transfer function and the
-  SIGROW calibration, and TCB0/TCA0 actually counting; it reports a per-subtest
-  pass bitmask in GPIOR0 that the host harness verifies.
+  to compile or misbehave) and self-checks: EEPROM write/read-back via NVMCTRL;
+  the temperature-sensor channel decoded with the datasheet transfer function and
+  the SIGROW calibration; TCB0/TCA0 actually counting; the DAC0 output measured
+  back through the ADC0 internal DAC0 channel; and an EVSYS software event routed
+  to the ADC0 user starting an event-triggered conversion. It reports a
+  per-subtest pass bitmask in GPIOR0 that the host harness verifies.

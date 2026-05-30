@@ -33,9 +33,11 @@ static const struct { uint8_t bit; const char *name; } subtests[] = {
 	{ 1 << 1, "temperature sensor (SIGROW cal)" },
 	{ 1 << 2, "TCB0 periodic counting" },
 	{ 1 << 3, "TCA0 overflow counting" },
+	{ 1 << 4, "DAC0 -> ADC0 internal channel" },
+	{ 1 << 5, "EVSYS event -> ADC0 start" },
 };
 #define N_SUBTESTS	((int)(sizeof(subtests) / sizeof(subtests[0])))
-#define EXPECTED_MASK	0x0f
+#define EXPECTED_MASK	0x3f
 
 int
 main(int argc, char **argv)
