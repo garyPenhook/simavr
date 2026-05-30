@@ -416,10 +416,19 @@ firmware loads and runs end-to-end.
 - **Verified:** `tests/attiny3217_eeprom.c` writes two bytes via the mapped
   region + PAGEERASEWRITE, reads them back, and signals success on PA3.
 
+**SPI0 added:**
+- **`sim/avr_spi_modern.{c,h}`**: modern SPI, normal master mode. Writing DATA
+  emits the byte on the OUTPUT IRQ (MOSI), latches the value presented on the
+  INPUT IRQ (MISO) as received, sets IF and raises the SPI interrupt if enabled;
+  reading DATA clears IF. Buffer mode, slave mode and clock timing not modelled.
+  Named distinctly (avr_spim_*) to avoid clashing with the classic avr_spi.
+- **Verified:** `tests/attiny3217_spi.c` does a master transfer; the host wires
+  MOSI→MISO (loopback) and the firmware confirms it received what it sent.
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
 Phase 1), prescaler→frequency in CLKCTRL, TCA split/PWM modes, flash
-self-programming, ELF .eeprom preload, RTC/PIT, SPI0/TWI0, ADC0, USART RX-path
-test, and stubs for the rest.
+self-programming, ELF .eeprom preload, RTC/PIT, TWI0, ADC0, USART/SPI RX-path
+and slave tests, and stubs for the rest.
 
 ## 9. Files touched (summary)
 

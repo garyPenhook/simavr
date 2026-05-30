@@ -24,6 +24,7 @@
 #include "avr_tcb.h"
 #include "avr_tca.h"
 #include "avr_usart.h"
+#include "avr_spi_modern.h"
 #include "avr_clkctrl.h"
 #include "avr_nvmctrl.h"
 
@@ -48,6 +49,7 @@
 #define T3217_PORTB	0x0420
 #define T3217_PORTC	0x0440
 #define T3217_USART0	0x0800
+#define T3217_SPI0	0x0820
 #define T3217_TCA0	0x0A00
 #define T3217_TCB0	0x0A40
 #define T3217_TCB1	0x0A50
@@ -62,6 +64,7 @@ struct mcu_t {
 	avr_cpuint_t	cpuint;
 	avr_port_t	porta, portb, portc;
 	avr_usart_t	usart0;
+	avr_spim_t	spi0;
 	avr_tca_t	tca0;
 	avr_tcb_t	tcb0, tcb1;
 };
@@ -143,6 +146,15 @@ const struct mcu_t SIM_CORENAME = {
 			.vector = 29,	// USART0_TXC_vect_num
 			.enable = AVR_IO_REGBIT(T3217_USART0 + 0x05, 6),
 			.raised = AVR_IO_REGBIT(T3217_USART0 + 0x04, 6),
+			.raise_sticky = 1,
+		},
+	},
+	.spi0 = {
+		.name = '0', .r_base = T3217_SPI0,
+		.spi = {
+			.vector = 26,	// SPI0_INT_vect_num
+			.enable = AVR_IO_REGBIT(T3217_SPI0 + 0x02, 0),	// INTCTRL.IE
+			.raised = AVR_IO_REGBIT(T3217_SPI0 + 0x03, 7),	// INTFLAGS.IF
 			.raise_sticky = 1,
 		},
 	},
