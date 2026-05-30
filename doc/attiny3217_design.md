@@ -341,6 +341,28 @@ and CVT compact vector table (vectors assumed at flash 0); the SP-write
 vector-number range rather than exact IVEC adjacency (negligible). The CPUINT
 register block at 0x110 itself is wired in Phase 4/5 via the API above.
 
+### Phase 4 — peripherals — **IN PROGRESS (M1 reached)**
+Milestone **M1 "boots & blinks"** is done: a real `avr-gcc -mmcu=attiny3217`
+firmware loads and runs end-to-end.
+- **`attiny3217` core descriptor** (`cores/sim_tiny3217.{c,h}`): memory map,
+  signature `1E 95 22`, the modern `arch` block (io_offset 0, SP 0x3D, SREG
+  0x3F, CCP 0x34, flashmap 0x8000, flags MODERN|CCP|XT_TIMING|CPUINT), reset
+  flags pointed at `RSTCTRL.RSTFR`, 4-byte (JMP) vectors. Addresses are spelled
+  out from the datasheet rather than the struct-based avr-libc header.
+- **Modern PORT peripheral** (`sim/avr_port.{c,h}`): DIR/OUT plus the
+  SET/CLR/TGL convenience registers, IN (write-toggles-OUT), INTFLAGS
+  (write-1-clear), per-pin IRQs (filtered, with the `irqing` feedback guard
+  like `avr_ioport`), and a GETIRQ ioctl. VPORT/PINnCTRL interrupts deferred.
+- **Verified:** `tests/attiny3217_blink.c` (firmware) + `tests/test_attiny3217_blink.c`
+  (harness) — PA3 configured via `DIRSET`, toggled via `OUTTGL`, observed
+  through the pin IRQ. Auto-built by the test Makefile (`-mmcu` derived from the
+  filename) and runs under `make run_tests`.
+
+Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
+Phase 1), CLKCTRL, the CPUINT register block at 0x110 (wire to the Phase 3
+API), TCB/TCA, RTC/PIT, USART0, NVMCTRL, SPI0/TWI0, ADC0, and stubs for the
+rest. See the priority order earlier in this document.
+
 ## 9. Files touched (summary)
 
 Engine: `sim_avr.h` (arch fields, MAX_IOs), `sim_avr.c` (init defaults),
