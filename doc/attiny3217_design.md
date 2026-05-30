@@ -799,14 +799,26 @@ asynchronous high-resolution-PWM timer; this models its periodic-overflow use.
   (1/2/4/8) and CNTPRES (1/4/32). CMPBCLR (12-bit) is TOP.
 - **Sync protocol:** STATUS always reads ENRDY|CMDRDY, so the double-buffered
   enable/command polling (`while (!(TCD0.STATUS & ENRDY))`) passes.
+- **Waveform output (One Ramp mode, CTRLB.WGMODE=0):** the scheduler is now
+  boundary-driven — instead of one event per cycle it fires at each compare
+  point. WOA is driven high on [CMPASET, CMPACLR) and WOB on [CMPBSET, CMPBCLR),
+  each published on a WOA/WOB IRQ as it toggles, but only when enabled in
+  FAULTCTRL (CMPAEN/CMPBEN). The terminal boundary is TOP+1 (the cycle is TOP+1
+  counts) where OVF fires and the ramp restarts. With no output enabled the
+  schedule collapses back to the single TOP+1 OVF event (unchanged periodic
+  source). CTRLB/FAULTCTRL/compare writes reschedule.
 
-Deliberate simplifications: the waveform outputs (WOA/WOB), TRIGA/TRIGB compare
-events, dithering, fault control and input capture are not modelled, and the
-exact TCD clock source is approximated as CLK_PER (those registers still store).
+Deliberate simplifications: the other waveform-generation modes (two/four ramp,
+dual slope), TRIGA/TRIGB compare events, dithering, fault input and input capture
+are not modelled, and the exact TCD clock source is approximated as CLK_PER
+(those registers still store).
 
-Verified in `tests/test_avrxt_engine.c` (now 236 checks): STATUS ready, first OVF
+Verified in `tests/test_avrxt_engine.c` (now 342 checks): STATUS ready, first OVF
 at ~101 cycles for CMPBCLR=100 + enabled-interrupt raise, W1C, the periodic
-cadence, clean stop on disable, and SYNCPRES=DIV2 doubling the period.
+cadence, clean stop on disable, and SYNCPRES=DIV2 doubling the period. For One
+Ramp PWM (TOP=99, WOA [10,40), WOB [50,99)): WOA/WOB rise and fall at the right
+counts, repeat every period, and stop being driven once their FAULTCTRL enable
+is cleared.
 
 ### Phase 4 — peripheral: WDT (modern watchdog) — **DONE**
 `avr_wdt.[ch]`, wired into `sim_tiny3217` at 0x100 (no interrupt — the modern WDT

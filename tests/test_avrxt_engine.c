@@ -1799,6 +1799,68 @@ int main(void)
 		check("SYNCPRES/2 period ~202 cycles", (t2 - base) >= 198 && (t2 - base) <= 208, 1);
 	}
 
+	printf("== modern TCD0 waveform output / One Ramp PWM (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t T = 0xa80;
+		enum { ENABLE = 0x01 };
+		enum { CMPAEN = 0x10, CMPBEN = 0x20 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		uint8_t woa = 0xff, wob = 0xff;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOA), rec_irq, &woa);
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOB), rec_irq, &wob);
+
+		/* One Ramp, prescale 1: TOP=99 (period 100), WOA on [10,40), WOB on
+		 * [50,99). */
+		cpu_write(m, T + TCDR_CMPBCLRL, 99); cpu_write(m, T + TCDR_CMPBCLRH, 0);
+		cpu_write(m, T + TCDR_CMPASETL, 10); cpu_write(m, T + TCDR_CMPASETL + 1, 0);
+		cpu_write(m, T + TCDR_CMPACLRL, 40); cpu_write(m, T + TCDR_CMPACLRL + 1, 0);
+		cpu_write(m, T + TCDR_CMPBSETL, 50); cpu_write(m, T + TCDR_CMPBSETL + 1, 0);
+		cpu_write(m, T + TCDR_FAULTCTRL, CMPAEN | CMPBEN);
+
+		long t0 = (long)m->cycle;
+		cpu_write(m, T + TCDR_CTRLA, ENABLE);
+
+		#define RUN_TO(n) do { while ((long)m->cycle - t0 < (n)) avr_run(m); } while (0)
+
+		/* count ~20: inside WOA on-time, before WOB. */
+		RUN_TO(20);
+		check("WOA high in [10,40)", woa, 1);
+		check("WOB still low before 50", wob, 0xff);	/* no edge yet */
+
+		/* count ~45: WOA cleared at 40, WOB not yet set. */
+		RUN_TO(45);
+		check("WOA low after CMPACLR=40", woa, 0);
+
+		/* count ~60: WOB set at 50. */
+		RUN_TO(60);
+		check("WOB high in [50,99)", wob, 1);
+
+		/* count ~105 (past wrap at 100): both outputs low again. */
+		RUN_TO(105);
+		check("WOB low after CMPBCLR=99", wob, 0);
+		check("WOA low at start of new ramp", woa, 0);
+
+		/* Periodicity: WOA rises again ~10 counts into the next ramp (~count 110). */
+		RUN_TO(115);
+		check("WOA high again next period", woa, 1);
+
+		/* Disabling an output in FAULTCTRL stops driving it. */
+		cpu_write(m, T + TCDR_FAULTCTRL, CMPBEN);	/* drop CMPAEN */
+		woa = 0x55;					/* sentinel */
+		RUN_TO(220);					/* run > a full period */
+		check("WOA not driven once CMPAEN cleared", woa, 0x55);
+
+		#undef RUN_TO
+	}
+
 	printf("== modern WDT (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t W = 0x100;

@@ -12,9 +12,15 @@
 	CMDRDY always ready, so the usual `while (!(TCD0.STATUS & ENRDY))` polling
 	passes.
 
-	Not modelled: the waveform outputs (WOA/WOB), TRIGA/TRIGB compare events,
-	dithering, fault control, input capture, and the exact TCD clock source
-	(approximated as CLK_PER); those registers still store.
+	In One Ramp mode (CTRLB.WGMODE = 0) the compare values also drive the two
+	waveform outputs: WOA is high while CMPASET <= count < CMPACLR and WOB while
+	CMPBSET <= count < CMPBCLR (= TOP). Each output is published on its WOA/WOB
+	IRQ as it toggles, but only when enabled in FAULTCTRL (CMPAEN/CMPBEN) — so a
+	board/test can observe the generated PWM.
+
+	Not modelled: the other waveform-generation modes (two/four ramp, dual slope),
+	TRIGA/TRIGB compare events, dithering, fault input, input capture, and the
+	exact TCD clock source (approximated as CLK_PER); those registers still store.
 
 	Copyright 2026 simavr authors
 
@@ -51,8 +57,19 @@ enum {
 	TCDR_INTCTRL = 0x0c,
 	TCDR_INTFLAGS = 0x0d,
 	TCDR_STATUS = 0x0e,
-	TCDR_CMPBCLRL = 0x2e,	/* 16-bit (12-bit value) TOP */
+	TCDR_FAULTCTRL = 0x12,	/* CMPAEN/CMPBEN output enables */
+	TCDR_CMPASETL = 0x28,	/* 16-bit (12-bit value) compares */
+	TCDR_CMPACLRL = 0x2a,
+	TCDR_CMPBSETL = 0x2c,
+	TCDR_CMPBCLRL = 0x2e,	/* TOP */
 	TCDR_CMPBCLRH = 0x2f,
+};
+
+/* IRQs: the two waveform outputs (One Ramp mode). */
+enum {
+	AVR_TCD_IRQ_WOA = 0,
+	AVR_TCD_IRQ_WOB,
+	AVR_TCD_IRQ_COUNT,
 };
 
 typedef struct avr_tcd_t {
@@ -60,13 +77,17 @@ typedef struct avr_tcd_t {
 	char		name;
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_ctrla, r_intctrl, r_intflags, r_status, r_cmpbclr;
+	avr_io_addr_t	r_ctrla, r_ctrlb, r_intctrl, r_intflags, r_status;
+	avr_io_addr_t	r_faultctrl, r_cmpaset, r_cmpaclr, r_cmpbset, r_cmpbclr;
 
 	avr_int_vector_t	ovf;	/* TCDn_OVF */
 
 	avr_cycle_count_t	start_cycle;
 	uint32_t		prescale;	/* CPU cycles per TCD count */
 	uint32_t		top;		/* CMPBCLR captured at start */
+
+	int			base_irq;
+	uint8_t		woa, wob;	/* last published output levels */
 } avr_tcd_t;
 
 /*
@@ -80,6 +101,8 @@ avr_tcd_init(
 		avr_io_addr_t base,
 		uint8_t vec_ovf,
 		char name);
+
+#define AVR_IOCTL_TCD_GETIRQ(_name) AVR_IOCTL_DEF('t','c','d',(_name))
 
 #ifdef __cplusplus
 };
