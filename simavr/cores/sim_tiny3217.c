@@ -47,11 +47,12 @@
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
 #include "avr_dac.h"
+#include "avr_ccl.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
- * TWI0, the RTC (+PIT), ADC0, SPI0, AC0 and DAC0.
+ * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0 and CCL.
  */
 struct mcu_t {
 	avr_t				core;
@@ -67,6 +68,7 @@ struct mcu_t {
 	avr_spi_modern_t	spi0;
 	avr_ac_t			ac0;
 	avr_dac_t			dac0;
+	avr_ccl_t			ccl;
 };
 
 /*
@@ -138,6 +140,9 @@ tiny3217_init(struct avr_t * avr)
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
 			tiny3217_dac_to_ac, &mcu->ac0);
+
+	/* CCL (configurable custom logic) at 0x01C0; 2 LUTs on the ATtiny3217. */
+	avr_ccl_init(avr, &mcu->ccl, 0x01c0, 2, '0');
 }
 
 static void

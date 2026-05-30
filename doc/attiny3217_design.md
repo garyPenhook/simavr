@@ -711,8 +711,31 @@ disabled, 550 mV at DATA=128 and 1095 mV at full-scale against the 1100 mV vref,
 zero, output forced to 0 on disable; and the DAC0→AC0 routing (an AC0 comparison
 of 800 mV against the DAC output flips as the DAC moves 550 → 1095 mV).
 
+### Phase 4 — peripheral: CCL (configurable custom logic) — **DONE**
+`avr_ccl.[ch]`, wired into `sim_tiny3217` at 0x1C0 with 2 LUTs (no interrupt).
+Models the combinational core: each LUT computes a 3-input truth table (TRUTHn)
+whose inputs are routed by the LUTnCTRLB/C.INSEL fields. The whole block is
+re-evaluated on any config or IO-input change.
+- **Input routing modelled:** MASK (constant 0), IO (an external level on the
+  LUTn-INm IRQ), LINK (the next LUT's output) and FEEDBACK (the LUT's own
+  output). Events and peripheral sources read as 0 (config still stores).
+- **Evaluation:** because LINK/FEEDBACK route LUT outputs back as inputs, the
+  evaluator iterates to a fixed point (bounded) before publishing; each LUT's
+  output is published on its OUT IRQ when it changes. A LUT outputs 0 unless both
+  CTRLA.ENABLE and its LUTnCTRLA.ENABLE are set.
+
+Deliberate simplifications: the synchronizer/filter (FILTSEL), edge detector
+(EDGEDET), clock source (CLKSRC) and the sequencer (SEQCTRL0) are not modelled —
+those registers still store, so configuring firmware behaves; only the
+timing/stateful behaviour is absent.
+
+Verified in `tests/test_avrxt_engine.c` (now 215 checks): LUT0 wired as a 2-input
+AND of IO pins (truth-table evaluation over the input combinations), a LINK chain
+(LUT1 = NOT of LUT0's output, following it combinationally), and CTRLA.ENABLE
+gating both outputs to 0 when cleared.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): CCL, EVSYS, and the rest — added incrementally next.
+RAM at those addresses): EVSYS, PORTMUX, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -729,8 +752,8 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
-**new `avr_dac.[ch]` (DAC0 — DONE)**; remaining peripherals (CCL, EVSYS, …) to
-be added as stubs then deepened.
+**new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**;
+remaining peripherals (EVSYS, PORTMUX, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

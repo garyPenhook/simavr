@@ -36,6 +36,7 @@
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
 #include "avr_dac.h"
+#include "avr_ccl.h"
 
 static int failures;
 
@@ -1431,6 +1432,65 @@ int main(void)
 		/* DAC = 255 -> 1095 mV; 800 < 1095 => STATE 0. */
 		cpu_write(m, D + DACR_DATA, 255);
 		check("AC STATE 0 (800 < DAC 1095)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+	}
+
+	printf("== modern CCL (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t L = 0x1c0;
+		enum { CTRLA = 0x00, L0CTRLA = 0x05, L0CTRLB = 0x06, L0CTRLC = 0x07,
+			   TRUTH0 = 0x08, L1CTRLA = 0x09, L1CTRLB = 0x0a, L1CTRLC = 0x0b,
+			   TRUTH1 = 0x0c };
+		enum { CCL_EN = 0x01, LUT_EN = 0x01 };
+		/* INSEL: MASK=0, LINK=2, IO=5. */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		uint8_t l0 = 0, l1 = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_OUT),
+			rec_irq, &l0);
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT1_OUT),
+			rec_irq, &l1);
+		avr_irq_t *in0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0);
+		avr_irq_t *in1 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN1);
+
+		/* LUT0 = (IN0 AND IN1), IN2 masked. TRUTH bit at idx 0b011 => 0x08. */
+		cpu_write(m, L + L0CTRLB, (5 << 4) | 5);	/* IN1=IO, IN0=IO */
+		cpu_write(m, L + L0CTRLC, 0x00);		/* IN2=MASK */
+		cpu_write(m, L + TRUTH0, 0x08);
+		cpu_write(m, L + L0CTRLA, LUT_EN);
+		cpu_write(m, L + CTRLA, CCL_EN);
+
+		avr_raise_irq(in0, 1); avr_raise_irq(in1, 0);
+		check("AND(1,0) = 0", l0, 0);
+		avr_raise_irq(in1, 1);
+		check("AND(1,1) = 1", l0, 1);
+		avr_raise_irq(in0, 0);
+		check("AND(0,1) = 0", l0, 0);
+
+		/* LUT1 = NOT(LINK from LUT0): IN0=LINK, others masked.
+		 * out = !in0 => TRUTH bits at even idx (0,2,4,6) = 0x55. */
+		cpu_write(m, L + L1CTRLB, 0x02);	/* IN0 = LINK (LUT0 output) */
+		cpu_write(m, L + L1CTRLC, 0x00);
+		cpu_write(m, L + TRUTH1, 0x55);
+		cpu_write(m, L + L1CTRLA, LUT_EN);
+
+		/* LUT0 currently 0 (AND(0,1)) => LUT1 = NOT 0 = 1. */
+		check("LUT1 = NOT(LUT0=0) = 1", l1, 1);
+		/* Drive LUT0 to 1 => LUT1 follows to 0 (combinational LINK settles). */
+		avr_raise_irq(in0, 1);
+		check("LUT0 AND(1,1) = 1", l0, 1);
+		check("LUT1 = NOT(LUT0=1) = 0", l1, 0);
+
+		/* Disabling the CCL forces all LUT outputs to 0. */
+		cpu_write(m, L + CTRLA, 0x00);
+		check("LUT0 forced 0 when CCL disabled", l0, 0);
+		check("LUT1 forced 0 when CCL disabled", l1, 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
