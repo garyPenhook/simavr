@@ -1815,6 +1815,61 @@ int main(void)
 		check("sync strobe pulses the routed user once", g_evsys_pulses, 1);
 	}
 
+	printf("== modern EVSYS end-to-end: AC0 -> channel -> ADC0 start (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t E = 0x180, C = 0x680, A = 0x600;
+		enum { ASYNCCH0 = 0x02, ASYNCUSER1 = 0x13 };	/* ADC0 user */
+		enum { AC_ENABLE = 0x01, MUXNEG_VREF = 0x02 };
+		enum { GEN_AC0_OUT = 0x03, SEL_ASYNCCH0 = 3 };
+		enum { ADC_ENABLE = 0x01, STCONV = 0x01, STARTEI = 0x01 };
+		enum { F_RESRDY = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* AC0: V+ = AINP0, V- = internal VREF (1100 mV). Start with V+ low so the
+		 * comparator output is 0. */
+		avr_irq_t *ainp0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0);
+		avr_raise_irq(ainp0, 500);
+		cpu_write(m, C + ACR_MUXCTRLA, MUXNEG_VREF);
+		cpu_write(m, C + ACR_CTRLA, AC_ENABLE);
+
+		/* Route AC0 output through ASYNCCH0 to the ADC0 event user. */
+		cpu_write(m, E + ASYNCCH0, GEN_AC0_OUT);	/* channel source = AC0_OUT */
+		cpu_write(m, E + ASYNCUSER1, SEL_ASYNCCH0);	/* ADC0 user <- ASYNCCH0 */
+
+		/* ADC0: channel 0 = 1650 mV (=> 512), event-triggered start armed. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), 0), 1650);
+		cpu_write(m, A + ADCMR_MUXPOS, 0);
+		cpu_write(m, A + ADCMR_EVCTRL, STARTEI);
+		cpu_write(m, A + ADCMR_CTRLA, ADC_ENABLE);
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);	/* clear */
+
+		check("no conversion before event", !!(m->data[A + ADCMR_INTFLAGS] & F_RESRDY), 0);
+
+		/* Raise AINP0 above VREF: AC0 output 0->1 generates the event, EVSYS
+		 * routes it to the ADC0 user, which starts a conversion. */
+		avr_raise_irq(ainp0, 2000);
+		for (int i = 0; i < 400 && !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++)
+			avr_run(m);
+		check("AC0 event started an ADC conversion",
+			  !!(m->data[A + ADCMR_INTFLAGS] & F_RESRDY), 1);
+		check("event-triggered result = 512",
+			  (cpu_read(m, A + ADCMR_RESL) | (cpu_read(m, A + ADCMR_RESH) << 8)), 512);
+
+		/* With STARTEI cleared, a fresh AC0 event must NOT start a conversion. */
+		cpu_write(m, A + ADCMR_EVCTRL, 0x00);
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);	/* clear */
+		avr_raise_irq(ainp0, 500);			/* AC0 out 1->0 */
+		avr_raise_irq(ainp0, 2000);			/* AC0 out 0->1 (event) */
+		for (int i = 0; i < 400; i++) avr_run(m);
+		check("no conversion when STARTEI cleared",
+			  !!(m->data[A + ADCMR_INTFLAGS] & F_RESRDY), 0);
+	}
+
 	printf("== modern PORTMUX (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t P = 0x200;

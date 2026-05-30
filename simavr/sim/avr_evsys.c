@@ -97,6 +97,27 @@ avr_evsys_user_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
 		avr_raise_irq(p->io.irq + AVR_EVSYS_IRQ_USER0 + u, p->chan[ch]);
 }
 
+/* A real generator fired: drive 'level' onto every async channel whose
+ * generator-select register holds 'gen_value' (async channels = module ch 2..5,
+ * which share one source encoding). */
+void
+avr_evsys_async_generator(avr_evsys_t *p, uint8_t gen_value, uint8_t level)
+{
+	avr_t *avr = p->io.avr;
+	if (gen_value == 0)	/* OFF never matches a routed channel */
+		return;
+	level &= 1;
+	for (int k = 0; k < 4; k++) {
+		if (rd(avr, p->r_asyncch[k]) != gen_value)
+			continue;
+		int ch = 2 + k;		/* ASYNCCHk -> module channel 2+k */
+		if (level == p->chan[ch])
+			continue;
+		p->chan[ch] = level;
+		evsys_propagate(p, ch, level);
+	}
+}
+
 /* A generator (or a test) drives a channel level via its CHn IRQ. */
 static void
 avr_evsys_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
@@ -146,6 +167,8 @@ avr_evsys_init(
 	p->base = base;
 	p->r_asyncstrobe = base + EVSYSR_ASYNCSTROBE;
 	p->r_syncstrobe = base + EVSYSR_SYNCSTROBE;
+	for (int i = 0; i < 4; i++)	/* ASYNCCH0..3 generator selects */
+		p->r_asyncch[i] = base + EVSYSR_ASYNCCH0 + i;
 	for (int i = 0; i < 13; i++)	/* ASYNCUSER0..12 */
 		p->r_user[i] = base + EVSYSR_ASYNCUSER0 + i;
 	p->r_user[13] = base + EVSYSR_SYNCUSER0;

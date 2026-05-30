@@ -59,6 +59,9 @@
 /* COMMAND */
 #define STCONV_bm	0x01
 
+/* EVCTRL */
+#define STARTEI_bm	0x01
+
 /* INTCTRL / INTFLAGS */
 #define RESRDY_bm	0x01
 #define WCMP_bm		0x02
@@ -329,6 +332,14 @@ avr_adc_modern_set_temp_k(avr_adc_modern_t * p, int32_t kelvin)
 }
 
 void
+avr_adc_modern_event_start(avr_adc_modern_t * p)
+{
+	avr_t *avr = p->io.avr;
+	if (adc_enabled(p) && (rd(avr, p->r_evctrl) & STARTEI_bm))
+		avr_adc_modern_start(p);
+}
+
+void
 avr_adc_modern_init(
 		avr_t * avr,
 		avr_adc_modern_t * p,
@@ -347,6 +358,7 @@ avr_adc_modern_init(
 	p->r_ctrle = base + ADCMR_CTRLE;
 	p->r_muxpos = base + ADCMR_MUXPOS;
 	p->r_command = base + ADCMR_COMMAND;
+	p->r_evctrl = base + ADCMR_EVCTRL;
 	p->r_intctrl = base + ADCMR_INTCTRL;
 	p->r_intflags = base + ADCMR_INTFLAGS;
 	p->r_res = base + ADCMR_RESL;

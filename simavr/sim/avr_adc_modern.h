@@ -32,9 +32,11 @@
 	avr_adc_modern_set_temp_k() or by raising the temperature-sensor channel IRQ
 	(MUXPOS 0x1E), which carries Kelvin rather than millivolts.
 
-	Not modelled: event-triggered start. The temperature reading is independent of
-	the actual REFSEL (the datasheet measurement procedure assumes the 1.1V
-	internal reference).
+	Event-triggered start (EVCTRL.STARTEI) is modelled: when enabled, an event
+	delivered to the ADC (via avr_adc_modern_event_start, which sim_tiny3217 wires
+	to the EVSYS ADC0 user) starts a conversion. The temperature reading is
+	independent of the actual REFSEL (the datasheet measurement procedure assumes
+	the 1.1V internal reference).
 
 	Copyright 2026 simavr authors
 
@@ -95,7 +97,7 @@ typedef struct avr_adc_modern_t {
 
 	avr_io_addr_t	base;
 	avr_io_addr_t	r_ctrla, r_ctrlb, r_ctrlc, r_ctrle, r_muxpos, r_command;
-	avr_io_addr_t	r_intctrl, r_intflags;
+	avr_io_addr_t	r_evctrl, r_intctrl, r_intflags;
 	avr_io_addr_t	r_res, r_winlt, r_winht;	/* 16-bit (low byte address) */
 
 	avr_int_vector_t	resrdy;	/* ADCn_RESRDY */
@@ -145,6 +147,11 @@ avr_adc_modern_set_tempsense(avr_adc_modern_t * p, avr_io_addr_t tempcal_addr);
 /* Set the modelled die temperature (Kelvin) read by the temp-sensor channel. */
 void
 avr_adc_modern_set_temp_k(avr_adc_modern_t * p, int32_t kelvin);
+
+/* Deliver an event to the ADC: starts a conversion if enabled and EVCTRL.STARTEI
+ * is set (used to wire an EVSYS channel to the ADC's event input). */
+void
+avr_adc_modern_event_start(avr_adc_modern_t * p);
 
 /* Raise AINn (channel 'n') with a millivolt value to drive that analog input. */
 #define AVR_IOCTL_ADCM_GETIRQ(_name) AVR_IOCTL_DEF('a','d','m',(_name))

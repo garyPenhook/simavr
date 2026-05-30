@@ -131,6 +131,29 @@ tiny3217_vref_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
 }
 
 /*
+ * EVSYS event routing. AC0's output is an async event generator (source value
+ * AC0_OUT = 0x03): forward its level changes to EVSYS, which drives any async
+ * channel that selected it. The ADC0 EVSYS user delivers its channel to the
+ * ADC's event-start input (honoured when ADC EVCTRL.STARTEI is set).
+ */
+static void
+tiny3217_ac0_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0x03 /* AC0_OUT */, value & 1);
+}
+
+static void
+tiny3217_evsys_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	if (value & 1)			/* rising event edge starts a conversion */
+		avr_adc_modern_event_start(&mcu->adc0);
+}
+
+/*
  * On-chip routing: a BOD brown-out (VDD below the configured BOD level) resets
  * the device through RSTCTRL, which records the cause in RSTFR.BORF.
  */
@@ -212,6 +235,14 @@ tiny3217_init(struct avr_t * avr)
 
 	/* EVSYS (event system) routing fabric at 0x0180. */
 	avr_evsys_init(avr, &mcu->evsys, 0x0180, '0');
+	/* Generator: AC0 output -> EVSYS async source. User: EVSYS ADC0 -> ADC start. */
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_OUT),
+			tiny3217_ac0_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVR_EVSYS_USER_ADC0),
+			tiny3217_evsys_to_adc, mcu);
 
 	/* PORTMUX (peripheral pin routing) config store at 0x0200. */
 	avr_portmux_init(avr, &mcu->portmux, 0x0200, '0');

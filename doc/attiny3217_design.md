@@ -665,9 +665,12 @@ presented by raising the matching AINn IRQ (`AVR_IOCTL_ADCM_GETIRQ(name)`).
   SYSCFG/SIGROW now populates), so firmware applying the formula recovers the
   temperature. The die temperature is set via `avr_adc_modern_set_temp_k()` or by
   raising the 0x1E channel IRQ (which carries Kelvin, not mV).
+- **Event-triggered start (EVCTRL.STARTEI):** an event delivered to the ADC
+  (`avr_adc_modern_event_start`, wired by `sim_tiny3217` to the EVSYS ADC0 user)
+  starts a conversion when armed — see the EVSYS section for the end-to-end path.
 
-Deliberate simplifications: event-triggered start is not modelled; the
-temperature reading is independent of the actual REFSEL (the datasheet procedure
+Deliberate simplifications: the temperature reading is independent of the actual
+REFSEL (the datasheet procedure
 assumes the 1.1 V internal reference).
 
 Verified in `tests/test_avrxt_engine.c` (now 175 checks): AIN IRQ wiring, 10-bit
@@ -792,7 +795,7 @@ AND of IO pins (truth-table evaluation over the input combinations), a LINK chai
 (LUT1 = NOT of LUT0's output, following it combinationally), and CTRLA.ENABLE
 gating both outputs to 0 when cleared.
 
-### Phase 4 — peripheral: EVSYS (event system) — **DONE**
+### Phase 4 — peripheral: EVSYS (event system, with real generator/user routing) — **DONE**
 `avr_evsys.[ch]`, wired into `sim_tiny3217` at 0x180 (no interrupt). Models the
 event-routing fabric as an observable switch matrix:
 - **Channels:** six — ch0/1 = SYNCCH0/1, ch2..5 = ASYNCCH0..3. Each carries a
@@ -803,19 +806,31 @@ event-routing fabric as an observable switch matrix:
   channel changes (or a user is re-routed) the user's current value is emitted on
   its USERn OUT IRQ; one channel fans out to all users selecting it.
 
-Deliberate simplification: the generator-selection registers (ASYNCCHn/SYNCCHn)
-still store, but generators are not auto-wired into the fabric — a channel is
-driven via its CHn IRQ (or the strobe). This keeps EVSYS observable and lets
-event-aware peripherals/tests be connected later without engine changes.
+- **Generators (real routing):** `avr_evsys_async_generator(gen_value, level)`
+  drives every async channel (ASYNCCH0..3) whose generator-select register holds
+  `gen_value` — the four async channels share one source encoding, so this is a
+  direct match with no per-channel table. `sim_tiny3217` connects AC0's output
+  IRQ to it (source value AC0_OUT = 0x03), so the AC0 comparator is a real event
+  generator. Other generators (RTC, pins, …) are wired the same way as needed.
+- **Users (real delivery):** the USERn OUT IRQ is connected to the consuming
+  peripheral. `sim_tiny3217` wires the ADC0 user (ASYNCUSER1) to the ADC's
+  event-start input, so an event starts a conversion when ADC EVCTRL.STARTEI is
+  set. This is the path that makes event-triggered ADC sampling work, and closes
+  the ADC's previously-unmodelled event-start.
+- A channel can still also be driven directly via its CHn IRQ or the software
+  strobe (useful for tests and for generators not yet wired).
 
 Implementation note: `avr_io_setirqs()` builds each IRQ's name by dereferencing
 `irq_names[i]`, so every entry must be non-NULL (a NULL crashes there, not in the
 guarded `avr_init_irq` path) — EVSYS names all 21 IRQs.
 
-Verified in `tests/test_avrxt_engine.c` (now 223 checks): a user following its
+Verified in `tests/test_avrxt_engine.c` (now 351 checks): a user following its
 routed channel high/low, fan-out to two users on one channel, a re-routed user
 receiving the channel's current level immediately, an "off" user receiving
-nothing, and a software strobe pulsing the routed user once.
+nothing, a software strobe pulsing the routed user once, and — end-to-end — an
+AC0 output transition routed through ASYNCCH0 to the ADC0 user starting an
+event-triggered conversion (with the right result), and no conversion once
+EVCTRL.STARTEI is cleared.
 
 ### Phase 4 — peripheral: PORTMUX — **DONE (config store)**
 `avr_portmux.[ch]`, wired into `sim_tiny3217` at 0x200 (no interrupt). PORTMUX

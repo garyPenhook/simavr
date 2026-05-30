@@ -15,10 +15,13 @@
 	    select value v maps uniformly to channel v-1 (0 = off). When a routed
 	    channel changes, the user's current value is emitted on its USERn OUT IRQ.
 
-	The generator-selection registers (ASYNCCHn / SYNCCHn) still store, but the
-	actual generators are not auto-wired into the fabric — drive a channel via its
-	CHn IRQ (or the strobe). This keeps EVSYS observable and lets event-aware
-	peripherals/tests be wired up later without changing the engine.
+	Real generators drive channels through avr_evsys_async_generator(): the core
+	connects a peripheral's event-source IRQ to it with the generator's select
+	value, and EVSYS drives every async channel (ASYNCCH0..3) whose generator
+	select register holds that value (the four async channels share one source
+	encoding). A channel can still also be driven directly via its CHn IRQ or the
+	software strobe. Channels deliver to the real user peripherals through the
+	USERn OUT IRQs (e.g. sim_tiny3217 wires the ADC0 user to the ADC event start).
 
 	Copyright 2026 simavr authors
 
@@ -79,9 +82,21 @@ typedef struct avr_evsys_t {
 	avr_io_addr_t	r_asyncstrobe, r_syncstrobe;
 	avr_io_addr_t	r_user[AVR_EVSYS_USERS];
 
+	avr_io_addr_t	r_asyncch[4];	/* ASYNCCH0..3 generator-select registers */
 	uint8_t		chan[AVR_EVSYS_CHANNELS];	/* current channel levels */
 	int			base_irq;
 } avr_evsys_t;
+
+/* User indices into the USERn OUT IRQs (AVR_EVSYS_IRQ_USER0 + index). */
+enum {
+	AVR_EVSYS_USER_TCB0 = 0,
+	AVR_EVSYS_USER_ADC0 = 1,
+	AVR_EVSYS_USER_EVOUT0 = 8,
+	AVR_EVSYS_USER_EVOUT1 = 9,
+	AVR_EVSYS_USER_EVOUT2 = 10,
+	AVR_EVSYS_USER_TCA0 = 13,
+	AVR_EVSYS_USER_USART0 = 14,
+};
 
 /*
  * Initialise an EVSYS block at data address 'base'. 'name' is a tag for debug
@@ -93,6 +108,14 @@ avr_evsys_init(
 		avr_evsys_t * p,
 		avr_io_addr_t base,
 		char name);
+
+/*
+ * A generator fired: drive 'level' onto every async channel (ASYNCCH0..3) whose
+ * generator-select register holds 'gen_value' (the device's ASYNCCHn source
+ * encoding, e.g. AC0_OUT = 0x03), propagating to that channel's users.
+ */
+void
+avr_evsys_async_generator(avr_evsys_t * p, uint8_t gen_value, uint8_t level);
 
 #define AVR_IOCTL_EVSYS_GETIRQ(_name) AVR_IOCTL_DEF('e','v','s',(_name))
 
