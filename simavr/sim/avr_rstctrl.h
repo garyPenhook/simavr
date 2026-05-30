@@ -60,6 +60,22 @@ typedef struct avr_rstctrl_t {
 	avr_run_t	saved_run;	/* run callback saved during a software reset */
 } avr_rstctrl_t;
 
+/* RSTFR cause bits (mirrors the device header). */
+#define AVR_RSTCTRL_PORF	0x01
+#define AVR_RSTCTRL_BORF	0x02
+#define AVR_RSTCTRL_EXTRF	0x04
+#define AVR_RSTCTRL_WDRF	0x08
+#define AVR_RSTCTRL_SWRF	0x10
+
+/*
+ * Request a device reset, recording 'cause_bm' in RSTFR once it completes. Uses
+ * the same safe mechanism as the software reset (swap avr->run to a reset
+ * callback restored from the reset hook), so the reset takes effect on the next
+ * avr_run. Other peripherals (e.g. BOD brown-out) call this to reset with a cause.
+ */
+void
+avr_rstctrl_request_reset(avr_rstctrl_t * p, uint8_t cause_bm);
+
 /*
  * Initialise an RSTCTRL block at data address 'base'. 'name' is a tag for debug.
  */

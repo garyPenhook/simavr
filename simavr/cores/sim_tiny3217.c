@@ -122,6 +122,18 @@ tiny3217_vref_to_dac_ac(struct avr_irq_t * irq, uint32_t value, void * param)
 	avr_ac_set_refs(&mcu->ac0, value, mcu->ac0.dacref_mv);
 }
 
+/*
+ * On-chip routing: a BOD brown-out (VDD below the configured BOD level) resets
+ * the device through RSTCTRL, which records the cause in RSTFR.BORF.
+ */
+static void
+tiny3217_bod_brownout(struct avr_t * avr, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)avr;
+	avr_rstctrl_request_reset(&mcu->rstctrl, AVR_RSTCTRL_BORF);
+}
+
 static void
 tiny3217_init(struct avr_t * avr)
 {
@@ -220,6 +232,7 @@ tiny3217_init(struct avr_t * avr)
 	/* BOD (brown-out detector / VLM) at 0x0080; CTRLA/B from FUSE.BODCFG
 	 * (fuse index 1); BOD_VLM interrupt vector. */
 	avr_bod_init(avr, &mcu->bod, 0x0080, BOD_VLM_vect_num, 1, '0');
+	avr_bod_set_brownout_handler(&mcu->bod, tiny3217_bod_brownout, mcu);
 
 	/* SYSCFG (REVID/EXTBRK) at 0x0F00 and the signature row (SIGROW) at 0x1100;
 	 * DEVICEID is the device signature, revision A (0x00). */

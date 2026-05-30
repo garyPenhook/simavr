@@ -2225,6 +2225,42 @@ int main(void)
 		check("no interrupt (BOD off)", avr_has_pending_interrupts(m), 0);
 	}
 
+	printf("== modern BOD brown-out reset (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t Bd = 0x80, R = 0x40;
+		enum { BODR_VDD = 0 };
+		enum { RSTFR = 0x00 };
+		enum { PORF = 0x01, BORF = 0x02 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		m->fuse[1] = 0x44;	/* BOD enabled, LVL = BODLEVEL2 (2.6V) */
+		avr_init(m);
+		put16(m, 0, 0xcfff);	/* RJMP .-2 self-loop */
+		m->pc = 0;
+
+		/* Run a little so the cycle counter is non-zero; clear the power-on flag. */
+		for (int i = 0; i < 10; i++)
+			avr_run(m);
+		cpu_write(m, R + RSTFR, PORF);	/* W1C the power-on flag */
+		long before = (long)m->cycle;
+
+		avr_irq_t *vdd = avr_io_getirq(m, AVR_IOCTL_BOD_GETIRQ('0'), BODR_VDD);
+
+		/* VDD above the 2.6 V BOD level: no reset. */
+		avr_raise_irq(vdd, 3000);
+		avr_run(m);
+		check("no brown-out above BOD level", (long)m->cycle >= before, 1);
+
+		/* VDD falls below the BOD level: a brown-out reset is armed. */
+		avr_raise_irq(vdd, 2000);
+		avr_run(m);			/* performs the reset */
+		check("brown-out zeroed the cycle counter", (long)m->cycle < before, 1);
+		check("RSTFR.BORF set after brown-out", !!(m->data[R + RSTFR] & BORF), 1);
+		check("PORF not set by brown-out", !!(m->data[R + RSTFR] & PORF), 0);
+	}
+
 	printf("== modern SYSCFG / SIGROW device identity (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t SYS = 0xf00, SIG = 0x1100;

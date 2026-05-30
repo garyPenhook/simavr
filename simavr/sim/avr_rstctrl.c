@@ -44,17 +44,26 @@ static void rstctrl_do_reset(avr_t *avr)
 	avr_reset(avr);
 }
 
+void
+avr_rstctrl_request_reset(avr_rstctrl_t *p, uint8_t cause_bm)
+{
+	avr_t *avr = p->io.avr;
+	p->pending_cause |= cause_bm;
+	if (p->sw_reset_pending)
+		return;				/* a reset is already armed */
+	p->sw_reset_pending = 1;
+	p->saved_run = avr->run;
+	avr->run = rstctrl_do_reset;
+}
+
 static void
 avr_rstctrl_swrr_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
 					   void *param)
 {
 	avr_rstctrl_t *p = (avr_rstctrl_t *)param;
-	if (!(v & SWRE_bm))
-		return;
-	p->pending_cause |= SWRF_bm;
-	p->sw_reset_pending = 1;
-	p->saved_run = avr->run;
-	avr->run = rstctrl_do_reset;
+	(void)avr; (void)addr;
+	if (v & SWRE_bm)
+		avr_rstctrl_request_reset(p, SWRF_bm);
 }
 
 static void

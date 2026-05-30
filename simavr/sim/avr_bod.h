@@ -20,8 +20,10 @@
 
 	simavr has no physical supply rail, so VDD is a settable voltage (millivolts,
 	default 3300) that a board/test drives via avr_bod_set_vdd() or the VDD input
-	IRQ; the brown-out *reset* itself is not modelled (only the VLM interrupt
-	path).
+	IRQ. When the BOD is enabled and VDD falls below the BOD level (CTRLB.LVL), a
+	brown-out reset is requested via a handler the board installs
+	(avr_bod_set_brownout_handler) — sim_tiny3217 wires it to RSTCTRL so the
+	device resets with RSTFR.BORF set.
 
 	Copyright 2026 simavr authors
 
@@ -78,6 +80,12 @@ typedef struct avr_bod_t {
 	uint8_t		bodcfg_fuse_index;	/* FUSE.BODCFG index (or 0xff for none) */
 	uint32_t	vdd_mv;			/* supply voltage in mV (default 3300) */
 	uint8_t		prev_below;		/* last "VDD < VLM threshold" (edge detect) */
+	uint8_t		prev_bor;		/* last "VDD < BOD level" (brown-out edge) */
+
+	/* Brown-out reset handler (installed by the board); called when VDD falls
+	 * below the BOD level with the BOD enabled. */
+	void		(*brownout)(avr_t * avr, void * param);
+	void *		brownout_param;
 } avr_bod_t;
 
 /*
@@ -98,6 +106,11 @@ avr_bod_init(
 /* Override the modelled supply voltage (millivolts). */
 void
 avr_bod_set_vdd(avr_bod_t * p, uint32_t vdd_mv);
+
+/* Install the brown-out reset handler (called when VDD < BOD level, BOD on). */
+void
+avr_bod_set_brownout_handler(avr_bod_t * p,
+		void (*cb)(avr_t * avr, void * param), void * param);
 
 #define AVR_IOCTL_BOD_GETIRQ(_name) AVR_IOCTL_DEF('b','o','d',(_name))
 

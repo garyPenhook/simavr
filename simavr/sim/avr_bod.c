@@ -111,6 +111,13 @@ static void bod_evaluate(avr_bod_t *p)
 	}
 	/* Track the level even while disabled so enabling later sees no false edge. */
 	p->prev_below = below;
+
+	/* Brown-out reset: VDD below the BOD level (CTRLB.LVL) while enabled. Edge-
+	 * triggered so it fires once per downward crossing. */
+	uint8_t bor = p->vdd_mv < bod_lvl_mv(rd(avr, p->r_ctrlb));
+	if (bod_enabled(p) && bor && !p->prev_bor && p->brownout)
+		p->brownout(avr, p->brownout_param);
+	p->prev_bor = bor;
 }
 
 /* CTRLA: only SLEEP[1:0] is writable; ACTIVE/SAMPFREQ are fuse-loaded (R). */
@@ -185,6 +192,7 @@ avr_bod_reset(avr_io_t *io)
 	avr->data[p->r_intflags] = 0;
 	avr->data[p->r_status] = 0;
 	p->prev_below = 0;
+	p->prev_bor = 0;
 }
 
 static const char *irq_names[AVR_BOD_IRQ_COUNT] = {
@@ -202,6 +210,14 @@ avr_bod_set_vdd(avr_bod_t * p, uint32_t vdd_mv)
 {
 	p->vdd_mv = vdd_mv;
 	bod_evaluate(p);
+}
+
+void
+avr_bod_set_brownout_handler(avr_bod_t * p,
+		void (*cb)(avr_t * avr, void * param), void * param)
+{
+	p->brownout = cb;
+	p->brownout_param = param;
 }
 
 void

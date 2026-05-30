@@ -903,9 +903,13 @@ cause of the last reset and RSTCTRL.SWRR triggers a software reset.
   avr->run-swap mechanism as the watchdog) and the reset hook sets RSTFR.SWRF.
 - **RSTFR** is write-1-to-clear.
 
-Deliberate simplifications: BOR / external / UPDI reset causes are not generated,
-and a WDT timeout does not set WDRF (the WDT models the reset effect, not the
-cause flag).
+A public `avr_rstctrl_request_reset(cause_bm)` lets other peripherals reset the
+device with a recorded cause; the BOD uses it to generate **BORF** on a brown-out
+(see the BOD section).
+
+Deliberate simplifications: external / UPDI reset causes are not generated, and a
+WDT timeout does not set WDRF (the WDT models the reset effect, not the cause
+flag).
 
 Verified in `tests/test_avrxt_engine.c` (now 260 checks): PORF set at power-on,
 RSTFR W1C, and a software reset zeroing the cycle counter and setting SWRF
@@ -938,7 +942,7 @@ and a CTRLA write moves AC0's comparison reference (STATE flips at 1.1 V vs 4.3 
 against a 1.2 V input) and the DAC0 output (DATA=128 → 550 mV at the 1.1 V ref).
 Full suite regression-clean.
 
-### Phase 4 — peripheral: BOD (brown-out detector / VLM) — **DONE**
+### Phase 4 — peripheral: BOD (brown-out detector / VLM + brown-out reset) — **DONE**
 `avr_bod.[ch]`, wired into `sim_tiny3217` at 0x0080 with the BOD_VLM interrupt
 (vector 2). CTRLA (ACTIVE/SAMPFREQ/SLEEP) and CTRLB (LVL) are loaded at reset
 from FUSE.BODCFG (fuse index 1): CTRLA = `BODCFG[4:0]`, CTRLB = `BODCFG[7:5]`.
@@ -952,14 +956,22 @@ CTRLA.SLEEP is writable; CTRLB writes are ignored).
   set (raising BOD_VLM if INTCTRL.VLMIE) on a crossing in the INTCTRL.VLMCFG
   direction (BELOW / ABOVE / CROSS). VLMS/VLMIF are only updated while the BOD is
   enabled (ACTIVE ≠ DIS); VLMIF is write-1-to-clear.
-- **Not modelled:** the brown-out *reset* itself (only the VLM interrupt path),
-  sampled-mode timing, and sleep-mode gating (SLEEP is stored only).
+- **Brown-out reset:** when the BOD is enabled and VDD falls below the BOD level
+  (CTRLB.LVL — distinct from the higher VLM threshold), a brown-out reset is
+  requested through a board-installed handler. `sim_tiny3217` wires it to
+  `avr_rstctrl_request_reset(.., AVR_RSTCTRL_BORF)`, so the device resets via the
+  same safe swap-`avr->run` path as the software/watchdog reset and comes back
+  with RSTFR.BORF set. The crossing is edge-triggered (one reset per downward
+  crossing). RSTCTRL gained a public `avr_rstctrl_request_reset(cause)` for this.
+- **Not modelled:** sampled-mode timing and sleep-mode gating (SLEEP is stored
+  only).
 
-Verified in `tests/test_avrxt_engine.c` (now 298 checks): CTRLA/CTRLB load from a
+Verified in `tests/test_avrxt_engine.c` (now 369 checks): CTRLA/CTRLB load from a
 programmed FUSE.BODCFG, CTRLB and CTRLA.ACTIVE are read-only, VLMS tracks VDD vs
 the threshold, a fall below raises VLMIF + the interrupt (BELOW mode ignores the
-rise, ABOVE mode flags it), VLMLVL rescales the threshold, and with the BOD
-disabled by fuse VLMS/VLMIF stay clear and no interrupt is raised. Full suite
+rise, ABOVE mode flags it), VLMLVL rescales the threshold, with the BOD disabled
+by fuse VLMS/VLMIF stay clear, and dropping VDD below the BOD level brown-out
+resets the device with RSTFR.BORF set (and not above it). Full suite
 regression-clean.
 
 ### Phase 4 — device identity: SYSCFG + signature row (SIGROW) — **DONE**
