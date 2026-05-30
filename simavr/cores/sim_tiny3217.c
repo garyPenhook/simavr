@@ -57,12 +57,13 @@
 #include "avr_slpctrl.h"
 #include "avr_rstctrl.h"
 #include "avr_bod.h"
+#include "avr_syscfg.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
  * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX, VREF, TCD0,
- * the WDT, CRCSCAN, SLPCTRL, RSTCTRL and BOD.
+ * the WDT, CRCSCAN, SLPCTRL, RSTCTRL, BOD, and SYSCFG/SIGROW (device identity).
  */
 struct mcu_t {
 	avr_t				core;
@@ -88,6 +89,7 @@ struct mcu_t {
 	avr_slpctrl_t		slpctrl;
 	avr_rstctrl_t		rstctrl;
 	avr_bod_t			bod;
+	avr_syscfg_t		syscfg;
 };
 
 /*
@@ -210,6 +212,10 @@ tiny3217_init(struct avr_t * avr)
 	/* BOD (brown-out detector / VLM) at 0x0080; CTRLA/B from FUSE.BODCFG
 	 * (fuse index 1); BOD_VLM interrupt vector. */
 	avr_bod_init(avr, &mcu->bod, 0x0080, BOD_VLM_vect_num, 1, '0');
+
+	/* SYSCFG (REVID/EXTBRK) at 0x0F00 and the signature row (SIGROW) at 0x1100;
+	 * DEVICEID is the device signature, revision A (0x00). */
+	avr_syscfg_init(avr, &mcu->syscfg, 0x0f00, 0x1100, 0x00);
 }
 
 static void

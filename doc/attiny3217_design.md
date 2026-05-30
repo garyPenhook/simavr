@@ -919,9 +919,26 @@ rise, ABOVE mode flags it), VLMLVL rescales the threshold, and with the BOD
 disabled by fuse VLMS/VLMIF stay clear and no interrupt is raised. Full suite
 regression-clean.
 
-All named ATtiny3217 peripheral blocks are now modelled. Any further blocks
-(e.g. the signature/SYSCFG rows beyond what is already wired) are added
-incrementally as needed.
+### Phase 4 — device identity: SYSCFG + signature row (SIGROW) — **DONE**
+`avr_syscfg.[ch]`, wired into `sim_tiny3217`: SYSCFG at 0x0F00 and SIGROW at
+0x1100. These are read-only device-information rows (no interrupts, no state).
+- **SIGROW.DEVICEID[2:0]** is populated at reset from the core's `signature[]`
+  (0x1E 0x95 0x22 for the ATtiny3217) so firmware that reads the signature row to
+  identify the part sees the real device ID instead of plain RAM.
+- **SYSCFG.REVID** reports the silicon revision (0x00 = rev A); read-only.
+- **SYSCFG.EXTBRK** (OCD external break) is modelled as a writable store; the
+  debug pin is not simulated.
+- Writes to REVID and DEVICEID are ignored (read-only).
+
+Deliberate simplifications: the SERNUM (serial number) and calibration
+(TEMPSENSE, OSCnnERRxV) signature-row bytes are device-unique factory data with
+no canonical simulator value and are left as zero read-only storage.
+
+Verified in `tests/test_avrxt_engine.c` (now 306 checks): DEVICEID[2:0] equals
+the device signature and the core's `signature[]`, DEVICEID/REVID are read-only,
+REVID reports rev A, and EXTBRK stores. Full suite regression-clean.
+
+All named ATtiny3217 peripheral and identity blocks are now modelled.
 
 ## 9. Files touched (summary)
 
@@ -942,7 +959,8 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
 config store)**, **new `avr_vref.[ch]` (VREF — DONE)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
 always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**, **new `avr_rstctrl.[ch]` (RSTCTRL —
-DONE)**, **new `avr_bod.[ch]` (BOD / VLM — DONE)**.
+DONE)**, **new `avr_bod.[ch]` (BOD / VLM — DONE)**, **new `avr_syscfg.[ch]`
+(SYSCFG + SIGROW device identity — DONE)**.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

@@ -47,6 +47,7 @@
 #include "avr_slpctrl.h"
 #include "avr_rstctrl.h"
 #include "avr_bod.h"
+#include "avr_syscfg.h"
 
 static int failures;
 
@@ -1990,6 +1991,38 @@ int main(void)
 		check("VLMS not updated (BOD off)", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 0);
 		check("VLMIF not set (BOD off)", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 0);
 		check("no interrupt (BOD off)", avr_has_pending_interrupts(m), 0);
+	}
+
+	printf("== modern SYSCFG / SIGROW device identity (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t SYS = 0xf00, SIG = 0x1100;
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		/* SIGROW.DEVICEID[2:0] is the ATtiny3217 signature 0x1E 0x95 0x22. */
+		check("DEVICEID0 = signature[0]", cpu_read(m, SIG + SIGROWR_DEVICEID0), 0x1e);
+		check("DEVICEID1 = signature[1]", cpu_read(m, SIG + SIGROWR_DEVICEID1), 0x95);
+		check("DEVICEID2 = signature[2]", cpu_read(m, SIG + SIGROWR_DEVICEID2), 0x22);
+
+		/* DEVICEID matches the core's own signature[] table. */
+		check("DEVICEID0 matches core signature", cpu_read(m, SIG + SIGROWR_DEVICEID0),
+				m->signature[0]);
+
+		/* DEVICEID is read-only: a write is ignored. */
+		cpu_write(m, SIG + SIGROWR_DEVICEID0, 0x00);
+		check("DEVICEID0 read-only", cpu_read(m, SIG + SIGROWR_DEVICEID0), 0x1e);
+
+		/* SYSCFG.REVID reports revision A (0x00) and is read-only. */
+		check("SYSCFG REVID = 0 (rev A)", cpu_read(m, SYS + SYSCFGR_REVID), 0x00);
+		cpu_write(m, SYS + SYSCFGR_REVID, 0x07);
+		check("SYSCFG REVID read-only", cpu_read(m, SYS + SYSCFGR_REVID), 0x00);
+
+		/* SYSCFG.EXTBRK is a writable store. */
+		cpu_write(m, SYS + SYSCFGR_EXTBRK, 0x01);
+		check("SYSCFG EXTBRK stores", cpu_read(m, SYS + SYSCFGR_EXTBRK), 0x01);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
