@@ -216,8 +216,9 @@ typedef struct avr_t {
 	uint32_t			e2end;
 	uint8_t				vector_size;
 	uint8_t				resetting; // Set only during avr_reset().
-	// accessible via LPM (BLBSET)
-	uint8_t				fuse[6];
+	// accessible via LPM (BLBSET). Classic AVRs use up to 6 fuse bytes; modern
+	// (AVRxt) parts have up to 10 (ATtiny3217: FUSE_MEMORY_SIZE = 10).
+	uint8_t				fuse[10];
 	uint8_t				lockbits;
 	// accessible via LPM (if SIGRD is present)
 	uint8_t				signature[3];
@@ -374,6 +375,20 @@ typedef struct avr_t {
 		// appears (0 = no mapping).
 		uint16_t	flashmap_start;
 	} arch;
+
+	/*
+	 * Low-I/O redirect table (modern AVR). On AVRxt the register file is not
+	 * mapped into the data space, so addresses 0x00..0x3F are I/O — in
+	 * particular the VPORTs (0x00..0x0B), which are bit-addressable aliases of
+	 * the full PORT registers up at 0x400+. simavr keeps r0..r31 in data[0..31]
+	 * though, so a *memory* access (LDS/STS/IN/OUT/SBI/CBI) to such an address
+	 * must be redirected to the real register, while *register operands* (which
+	 * never go through _avr_set_ram/_avr_get_ram) keep using data[]. A non-zero
+	 * entry redirects a memory access at that low address to the target data
+	 * address. Only consulted for modern cores; zero for classic.
+	 */
+	#define AVR_LOWIO_REDIRECT_SIZE 0x40
+	uint16_t			lowio_redirect[AVR_LOWIO_REDIRECT_SIZE];
 
 	/*
 	 * This block allows sharing of the IO write/read on addresses between

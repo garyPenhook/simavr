@@ -341,114 +341,254 @@ and CVT compact vector table (vectors assumed at flash 0); the SP-write
 vector-number range rather than exact IVEC adjacency (negligible). The CPUINT
 register block at 0x110 itself is wired in Phase 4/5 via the API above.
 
-### Phase 4 — peripherals — **IN PROGRESS (M1 reached)**
-Milestone **M1 "boots & blinks"** is done: a real `avr-gcc -mmcu=attiny3217`
-firmware loads and runs end-to-end.
-- **`attiny3217` core descriptor** (`cores/sim_tiny3217.{c,h}`): memory map,
-  signature `1E 95 22`, the modern `arch` block (io_offset 0, SP 0x3D, SREG
-  0x3F, CCP 0x34, flashmap 0x8000, flags MODERN|CCP|XT_TIMING|CPUINT), reset
-  flags pointed at `RSTCTRL.RSTFR`, 4-byte (JMP) vectors. Addresses are spelled
-  out from the datasheet rather than the struct-based avr-libc header.
-- **Modern PORT peripheral** (`sim/avr_port.{c,h}`): DIR/OUT plus the
-  SET/CLR/TGL convenience registers, IN (write-toggles-OUT), INTFLAGS
-  (write-1-clear), per-pin IRQs (filtered, with the `irqing` feedback guard
-  like `avr_ioport`), and a GETIRQ ioctl. VPORT/PINnCTRL interrupts deferred.
-- **Verified:** `tests/attiny3217_blink.c` (firmware) + `tests/test_attiny3217_blink.c`
-  (harness) — PA3 configured via `DIRSET`, toggled via `OUTTGL`, observed
-  through the pin IRQ. Auto-built by the test Makefile (`-mmcu` derived from the
-  filename) and runs under `make run_tests`.
+### Phase 4 — peripheral: TWI0 (modern I²C) — **DONE (first peripheral)**
+Modern TWI0 host + client register front-end (`avr_twi_modern.[ch]`), driving
+the *same* wire IRQ protocol as the classic `avr_twi.c` (`TWI_IRQ_INPUT/_OUTPUT/
+_STATUS` carrying `TWI_COND_*` messages). It is therefore bus-compatible with
+the existing simavr I²C parts (`examples/parts/i2c_eeprom.c`, `ds1338`, …) and
+with the classic TWI peripheral — a modern master can drive a classic slave and
+vice-versa, and it self-registers under `AVR_IOCTL_TWI_GETIRQ(name)` so
+`i2c_eeprom_attach()` works unchanged.
 
-**M2 progress — interrupts + a timer run:**
-- **CPUINT register block** (`sim/avr_cpuint.{c,h}`): maps CTRLA (LVL0RR),
-  STATUS (read), LVL0PRI (read/write, reflects round-robin updates) and LVL1VEC
-  onto the Phase 3 engine API. CVT/IVSEL not modelled.
-- **TCB timer** (`sim/avr_tcb.{c,h}`): periodic-interrupt mode (CNTMODE=0) on
-  CLK_PER with the CLKSEL prescale, CCMP period, sticky CAPT flag + interrupt,
-  live CNT read. Other TCB modes warn and are not yet modelled. TCB0/TCB1 wired
-  with vectors 13/14.
-- **Engine fix:** `avr_regbit_t.reg` widened 9→16 bits. The old 9-bit field
-  (max 0x1FF) could not address modern peripheral registers (TCB at 0xA45,
-  etc.); now covers the whole data space. Same storage, no API change, classic
-  cores unaffected.
-- **Verified:** `tests/attiny3217_tcb_irq.c` — TCB0 periodic ISR toggles PA3;
-  the host test observes ~2000 toggles, proving TCB → CPUINT dispatch (JMP
-  vector table) → ISR → sticky-flag clear → modern RETI end to end.
+- **Register block** at a single base (0x810 on ATtiny3217), 16 bytes:
+  CTRLA/DBGCTRL, host MCTRLA/MCTRLB/MSTATUS/MBAUD/MADDR/MDATA, client
+  SCTRLA/SCTRLB/SSTATUS/SADDR/SDATA/SADDRMASK. Layout matches the device
+  header `TWI_t`.
+- **Host (master):** writing MADDR issues START+address and (for reads) clocks
+  in the first byte; MDATA write/read transmits/receives; MCTRLB MCMD strobes
+  drive REPSTART / RECVTRANS (ACK+next) / STOP. MSTATUS models BUSSTATE,
+  RXACK (ACK/NACK), CLKHOLD, and the WIF/RIF flags + W1C clears. Two CPUINT
+  vectors: **TWIM** (host, vec 25) gated by WIEN/RIEN, **TWIS** (client,
+  vec 24) by APIEN/PIEN/DIEN; flags are sticky (software-cleared), matching the
+  CPUINT model.
+- **Client (slave):** address match (SADDR/SADDRMASK) raises APIF + AP/DIR and
+  holds the clock; data in/out via SDATA with DIF; STOP raises APIF. SCTRLB
+  SCMD releases the held flags.
+- **Engine fix surfaced by this work:** `avr_regbit_t.reg` was only **9 bits**
+  (max 0x1FF), so it could not address modern peripheral registers (every
+  interrupt-enable bit lives at 0x800+). Widened to **13 bits** (covers the
+  0x1FFF modern I/O span; 13+3+8 = 24 bits still pack into the uint32 and are
+  still register-passed). This was the missing piece of the Phase-1 addressing
+  model — without it no modern peripheral interrupt can be enabled. Classic
+  cores are unaffected (all existing `.tst` regressions pass).
+- Verified by `tests/test_avrxt_engine.c` (now 60 checks): master write/read
+  transactions against a register-pointer slave over the wire (incl. address
+  NACK to an absent slave, multi-byte read with ACK+continue), and the client
+  path (address-match APIF + TWIS pending, data-in DIF/SDATA, STOP APIF).
 
-**USART0 added:**
-- **`sim/avr_usart.{c,h}`**: modern register-block USART. Polled or
-  interrupt-driven TX (bytes emitted on the OUTPUT IRQ), RX injected via the
-  INPUT IRQ; DREIF/TXCIF/RXCIF flags and the RXC/DRE/TXC interrupts
-  (vectors 27/28/29). INPUT/OUTPUT IRQ convention matches `avr_uart`. TX is
-  modelled as immediate (no baud timing); synchronous/SPI-master/IRCOM modes
-  not modelled.
-- **Verified:** `tests/attiny3217_usart.c` sends "Hello modern AVR!\n" via
-  polled DREIF; the host captures the exact bytes off the OUTPUT IRQ.
+Deliberate simplifications (documented; match the classic TWI's synchronous wire
+model): the bus is delivered synchronously (a slave's reply lands during the
+master's raise), so MBAUD/bit-timing is not cycle-modelled, and the client
+auto-ACKs at the wire level (it cannot clock-stretch then NACK an address — the
+synchronous bus has no place to defer). Smart-mode (SMEN), quick-command,
+timeout/bus-error detection and dual-mode are not modelled.
 
-**CLKCTRL added:**
-- **`sim/avr_clkctrl.{c,h}`**: clock controller. Control registers are plain
-  storage; `MCLKSTATUS` is derived and reports the selected source as running
-  and stable (SOSC=0) so firmware polling oscillator-ready / clock-switch status
-  does not hang. Consistent with simavr's convention, the CPU runs at the
-  firmware's F_CPU; the prescaler is not reflected back into avr->frequency
-  (deferred).
-- **Verified:** `tests/attiny3217_clkctrl.c` does a CCP-protected `MCLKCTRLB`
-  write then waits on `MCLKSTATUS.OSC20MS` before blinking — exercising both
-  CCP-protected writes and the status model.
+### Phase 5 — core descriptor: `sim_tiny3217` — **DONE (TWI0 wired)**
+The first modern core descriptor, `simavr/cores/sim_tiny3217.c`, following the
+classic `sim_tiny85.c` pattern but using the new modern scaffolding:
+- **`sim_core_declare_modern.h`** — `MODERN_CORE(_vector_size)` analogue of the
+  classic `DEFAULT_CORE`. Fills `ioend` (0x1FFF, top of extended I/O), `ramend`/
+  `flashend`/`e2end`/`signature` from the DFP header, and the whole `arch`
+  block: `flags = MODERN|CCP|XT_TIMING|CPUINT`, `io_offset=0`, `sp_addr=0x3D`,
+  `sreg_addr=0x3F`, `ccp_addr=0x34`, `flashmap_start=MAPPED_PROGMEM_START`
+  (0x8000).
+- **`cores/avr/iotn3217.h`** — the device header is bundled alongside the other
+  `cores/avr/*.h` so the Makefile's core auto-discovery (host-`cc -E`) resolves
+  it without the DFP on the include path. Confirmed `SIM_VECTOR_SIZE = 4` (the
+  toolchain emits `JMP` vectors) via `avr-objdump` of a linked vector table.
+- The core's `init` calls `avr_twi_modern_init(avr, &mcu->twi, 0x0810,
+  TWI0_TWIM_vect_num, TWI0_TWIS_vect_num, '0')`. Auto-discovery picks the file
+  up (`CONFIG_TINY3217`, `extern avr_kind_t tiny3217`) with no Makefile edits.
+- **Engine fix:** `avr_t.fuse[6]` → `fuse[10]` (ATtiny3217 has
+  `FUSE_MEMORY_SIZE = 10`); only affects ELF `.fuse` loading, classic cores
+  unchanged.
 
-**TCA added:**
-- **`sim/avr_tca.{c,h}`**: 16-bit TCA timer, Normal mode. Counter on CLK_PER
-  with the CLKSEL prescale (1..1024), overflow at PER (OVF) + wrap, and CMP0/1/2
-  compare-match interrupts; live CNT read; PER resets to 0xFFFF. Split mode and
-  the PWM waveform-pin output are not yet modelled (PWM needs PORTMUX/port
-  override). TCA0 wired with vectors 8/10/11/12.
-- **Verified:** `tests/attiny3217_tca.c` — TCA0 overflow ISR toggles PA3 and a
-  CMP0 compare ISR toggles PA4; the host observes both.
+Verified two ways in `tests/test_avrxt_engine.c` (now 75 checks):
+1. `avr_make_mcu_by_name("attiny3217")` + `avr_init` reports the modern arch
+   (MODERN/CPUINT, SP/SREG/CCP/flashmap, vector_size 4, RAMEND, signature) and
+   the TWI0 MADDR/MCTRLB write hooks are registered at 0x810+; a master write
+   transaction drives a loopback slave.
+2. **Full end-to-end:** a bare-metal ATtiny3217 firmware built with avr-gcc
+   (`TWI0.MADDR/MDATA/MCTRLB` via `iotn3217.h`) is loaded onto the core, run,
+   and writes a byte into a real `examples/parts/i2c_eeprom.c` over the wire —
+   exercising AVRxt execution, modern addressing (`STS 0x0816`, …), CPUINT and
+   the TWI0 peripheral together.
 
-**NVMCTRL (EEPROM) added:**
-- **`sim/avr_nvmctrl.{c,h}`**: NVM controller, EEPROM path. The mapped EEPROM
-  (0x1400, 256 B) uses a page-buffer model — writes to the mapped region stage
-  into a buffer, and a CTRLA command (PAGEWRITE / PAGEERASEWRITE / PAGEERASE /
-  EEERASE / page-buffer-clear) commits or erases. EEPROM lives in a persistent
-  module buffer (init 0xFF) that survives avr_reset() and is mirrored into the
-  data space for direct mapped reads (repopulated in the module reset, which
-  runs after avr_reset() zeroes the data space). EEREADY interrupt (vector 30).
-  Flash self-programming (SPM through the mapped flash window) not yet modelled.
-- **Verified:** `tests/attiny3217_eeprom.c` writes two bytes via the mapped
-  region + PAGEERASEWRITE, reads them back, and signals success on PA3.
+### Phase 4 — peripheral: PORT / VPORT — **DONE**
+Modern GPIO (`avr_port_modern.[ch]`), reusing the classic IOPORT IRQ/ioctl
+abstraction (`avr_ioport.h`) so existing simavr parts (LEDs, buttons) and VCD
+wiring connect unchanged. Wired into `sim_tiny3217` as PORTA/B/C (0x400/0x420/
+0x440) with VPORTA/B/C (0x00/0x04/0x08).
+- **Full PORT block:** DIR/OUT/IN, the SET/CLR/TGL write-strobe aliases (which
+  read back DIR/OUT), per-pin PINnCTRL (PULLUPEN internal pull-ups, INVEN
+  inversion, ISC sense), INTFLAGS, and "write 1s to IN toggles OUT".
+- **Pin interrupts:** per-pin PINnCTRL.ISC (BOTHEDGES/RISING/FALLING/LEVEL);
+  a triggered input sets its INTFLAGS bit and raises `PORTx_PORT`. The vector's
+  "enable" is INTFLAGS itself (mask 0xFF) so it queues while any flag is set and
+  is W1C-cleared — same sticky pattern as TWI.
+- **VPORT (the hard part):** modern VPORTs are bit-addressable aliases in the
+  low I/O space (0x00..0x0B) so firmware uses single-cycle `SBI`/`CBI`/`OUT` on
+  them. But simavr keeps the GP register file r0..r31 in `data[0..31]`, which
+  *overlaps* the VPORT addresses. The fix is a new engine **low-I/O redirect**:
+  `avr->lowio_redirect[0x40]` is consulted only on the *memory-access* path
+  (`_avr_set_ram`/`_avr_get_ram`), so `SBI VPORTA_OUT` resolves to `PORTA.OUT`
+  at 0x404, while *register operands* (which never go through those functions)
+  keep using `data[]`. Zero-cost for classic cores (table is empty;
+  short-circuited). `avr_port_modern_init()` installs the four redirects per
+  VPORT. (A sentinel `AVR_PORT_MODERN_NO_VPORT = 0xFFFF` distinguishes "no
+  VPORT" from the legitimate VPORTA base of 0x0000.)
 
-**SPI0 added:**
-- **`sim/avr_spi_modern.{c,h}`**: modern SPI, normal master mode. Writing DATA
-  emits the byte on the OUTPUT IRQ (MOSI), latches the value presented on the
-  INPUT IRQ (MISO) as received, sets IF and raises the SPI interrupt if enabled;
-  reading DATA clears IF. Buffer mode, slave mode and clock timing not modelled.
-  Named distinctly (avr_spim_*) to avoid clashing with the classic avr_spi.
-- **Verified:** `tests/attiny3217_spi.c` does a master transfer; the host wires
-  MOSI→MISO (loopback) and the firmware confirms it received what it sent.
+Verified in `tests/test_avrxt_engine.c` (now 94 checks): register access and the
+SET/CLR/TGL aliases; pin output observed via the PIN_ALL IRQ; pin-change
+interrupt via ISC + INTFLAGS W1C; and **executed** `SBI`/`CBI`/`STS` to VPORTA
+landing on PORTA with **r1 left untouched**. End-to-end: an avr-gcc firmware
+that drives PORTA via `OUT`/`SBI`/`CBI` on VPORT and `STS` on PORTA.OUTSET
+produces the expected pin levels (0xD6) on the core.
 
-**ADC0 added:**
-- **`sim/avr_adc_modern.{c,h}`**: single-shot ADC. The analog input per channel
-  is supplied (in mV) by raising the matching AINn IRQ; writing COMMAND.STCONV
-  converts the MUXPOS channel against vref into RES (10- or 8-bit per RESSEL),
-  sets RESRDY and raises the interrupt. Free-running, window comparator,
-  accumulation and exact reference selection are not modelled; vref defaults to
-  ~VDD (5000 mV, configurable per core).
-- **Verified:** `tests/attiny3217_adc.c` — host presents 2500 mV on AIN3 (half
-  of the 5000 mV ref); firmware reads ~512 (10-bit half-scale).
+### Phase 4 — peripheral: CLKCTRL — **DONE**
+Main-clock controller (`avr_clkctrl.[ch]`), wired into `sim_tiny3217` at 0x60.
+Its job is to keep `avr->frequency` in step with what the firmware configures so
+cycle-time conversions and timers are correct.
+- **MCLKCTRLA.CLKSEL** selects the source: OSC20M (16/20 MHz, chosen from
+  `FUSE.OSCCFG.FREQSEL`), OSCULP32K / XOSC32K (32.768 kHz), or EXTCLK.
+- **MCLKCTRLB.PEN/PDIV** applies the prescaler (the full 2/4/8/16/32/64/6/10/12/
+  24/48 division table); `avr->frequency = base / div` is recomputed on every
+  change.
+- **CCP-gated:** MCLKCTRLA/B and MCLKLOCK are Configuration-Change-Protected —
+  writes are honoured only while `avr_ccp_io_write_enabled()` (so real
+  `_PROTECTED_WRITE`/`ccp_write_io` sequences work, and a bare write is ignored).
+  **MCLKLOCK.LOCKEN** makes the clock config read-only until reset.
+- **Reset default:** OSC20M with PDIV = 6X (MCLKCTRLB = 0x11) → the documented
+  ~3.33 MHz CLK_PER on a 20 MHz part; `MODERN_CORE` seeds `.frequency` to match.
+- MCLKSTATUS reflects the selected source as "stable"; it is read-only.
 
-Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
-Phase 1), prescaler→frequency in CLKCTRL, TCA split/PWM modes, flash
-self-programming, ELF .eeprom preload, RTC/PIT, TWI0, ADC reference selection
-+ free-running, USART/SPI RX-path and slave tests, and stubs for the rest.
+Verified in `tests/test_avrxt_engine.c` (now 101 checks): reset default
+3.33 MHz, PEN/PDIV → 20/5/3.33 MHz, source switch to 32.768 kHz, a bare
+(non-CCP) write ignored, and LOCKEN freezing the config. End-to-end: an avr-gcc
+firmware using `_PROTECTED_WRITE(CLKCTRL.MCLKCTRLB, PEN|PDIV_4X)` takes the core
+from 3.33 MHz to 5 MHz at run time (exercising the CCP window + CLKCTRL).
+
+### Phase 4 — peripheral: TCB (16-bit Timer type B) — **DONE**
+`avr_tcb.[ch]`, wired into `sim_tiny3217` as TCB0/TCB1 (0xA40/0xA50, vectors
+13/14). Scope is the dominant "periodic tick" use — **Periodic Interrupt mode**
+(CNTMODE = INT/TIMEOUT):
+- The counter is driven by a simavr **cycle timer** scheduled `(CCMP+1)*prescale`
+  CPU cycles ahead. On each expiry the **CAPT** flag (INTFLAGS bit0) is set and
+  `TCBn_INT` is raised (if INTCTRL.CAPT is enabled), then it reschedules — a
+  clean periodic source with no per-cycle overhead.
+- **CTRLA.CLKSEL:** CLKDIV1 (CLK_PER) and CLKDIV2 (CLK_PER/2); CLKTCA falls back
+  to CLK_PER (TCA prescaler not yet modelled). CTRLA.ENABLE starts/stops and
+  drives STATUS.RUN.
+- **CNT** reads return a computed live value (elapsed cycles → ticks, with the
+  high byte latched on low-byte read, as the hardware does via TEMP).
+- INTFLAGS is W1C; the CAPT vector uses the standard engine raised/enable
+  reg-bits with `raise_sticky` (software-cleared, matching modern INTFLAGS).
+- Other count modes (input capture / single-shot / 8-bit PWM) and event inputs
+  are not modelled; their registers still store so configuring firmware is fine.
+
+Verified in `tests/test_avrxt_engine.c` (now 110 checks): STATUS.RUN, first CAPT
+at ~101 cycles for CCMP=100, the periodic cadence after W1C, live CNT read,
+clean stop on disable, and CLKDIV2 doubling the period. End-to-end: an avr-gcc
+firmware with `ISR(TCB0_INT_vect)` toggling PA0 every 501 cycles produces exactly
+99 toggles in 50 000 cycles — exercising TCB + CPUINT dispatch + PORT together.
+
+### Phase 4 — peripheral: TCA0 (16-bit Timer type A) — **DONE**
+`avr_tca.[ch]`, wired into `sim_tiny3217` at 0xA00 (vectors OVF=8, CMP0/1/2 =
+10/11/12). Models **single (16-bit) mode**: a prescaled up-counter (0..TOP,
+TOP = PER) with the overflow and three compare-match interrupts.
+- **Next-event scheduler:** instead of stepping every cycle, one simavr cycle
+  timer is scheduled to the nearest interesting count — the smallest compare
+  value above the current count, or the wrap (TOP+1). On expiry it sets the
+  matching INTFLAGS (CMP0/1/2 and/or OVF), raises those vectors, and schedules
+  the next event. Cheap and exact for the interrupt timing.
+- **CTRLA.CLKSEL** prescaler: 1/2/4/8/16/64/256/1024. ENABLE starts/stops.
+- **PER** is TOP; **CMP0/1/2** are the compare values (read live from the
+  registers, so changes take effect at the next event). **CNT** reads compute
+  the live count (high byte latched); writing CNT re-anchors the phase.
+- Four interrupt vectors use the standard engine raised/enable reg-bits
+  (INTCTRL/INTFLAGS bits OVF=0, CMP0=4, CMP1=5, CMP2=6) with `raise_sticky`;
+  INTFLAGS is W1C.
+- Split (dual 8-bit) mode and the waveform-output pins (WO0..5 via PORTMUX) are
+  not modelled yet; their registers still store so configuring firmware is fine.
+
+Verified in `tests/test_avrxt_engine.c` (now 118 checks): CMP1 match at CNT=50,
+overflow at TOP+1 = 201 cycles, pending interrupt, live CNT read, W1C, overflow
+cadence, the /4 prescaler stretching the period to ~804 cycles, and a clean stop
+on disable. End-to-end: an avr-gcc firmware with `ISR(TCA0_OVF_vect)` and
+`CLKSEL_DIV4 | PER=999` toggles PA0 every 4000 cycles (~20 toggles in 80 000
+cycles) — TCA0 + prescaler + CPUINT + PORT together.
+
+### Phase 4 — peripheral: USART0 — **DONE**
+`avr_usart_modern.[ch]`, wired into `sim_tiny3217` at 0x800 (vectors RXC=27,
+DRE=28, TXC=29). It reuses the **classic UART wire IRQ convention**
+(`UART_IRQ_INPUT`/`_OUTPUT`, `AVR_IOCTL_UART_GETIRQ`) so the existing simavr
+UART endpoints (uart_pty, uart_udp, the simduino bridge) connect unchanged; only
+the register glue is new.
+- **Transmit:** writing TXDATAL (with CTRLB.TXEN) emits the byte on
+  `UART_IRQ_OUTPUT` immediately and arms a cycle timer for the frame time after
+  which TXCIF asserts (TXC interrupt if enabled). The data register reads as
+  always empty (DREIF stays set), which drives both polled and DRE-interrupt
+  transmitters.
+- **Receive:** `UART_IRQ_INPUT` (with CTRLB.RXEN) queues the byte in a 256-entry
+  fifo and sets RXCIF (RXC interrupt if enabled); reading RXDATAL pops it and
+  clears RXCIF when the fifo drains. RXDATAH bit7 mirrors RXCIF.
+- **Frame time** is derived from BAUD (async-normal: CLK_PER cycles/bit = BAUD/4,
+  ~10-bit frame), so TXC ordering/timing is reasonable. STATUS.TXCIF is W1C;
+  CTRLA enables (RXCIE/DREIE/TXCIE) re-raise already-pending flags. 9-bit/parity/
+  sync/one-wire modes are not modelled (registers still store).
+
+Verified in `tests/test_avrxt_engine.c` (now 133 checks): reset DREIF, TX byte on
+the OUTPUT IRQ, deferred TXCIF + W1C, RXCIF on input, RXDATAL read, in-order fifo
+draining, RXC pending when enabled, and input ignored with RXEN=0. End-to-end: an
+avr-gcc echo firmware (`RXCIF`→`RXDATAL`→poll `DREIF`→`TXDATAL`) round-trips
+"Hi!" through the core's USART0 wire IRQs.
+
+### Phase 4 — peripheral: NVMCTRL (EEPROM) — **DONE**
+`avr_nvmctrl.[ch]`, wired into `sim_tiny3217` at 0x1000 (EE-ready vector = 30),
+managing the memory-mapped EEPROM at 0x1400 (256 B). It replaces the classic
+EECR/SPMCSR with the modern command-register model.
+- **EEPROM storage** lives in `avr->data[0x1400..]`, so it is read back with an
+  ordinary load from the mapped address. Writes to that region do **not** land
+  there directly — they accumulate in a **page buffer** with a per-byte dirty
+  mask, mirroring how the hardware loads the buffer before a command.
+- **CTRLA.CMD** (CCP-protected — honoured only inside a CCP window, so real
+  `_PROTECTED_WRITE_SPM` sequences work): PAGEWRITE / PAGEERASEWRITE commit the
+  dirty buffer bytes; PAGEERASE sets them to 0xFF; PAGEBUFCLR discards the
+  buffer; EEERASE / CHIPERASE wipe the whole EEPROM. Completion sets
+  INTFLAGS.EEREADY and raises `NVMCTRL_EE` if enabled.
+- Commands complete instantly (STATUS.EEBUSY/FBUSY never observed set), so the
+  usual `while (NVMCTRL.STATUS & EEBUSY)` poll passes. INTFLAGS is W1C.
+- The committed-bytes-only flush means single-byte writes preserve their
+  neighbours (matching practical use). Flash self-programming is not modelled
+  (writes to mapped flash are ignored by the engine).
+
+Verified in `tests/test_avrxt_engine.c` (now 147 checks): erased read 0xFF,
+buffered write not visible until the command, commit ignored without CCP,
+ERASEWRITE/PAGEWRITE commit (neighbours preserved), PAGEBUFCLR abort, the
+EE-ready interrupt + W1C, and EEERASE wiping the array. End-to-end: an avr-gcc
+firmware writes two EEPROM bytes via `_PROTECTED_WRITE_SPM(NVMCTRL.CTRLA,
+PAGEERASEWRITE)`, reads them back, and drives their XOR (0x99) onto PORTA —
+EEPROM + CCP + PORT together.
+
+Still stubs/absent (firmware that only configures them will currently see plain
+RAM at those addresses): ADC0, RTC, AC, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
-Engine: `sim_avr.h` (arch fields, MAX_IOs), `sim_avr.c` (init defaults),
-`sim_core.c` (offset/SP/SREG params, AVRxt timing), `sim_core_declare.h`
-(+ new `sim_core_declare_modern.h`), `sim_interrupts.[ch]` (CPUINT path),
-new `avr_ccp.[ch]`.
-Peripherals (new): `avr_port_modern.[ch]`, `avr_tca.[ch]`, `avr_tcb.[ch]`,
-`avr_rtc.[ch]`, `avr_usart_modern.[ch]`, `avr_nvmctrl.[ch]`, `avr_clkctrl.[ch]`,
-`avr_cpuint.[ch]`, plus stubs.
-Core: `simavr/cores/sim_tiny3217.c` (+ `sim_tinyxy7.h`).
-Tests: `tests/attiny3217_*.c` + harness wiring.
+Engine: `sim_avr.h` (arch fields, MAX_IOs, `fuse[10]`, `lowio_redirect[]`),
+`sim_avr.c` (init defaults), `sim_core.c` (offset/SP/SREG params, AVRxt timing,
+low-I/O redirect in `_avr_set_ram`/`_avr_get_ram`), `sim_avr_types.h`
+(`avr_regbit_t.reg` widened 9→13 bits for modern register addresses),
+`sim_core_declare.h` (+ new `sim_core_declare_modern.h`),
+`sim_interrupts.[ch]` (CPUINT path), new `avr_ccp.[ch]`.
+Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
+`avr_port_modern.[ch]` (PORT/VPORT — DONE)**, **new `avr_clkctrl.[ch]`
+(CLKCTRL — DONE)**, **new `avr_tcb.[ch]` (TCB0/1 — DONE)**, **new
+`avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
+DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**; planned
+`avr_rtc.[ch]`, `avr_adc_modern.[ch]`, `avr_cpuint.[ch]`, plus stubs.
+Core: **new `simavr/cores/sim_tiny3217.c`**, **new
+`cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
+Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217
+wiring).
 ```

@@ -1,66 +1,86 @@
 /*
 	avr_nvmctrl.h
 
-	Modern AVR Non-Volatile Memory controller (NVMCTRL), EEPROM path. The EEPROM
-	is memory-mapped (MAPPED_EEPROM): writes to the mapped region load a page
-	buffer, and a command written to NVMCTRL.CTRLA (PAGEWRITE / PAGEERASEWRITE /
-	EEERASE / page-buffer-clear) commits or erases. EEPROM contents live in a
-	persistent buffer so they survive avr_reset(); the committed values are also
-	mirrored into the data space for direct mapped reads.
+	"Modern" AVR (AVRxt) Non-Volatile Memory Controller (NVMCTRL), as found on
+	the tinyAVR 1-series (ATtiny3217), megaAVR-0 and AVR Dx families. It replaces
+	the classic EECR/EEDR/EEAR and SPMCSR registers with a command-register
+	model over memory-mapped EEPROM and flash.
 
-	Flash self-programming (the SPM path through the mapped flash window) is not
-	yet modelled.
+	This models EEPROM programming: the EEPROM is mapped into the data space;
+	writing to it loads a page buffer, and a (CCP-protected) command in
+	NVMCTRL.CTRLA commits, erases, or clears it. Flash self-programming is not
+	modelled yet.
 
-	Copyright 2024 simavr modern-AVR fork (garyPenhook)
+	Copyright 2026 simavr authors
 
-	This file is part of simavr. GNU GPL v3 or later; see COPYING.
+ 	This file is part of simavr.
+
+	simavr is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	simavr is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with simavr.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef __AVR_NVMCTRL_H__
 #define __AVR_NVMCTRL_H__
 
-#include "sim_avr.h"
-#include "sim_interrupts.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// register offsets from the NVMCTRL base
+#include "sim_avr.h"
+
+/* Register offsets within the NVMCTRL block (device header NVMCTRL_t). */
 enum {
-	AVR_NVM_CTRLA = 0x00, AVR_NVM_CTRLB = 0x01, AVR_NVM_STATUS = 0x02,
-	AVR_NVM_INTCTRL = 0x03, AVR_NVM_INTFLAGS = 0x04,
-	AVR_NVM_DATA = 0x06, AVR_NVM_ADDR = 0x08,
+	NVMR_CTRLA = 0x00,
+	NVMR_CTRLB = 0x01,
+	NVMR_STATUS = 0x02,
+	NVMR_INTCTRL = 0x03,
+	NVMR_INTFLAGS = 0x04,
+	NVMR_DATAL = 0x06,
+	NVMR_ADDRL = 0x08,
 };
 
-// CTRLA.CMD values
-#define AVR_NVM_CMD_NONE		0x00
-#define AVR_NVM_CMD_PAGEWRITE		0x01
-#define AVR_NVM_CMD_PAGEERASE		0x02
-#define AVR_NVM_CMD_PAGEERASEWRITE	0x03
-#define AVR_NVM_CMD_PAGEBUFCLR		0x04
-#define AVR_NVM_CMD_CHIPERASE		0x05
-#define AVR_NVM_CMD_EEERASE		0x06
-#define AVR_NVM_CMD_CMD_gm		0x07
-// STATUS / INTFLAGS bits
-#define AVR_NVM_FBUSY	(1 << 0)
-#define AVR_NVM_EEBUSY	(1 << 1)
-#define AVR_NVM_EEREADY	(1 << 0)
+#define AVR_NVM_EE_MAX 512	/* max modelled EEPROM size */
 
 typedef struct avr_nvmctrl_t {
-	avr_io_t			io;
-	avr_io_addr_t		r_base;			// NVMCTRL registers (0x1000)
-	avr_io_addr_t		eeprom_base;	// mapped EEPROM (0x1400)
-	uint16_t			eeprom_size;	// 256
-	uint16_t			page_size;		// 64
-	avr_int_vector_t	eeready;		// NVMCTRL_EE
+	avr_io_t	io;
 
-	uint8_t *			eeprom;			// persistent EEPROM contents
-	uint8_t *			page_buf;		// staged write data
-	uint8_t *			page_dirty;		// which offsets have been staged
+	avr_io_addr_t	base;
+	avr_io_addr_t	r_ctrla, r_status, r_intctrl, r_intflags;
+
+	avr_io_addr_t	ee_start;	// data address of mapped EEPROM byte 0
+	uint16_t	ee_size;	// EEPROM size in bytes
+
+	avr_int_vector_t	eeready;	// NVMCTRL_EE (EEPROM ready)
+
+	/* EEPROM page buffer: bytes written to the mapped region accumulate here
+	 * until a commit command moves the dirty ones into the committed EEPROM
+	 * (which lives directly in avr->data[ee_start..]). */
+	uint8_t		buf[AVR_NVM_EE_MAX];
+	uint8_t		dirty[AVR_NVM_EE_MAX];
 } avr_nvmctrl_t;
 
-void avr_nvmctrl_init(avr_t * avr, avr_nvmctrl_t * p);
+/*
+ * Initialise NVMCTRL at data address 'base'. 'ee_start'/'ee_size' describe the
+ * memory-mapped EEPROM; 'vec_eeready' is the EEPROM-ready interrupt vector.
+ */
+void
+avr_nvmctrl_init(
+		avr_t * avr,
+		avr_nvmctrl_t * p,
+		avr_io_addr_t base,
+		avr_io_addr_t ee_start,
+		uint16_t ee_size,
+		uint8_t vec_eeready);
 
 #ifdef __cplusplus
 };

@@ -356,6 +356,11 @@ inline void _avr_sp_set(avr_t * avr, uint16_t sp)
  */
 static inline void _avr_set_ram(avr_t * avr, uint16_t addr, uint8_t v)
 {
+	// Modern low-I/O redirect (e.g. VPORT -> PORT). Only memory accesses come
+	// through here; register operands use _avr_set_r() directly and are unaffected.
+	if (unlikely(addr < AVR_LOWIO_REDIRECT_SIZE) && avr->lowio_redirect[addr])
+		addr = avr->lowio_redirect[addr];
+
 	if (addr <= avr->ioend)
 		_avr_set_r(avr, addr, v);
 	else if (unlikely(avr->arch.flashmap_start) &&
@@ -372,6 +377,10 @@ static inline void _avr_set_ram(avr_t * avr, uint16_t addr, uint8_t v)
  */
 static inline uint8_t _avr_get_ram(avr_t * avr, uint16_t addr)
 {
+	// Modern low-I/O redirect (e.g. VPORT -> PORT); see _avr_set_ram().
+	if (unlikely(addr < AVR_LOWIO_REDIRECT_SIZE) && avr->lowio_redirect[addr])
+		addr = avr->lowio_redirect[addr];
+
 	if (addr == avr->arch.sreg_addr) {
 		/*
 		 * SREG is special it's reconstructed when read
