@@ -895,8 +895,33 @@ and a CTRLA write moves AC0's comparison reference (STATE flips at 1.1 V vs 4.3 
 against a 1.2 V input) and the DAC0 output (DATA=128 → 550 mV at the 1.1 V ref).
 Full suite regression-clean.
 
-Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): BOD, and the rest — added incrementally next.
+### Phase 4 — peripheral: BOD (brown-out detector / VLM) — **DONE**
+`avr_bod.[ch]`, wired into `sim_tiny3217` at 0x0080 with the BOD_VLM interrupt
+(vector 2). CTRLA (ACTIVE/SAMPFREQ/SLEEP) and CTRLB (LVL) are loaded at reset
+from FUSE.BODCFG (fuse index 1): CTRLA = `BODCFG[4:0]`, CTRLB = `BODCFG[7:5]`.
+Per the datasheet CTRLA.ACTIVE/SAMPFREQ and all of CTRLB are read-only, so
+enabling the BOD is a *fuse* decision — the write handlers honour this (only
+CTRLA.SLEEP is writable; CTRLB writes are ignored).
+- **VLM model:** the supply voltage is a settable `vdd_mv` (default 3300, driven
+  by `avr_bod_set_vdd` or the VDD input IRQ). The VLM threshold is the BOD level
+  (LVL 0/2/7 → 1.8/2.6/4.2 V) raised by VLMCTRLA.VLMLVL (+5/+15/+25 %).
+  STATUS.VLMS reads 1 while VDD is below that threshold, and INTFLAGS.VLMIF is
+  set (raising BOD_VLM if INTCTRL.VLMIE) on a crossing in the INTCTRL.VLMCFG
+  direction (BELOW / ABOVE / CROSS). VLMS/VLMIF are only updated while the BOD is
+  enabled (ACTIVE ≠ DIS); VLMIF is write-1-to-clear.
+- **Not modelled:** the brown-out *reset* itself (only the VLM interrupt path),
+  sampled-mode timing, and sleep-mode gating (SLEEP is stored only).
+
+Verified in `tests/test_avrxt_engine.c` (now 298 checks): CTRLA/CTRLB load from a
+programmed FUSE.BODCFG, CTRLB and CTRLA.ACTIVE are read-only, VLMS tracks VDD vs
+the threshold, a fall below raises VLMIF + the interrupt (BELOW mode ignores the
+rise, ABOVE mode flags it), VLMLVL rescales the threshold, and with the BOD
+disabled by fuse VLMS/VLMIF stay clear and no interrupt is raised. Full suite
+regression-clean.
+
+All named ATtiny3217 peripheral blocks are now modelled. Any further blocks
+(e.g. the signature/SYSCFG rows beyond what is already wired) are added
+incrementally as needed.
 
 ## 9. Files touched (summary)
 
@@ -917,7 +942,7 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
 config store)**, **new `avr_vref.[ch]` (VREF — DONE)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
 always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**, **new `avr_rstctrl.[ch]` (RSTCTRL —
-DONE)**; remaining peripherals (BOD, VREF, …) to be added as stubs then deepened.
+DONE)**, **new `avr_bod.[ch]` (BOD / VLM — DONE)**.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

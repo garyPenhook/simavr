@@ -56,12 +56,13 @@
 #include "avr_crcscan.h"
 #include "avr_slpctrl.h"
 #include "avr_rstctrl.h"
+#include "avr_bod.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
  * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX, VREF, TCD0,
- * the WDT, CRCSCAN, SLPCTRL and RSTCTRL.
+ * the WDT, CRCSCAN, SLPCTRL, RSTCTRL and BOD.
  */
 struct mcu_t {
 	avr_t				core;
@@ -86,6 +87,7 @@ struct mcu_t {
 	avr_crcscan_t		crcscan;
 	avr_slpctrl_t		slpctrl;
 	avr_rstctrl_t		rstctrl;
+	avr_bod_t			bod;
 };
 
 /*
@@ -204,6 +206,10 @@ tiny3217_init(struct avr_t * avr)
 
 	/* RSTCTRL (reset controller) at 0x0040. */
 	avr_rstctrl_init(avr, &mcu->rstctrl, 0x0040, '0');
+
+	/* BOD (brown-out detector / VLM) at 0x0080; CTRLA/B from FUSE.BODCFG
+	 * (fuse index 1); BOD_VLM interrupt vector. */
+	avr_bod_init(avr, &mcu->bod, 0x0080, BOD_VLM_vect_num, 1, '0');
 }
 
 static void

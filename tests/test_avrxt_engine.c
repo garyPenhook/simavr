@@ -46,6 +46,7 @@
 #include "avr_crcscan.h"
 #include "avr_slpctrl.h"
 #include "avr_rstctrl.h"
+#include "avr_bod.h"
 
 static int failures;
 
@@ -1897,6 +1898,98 @@ int main(void)
 		check("software reset zeroed the cycle counter", (long)m->cycle < before, 1);
 		check("RSTFR.SWRF set after software reset", !!(m->data[R + RSTFR] & SWRF), 1);
 		check("PORF not re-set on software reset", !!(m->data[R + RSTFR] & PORF), 0);
+	}
+
+	printf("== modern BOD / VLM (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t B = 0x80;
+		enum { VLMIE = 0x01, VLMCFG_ABOVE = 0x02 };
+		enum { VLMIF = 0x01, VLMS = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		/* FUSE.BODCFG: ACTIVE=ENABLED (bits 3:2 = 0x1) and LVL=BODLEVEL2 (2.6V,
+		 * bits 7:5 = 0x2) so the BOD is enabled with a known threshold. */
+		m->fuse[1] = 0x44;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* CTRLA/CTRLB load from the fuse; the VLM registers reset to 0. */
+		check("BOD CTRLA loaded from fuse (ACTIVE)", cpu_read(m, B + BODR_CTRLA), 0x04);
+		check("BOD CTRLB loaded from fuse (LVL=2)", cpu_read(m, B + BODR_CTRLB), 0x02);
+		check("BOD VLMCTRLA reset 0", cpu_read(m, B + BODR_VLMCTRLA), 0);
+		check("BOD INTFLAGS reset 0", cpu_read(m, B + BODR_INTFLAGS), 0);
+
+		/* CTRLB is read-only (fuse-loaded). */
+		cpu_write(m, B + BODR_CTRLB, 0x05);
+		check("BOD CTRLB read-only", cpu_read(m, B + BODR_CTRLB), 0x02);
+
+		/* CTRLA: ACTIVE/SAMPFREQ read-only, only SLEEP[1:0] writable. */
+		cpu_write(m, B + BODR_CTRLA, 0xff);
+		check("BOD CTRLA only SLEEP writable", cpu_read(m, B + BODR_CTRLA), 0x07);
+
+		avr_irq_t *vdd = avr_io_getirq(m, AVR_IOCTL_BOD_GETIRQ('0'), AVR_BOD_IRQ_VDD_IN);
+		check("BOD VDD irq exists", vdd != NULL, 1);
+
+		/* VLM threshold = 2.6V + 5% (VLMLVL=0) = 2730 mV. Enable a BELOW-trigger
+		 * interrupt (VLMCFG=0, VLMIE). */
+		cpu_write(m, B + BODR_INTCTRL, VLMIE);
+
+		/* VDD above threshold: VLMS clear, no flag. */
+		avr_raise_irq(vdd, 3300);
+		check("VLMS 0 (3300 > 2730)", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 0);
+		check("no VLMIF above threshold", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 0);
+
+		/* VDD falls below threshold: VLMS set, VLMIF set, interrupt raised. */
+		avr_raise_irq(vdd, 2500);
+		check("VLMS 1 (2500 < 2730)", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 1);
+		check("VLMIF set on fall below", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 1);
+		check("BOD raises VLM interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* W1C the flag; a rise back up must NOT re-set it in BELOW mode. */
+		cpu_write(m, B + BODR_INTFLAGS, VLMIF);
+		check("VLMIF cleared by W1C", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 0);
+		avr_raise_irq(vdd, 3300);
+		check("rise ignored in BELOW mode", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 0);
+		check("VLMS 0 after rise", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 0);
+
+		/* ABOVE mode flags the upward crossing instead. */
+		cpu_write(m, B + BODR_INTCTRL, VLMIE | VLMCFG_ABOVE);
+		avr_raise_irq(vdd, 2500);			/* below first (no flag) */
+		check("ABOVE: no flag on fall", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 0);
+		avr_raise_irq(vdd, 3300);			/* rise above */
+		check("ABOVE: VLMIF set on rise", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 1);
+		cpu_write(m, B + BODR_INTFLAGS, VLMIF);
+
+		/* VLMLVL=2 raises the margin to +25%: threshold = 2600*1.25 = 3250 mV. */
+		cpu_write(m, B + BODR_VLMCTRLA, 0x02);
+		avr_raise_irq(vdd, 3300);
+		check("VLMS 0 (3300 > 3250)", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 0);
+		avr_raise_irq(vdd, 3100);
+		check("VLMS 1 (3100 < 3250)", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 1);
+	}
+
+	printf("== modern BOD disabled by fuse (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t B = 0x80;
+		enum { VLMIE = 0x01, VLMIF = 0x01, VLMS = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);			/* fuse[1] = 0 => BOD disabled (ACTIVE=DIS) */
+		memset(m->flash, 0, 0x2000);
+
+		check("BOD CTRLA disabled at reset", cpu_read(m, B + BODR_CTRLA), 0x00);
+		cpu_write(m, B + BODR_INTCTRL, VLMIE);
+
+		/* With the BOD disabled, VLMS/VLMIF are not updated even below threshold. */
+		avr_irq_t *vdd = avr_io_getirq(m, AVR_IOCTL_BOD_GETIRQ('0'), AVR_BOD_IRQ_VDD_IN);
+		avr_raise_irq(vdd, 1000);
+		check("VLMS not updated (BOD off)", !!(cpu_read(m, B + BODR_STATUS) & VLMS), 0);
+		check("VLMIF not set (BOD off)", !!(cpu_read(m, B + BODR_INTFLAGS) & VLMIF), 0);
+		check("no interrupt (BOD off)", avr_has_pending_interrupts(m), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
