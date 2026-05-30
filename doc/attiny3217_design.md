@@ -759,8 +759,24 @@ routed channel high/low, fan-out to two users on one channel, a re-routed user
 receiving the channel's current level immediately, an "off" user receiving
 nothing, and a software strobe pulsing the routed user once.
 
+### Phase 4 — peripheral: PORTMUX — **DONE (config store)**
+`avr_portmux.[ch]`, wired into `sim_tiny3217` at 0x200 (no interrupt). PORTMUX
+selects which *physical pins* a peripheral's functions route to (alternate pin
+sets for EVOUT/CCL-LUT, USART0, SPI0, TWI0, TCA0 WO0..5, TCB0/1 WO). simavr
+connects peripherals through their function IRQs, not numbered physical pins, so
+the pin selection has **no behavioural effect** here. The module is therefore a
+registered configuration store: the four CTRL registers read back what firmware
+writes and reset to 0 (default routing), so muxing code behaves. The single
+write hook is where real pin re-routing could be added later if a peripheral
+grows PORT-pin outputs.
+
+Verified in `tests/test_avrxt_engine.c` (now 229 checks): CTRLA/CTRLB reset to 0,
+CTRLA/B/C store and read back their selections, and a neighbouring register is
+left untouched.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): PORTMUX, TCD0, and the rest — added incrementally next.
+RAM at those addresses): TCD0, WDT(new), CRCSCAN, and the rest — added
+incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -777,8 +793,9 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
-**new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**;
-remaining peripherals (PORTMUX, TCD0, …) to be added as stubs then deepened.
+**new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
+config store)**; remaining peripherals (TCD0, WDT, CRCSCAN, …) to be added as
+stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

@@ -38,6 +38,7 @@
 #include "avr_dac.h"
 #include "avr_ccl.h"
 #include "avr_evsys.h"
+#include "avr_portmux.h"
 
 static int failures;
 
@@ -1559,6 +1560,31 @@ int main(void)
 		cpu_write(m, E + SYNCUSER0, SEL_SYNCCH0);	/* SYNCUSER0 -> SYNCCH0 (ch0) */
 		cpu_write(m, E + SYNCSTROBE, 0x01);		/* strobe SYNCCH0 */
 		check("sync strobe pulses the routed user once", g_evsys_pulses, 1);
+	}
+
+	printf("== modern PORTMUX (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t P = 0x200;
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		/* Default routing: all CTRL registers reset to 0. */
+		check("PORTMUX CTRLA reset 0", cpu_read(m, P + PORTMUXR_CTRLA), 0);
+		check("PORTMUX CTRLB reset 0", cpu_read(m, P + PORTMUXR_CTRLB), 0);
+
+		/* Routing selections store and read back (no behavioural effect). */
+		cpu_write(m, P + PORTMUXR_CTRLB, 0x15);	/* USART0 | SPI0 | TWI0 alt */
+		check("PORTMUX CTRLB stores selection", cpu_read(m, P + PORTMUXR_CTRLB), 0x15);
+		cpu_write(m, P + PORTMUXR_CTRLC, 0x2a);	/* TCA0 WO alt set */
+		check("PORTMUX CTRLC stores selection", cpu_read(m, P + PORTMUXR_CTRLC), 0x2a);
+		cpu_write(m, P + PORTMUXR_CTRLA, 0x30);	/* LUT0 | LUT1 alt */
+		check("PORTMUX CTRLA stores selection", cpu_read(m, P + PORTMUXR_CTRLA), 0x30);
+
+		/* A neighbouring register is unaffected. */
+		check("PORTMUX CTRLD untouched", cpu_read(m, P + PORTMUXR_CTRLD), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
