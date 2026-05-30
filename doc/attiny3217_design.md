@@ -374,9 +374,19 @@ firmware loads and runs end-to-end.
   the host test observes ~2000 toggles, proving TCB → CPUINT dispatch (JMP
   vector table) → ISR → sticky-flag clear → modern RETI end to end.
 
+**USART0 added:**
+- **`sim/avr_usart.{c,h}`**: modern register-block USART. Polled or
+  interrupt-driven TX (bytes emitted on the OUTPUT IRQ), RX injected via the
+  INPUT IRQ; DREIF/TXCIF/RXCIF flags and the RXC/DRE/TXC interrupts
+  (vectors 27/28/29). INPUT/OUTPUT IRQ convention matches `avr_uart`. TX is
+  modelled as immediate (no baud timing); synchronous/SPI-master/IRCOM modes
+  not modelled.
+- **Verified:** `tests/attiny3217_usart.c` sends "Hello modern AVR!\n" via
+  polled DREIF; the host captures the exact bytes off the OUTPUT IRQ.
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
-Phase 1), CLKCTRL (prescaler/frequency), TCA, RTC/PIT, USART0, NVMCTRL,
-SPI0/TWI0, ADC0, and stubs for the rest. See the priority order earlier.
+Phase 1), CLKCTRL (prescaler/frequency), TCA, RTC/PIT, NVMCTRL, SPI0/TWI0,
+ADC0, USART RX-path test, and stubs for the rest. See the priority order earlier.
 
 ## 9. Files touched (summary)
 

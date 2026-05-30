@@ -22,6 +22,7 @@
 #include "avr_port.h"
 #include "avr_cpuint.h"
 #include "avr_tcb.h"
+#include "avr_usart.h"
 
 // --- ATtiny3217 memory map (data space) ---
 #define T3217_FLASHEND	0x7FFF		// 32 KB
@@ -40,6 +41,7 @@
 #define T3217_PORTA	0x0400
 #define T3217_PORTB	0x0420
 #define T3217_PORTC	0x0440
+#define T3217_USART0	0x0800
 #define T3217_TCB0	0x0A40
 #define T3217_TCB1	0x0A50
 
@@ -50,6 +52,7 @@ struct mcu_t {
 	avr_t		core;
 	avr_cpuint_t	cpuint;
 	avr_port_t	porta, portb, portc;
+	avr_usart_t	usart0;
 	avr_tcb_t	tcb0, tcb1;
 };
 
@@ -97,6 +100,29 @@ const struct mcu_t SIM_CORENAME = {
 	.porta = { .name = 'A', .r_base = T3217_PORTA },
 	.portb = { .name = 'B', .r_base = T3217_PORTB },
 	.portc = { .name = 'C', .r_base = T3217_PORTC },
+	.usart0 = {
+		.name = '0', .r_base = T3217_USART0,
+		// STATUS at +0x04, CTRLA at +0x05; DREIF/TXCIF/RXCIF and the matching
+		// interrupt-enable bits share positions 5/6/7.
+		.rxc = {
+			.vector = 27,	// USART0_RXC_vect_num
+			.enable = AVR_IO_REGBIT(T3217_USART0 + 0x05, 7),
+			.raised = AVR_IO_REGBIT(T3217_USART0 + 0x04, 7),
+			.raise_sticky = 1,
+		},
+		.dre = {
+			.vector = 28,	// USART0_DRE_vect_num
+			.enable = AVR_IO_REGBIT(T3217_USART0 + 0x05, 5),
+			.raised = AVR_IO_REGBIT(T3217_USART0 + 0x04, 5),
+			.raise_sticky = 1,
+		},
+		.txc = {
+			.vector = 29,	// USART0_TXC_vect_num
+			.enable = AVR_IO_REGBIT(T3217_USART0 + 0x05, 6),
+			.raised = AVR_IO_REGBIT(T3217_USART0 + 0x04, 6),
+			.raise_sticky = 1,
+		},
+	},
 	.tcb0 = {
 		.name = '0', .r_base = T3217_TCB0,
 		.capt = {
