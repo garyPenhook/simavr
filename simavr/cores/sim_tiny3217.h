@@ -23,6 +23,7 @@
 #include "avr_cpuint.h"
 #include "avr_tcb.h"
 #include "avr_usart.h"
+#include "avr_clkctrl.h"
 
 // --- ATtiny3217 memory map (data space) ---
 #define T3217_FLASHEND	0x7FFF		// 32 KB
@@ -37,6 +38,7 @@
 #define T3217_SREG	0x003F
 
 #define T3217_RSTFR	0x0040		// RSTCTRL.RSTFR (reset flags)
+#define T3217_CLKCTRL	0x0060		// clock controller
 #define T3217_CPUINT	0x0110		// CPUINT controller
 #define T3217_PORTA	0x0400
 #define T3217_PORTB	0x0420
@@ -50,6 +52,7 @@ void t3217_reset(struct avr_t * avr);
 
 struct mcu_t {
 	avr_t		core;
+	avr_clkctrl_t	clkctrl;
 	avr_cpuint_t	cpuint;
 	avr_port_t	porta, portb, portc;
 	avr_usart_t	usart0;
@@ -96,6 +99,7 @@ const struct mcu_t SIM_CORENAME = {
 		.init = t3217_init,
 		.reset = t3217_reset,
 	},
+	.clkctrl = { .r_base = T3217_CLKCTRL },
 	.cpuint = { .r_base = T3217_CPUINT },
 	.porta = { .name = 'A', .r_base = T3217_PORTA },
 	.portb = { .name = 'B', .r_base = T3217_PORTB },

@@ -384,8 +384,19 @@ firmware loads and runs end-to-end.
 - **Verified:** `tests/attiny3217_usart.c` sends "Hello modern AVR!\n" via
   polled DREIF; the host captures the exact bytes off the OUTPUT IRQ.
 
+**CLKCTRL added:**
+- **`sim/avr_clkctrl.{c,h}`**: clock controller. Control registers are plain
+  storage; `MCLKSTATUS` is derived and reports the selected source as running
+  and stable (SOSC=0) so firmware polling oscillator-ready / clock-switch status
+  does not hang. Consistent with simavr's convention, the CPU runs at the
+  firmware's F_CPU; the prescaler is not reflected back into avr->frequency
+  (deferred).
+- **Verified:** `tests/attiny3217_clkctrl.c` does a CCP-protected `MCLKCTRLB`
+  write then waits on `MCLKSTATUS.OSC20MS` before blinking — exercising both
+  CCP-protected writes and the status model.
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
-Phase 1), CLKCTRL (prescaler/frequency), TCA, RTC/PIT, NVMCTRL, SPI0/TWI0,
+Phase 1), prescaler→frequency in CLKCTRL, TCA, RTC/PIT, NVMCTRL, SPI0/TWI0,
 ADC0, USART RX-path test, and stubs for the rest. See the priority order earlier.
 
 ## 9. Files touched (summary)
