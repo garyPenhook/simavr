@@ -1417,6 +1417,55 @@ int main(void)
 		#undef ADC_RES
 	}
 
+	printf("== modern ADC0 temperature sensor (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t A = 0x600, SIG = 0x1100;
+		enum { ENABLE = 0x01, STCONV = 0x01 };
+		enum { F_RESRDY = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* SIGROW carries the temp-sensor calibration. */
+		uint8_t gain = cpu_read(m, SIG + SIGROWR_TEMPSENSE0);
+		int8_t  off  = (int8_t)cpu_read(m, SIG + SIGROWR_TEMPSENSE1);
+		check("SIGROW.TEMPSENSE0 (gain) populated", gain, 128);
+		check("SIGROW.TEMPSENSE1 (offset) populated", off, 50);
+
+		cpu_write(m, A + ADCMR_MUXPOS, AVR_ADCM_CH_TEMPSENSE);
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);
+
+		#define ADC_CONVERT() do { \
+			cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY); \
+			cpu_write(m, A + ADCMR_COMMAND, STCONV); \
+			for (int i = 0; i < 4000 && \
+				 !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++) avr_run(m); \
+		} while (0)
+		#define ADC_RES() (cpu_read(m, A + ADCMR_RESL) | \
+						   (cpu_read(m, A + ADCMR_RESH) << 8))
+		/* Datasheet transfer function applied by firmware. */
+		#define TEMP_K(res) ((((int32_t)(res) - off) * gain + 0x80) >> 8)
+
+		/* Set the die temperature to 350 K via the temp-sensor channel IRQ. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'),
+									AVR_ADCM_CH_TEMPSENSE), 350);
+		ADC_CONVERT();
+		check("temp channel round-trips 350 K", TEMP_K(ADC_RES()), 350);
+
+		/* And a second temperature. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'),
+									AVR_ADCM_CH_TEMPSENSE), 298);
+		ADC_CONVERT();
+		check("temp channel round-trips 298 K", TEMP_K(ADC_RES()), 298);
+
+		#undef ADC_CONVERT
+		#undef ADC_RES
+		#undef TEMP_K
+	}
+
 	printf("== modern SPI0 host (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t S = 0x820;

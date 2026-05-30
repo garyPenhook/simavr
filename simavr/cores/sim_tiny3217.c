@@ -185,9 +185,11 @@ tiny3217_init(struct avr_t * avr)
 	avr_rtc_init(avr, &mcu->rtc, 0x0140,
 				 RTC_CNT_vect_num, RTC_PIT_vect_num, '0');
 
-	/* ADC0 at 0x0600: RESRDY + WCOMP (window comparator) vectors. */
+	/* ADC0 at 0x0600: RESRDY + WCOMP (window comparator) vectors. The temp-sensor
+	 * channel reads its calibration from SIGROW.TEMPSENSE0 at 0x1120. */
 	avr_adc_modern_init(avr, &mcu->adc0, 0x0600,
 						ADC0_RESRDY_vect_num, ADC0_WCOMP_vect_num, '0');
+	avr_adc_modern_set_tempsense(&mcu->adc0, 0x1100 + SIGROWR_TEMPSENSE0);
 
 	/* SPI0 at 0x0820: single SPI0_INT vector (normal mode). */
 	avr_spi_modern_init(avr, &mcu->spi0, 0x0820, SPI0_INT_vect_num, '0');

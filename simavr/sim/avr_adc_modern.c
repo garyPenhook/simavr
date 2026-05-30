@@ -102,12 +102,31 @@ static uint32_t adc_ref_mv(avr_adc_modern_t *p)
 	return ref ? ref : 3300;
 }
 
+/* The temperature-sensor code (inverse of the datasheet transfer function), so
+ * firmware applying T_K = ((RES - off)*gain + 0x80) >> 8 recovers temp_k. */
+static uint32_t adc_temp_sample(avr_adc_modern_t *p, uint32_t maxc)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t gain = avr->data[p->r_tempcal];
+	int8_t off = (int8_t)avr->data[p->r_tempcal + 1];
+	if (gain == 0)
+		return 0;
+	int32_t code = off + (p->temp_k * 256 + gain / 2) / gain;
+	if (code < 0)
+		code = 0;
+	return (uint32_t)code > maxc ? maxc : (uint32_t)code;
+}
+
 /* One sample of the selected channel, as an 8- or 10-bit code. */
 static uint32_t adc_one_sample(avr_adc_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
-	uint32_t vref = adc_ref_mv(p);
 	uint32_t maxc = (rd(avr, p->r_ctrla) & RESSEL_bm) ? 255 : 1023;
+
+	if ((rd(avr, p->r_muxpos) & 0x1f) == AVR_ADCM_CH_TEMPSENSE && p->r_tempcal)
+		return adc_temp_sample(p, maxc);
+
+	uint32_t vref = adc_ref_mv(p);
 	uint32_t res = (adc_channel_mv(p) * (maxc + 1)) / vref;
 	return res > maxc ? maxc : res;
 }
@@ -245,13 +264,16 @@ avr_adc_modern_intflags_write(struct avr_t *avr, avr_io_addr_t addr,
 		avr_clear_interrupt(avr, &p->wcomp);
 }
 
-/* A board/test presents the analog voltage (mV) on a channel. */
+/* A board/test presents the analog voltage (mV) on a channel — except the
+ * temperature-sensor channel, whose IRQ carries the die temperature in Kelvin. */
 static void
 avr_adc_modern_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 {
 	avr_adc_modern_t *p = (avr_adc_modern_t *)param;
 	int ch = irq->irq - p->base_irq;
-	if (ch >= 0 && ch < AVR_ADCM_CHANNELS)
+	if (ch == AVR_ADCM_CH_TEMPSENSE)
+		p->temp_k = (int32_t)value;
+	else if (ch >= 0 && ch < AVR_ADCM_CHANNELS)
 		p->chan_mv[ch] = value;
 }
 
@@ -295,6 +317,18 @@ avr_adc_modern_set_intref(avr_adc_modern_t * p, uint32_t intref_mv)
 }
 
 void
+avr_adc_modern_set_tempsense(avr_adc_modern_t * p, avr_io_addr_t tempcal_addr)
+{
+	p->r_tempcal = tempcal_addr;
+}
+
+void
+avr_adc_modern_set_temp_k(avr_adc_modern_t * p, int32_t kelvin)
+{
+	p->temp_k = kelvin;
+}
+
+void
 avr_adc_modern_init(
 		avr_t * avr,
 		avr_adc_modern_t * p,
@@ -320,6 +354,7 @@ avr_adc_modern_init(
 	p->r_winht = base + ADCMR_WINHTL;
 	p->vref_mv = 3300;
 	p->intref_mv = 3300;	/* until VREF.ADC0REFSEL is programmed */
+	p->temp_k = 298;	/* ~25 °C until the board sets a die temperature */
 
 	/* RESRDY: enabled by INTCTRL.RESRDY(0), flagged in INTFLAGS.RESRDY(0). */
 	p->resrdy.vector = vec_resrdy;

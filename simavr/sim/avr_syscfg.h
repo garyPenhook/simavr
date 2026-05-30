@@ -53,7 +53,15 @@ enum {
 	SIGROWR_DEVICEID0 = 0x00,
 	SIGROWR_DEVICEID1 = 0x01,
 	SIGROWR_DEVICEID2 = 0x02,
+	SIGROWR_TEMPSENSE0 = 0x20,	/* temp-sensor gain/slope */
+	SIGROWR_TEMPSENSE1 = 0x21,	/* temp-sensor offset */
 };
+
+/* Representative temperature-sensor calibration loaded into SIGROW. With these,
+ * the datasheet transfer function T_K = ((adc - off)*gain + 0x80) >> 8 reduces
+ * to adc = off + 2*T_K (gain 128 => an exact integer round-trip). */
+#define AVR_SIGROW_TEMPSENSE0_CAL	128	/* gain */
+#define AVR_SIGROW_TEMPSENSE1_CAL	50	/* offset */
 
 typedef struct avr_syscfg_t {
 	avr_io_t	io;

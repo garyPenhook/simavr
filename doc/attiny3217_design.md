@@ -645,15 +645,21 @@ presented by raising the matching AINn IRQ (`AVR_IOCTL_ADCM_GETIRQ(name)`).
   sums them, raising RESRDY (and re-arming free-running) only once the whole
   burst finishes, with the summed value (clamped to 16-bit) in RES. The window
   comparator runs against the accumulated result.
-- **Internal channels (MUXPOS):** GND (0x1F) reads 0; DAC0 (0x1C), the internal
-  reference (0x1D) and the temperature sensor (0x1E) are addressable as settable
-  mV inputs alongside the 12 pin channels (the channel array/IRQs are extended to
-  32). `sim_tiny3217` wires DAC0's output IRQ to the ADC's DAC0 channel, so
-  firmware can measure the DAC through the ADC.
+- **Internal channels (MUXPOS):** GND (0x1F) reads 0; DAC0 (0x1C) and the
+  internal reference (0x1D) are addressable as settable mV inputs alongside the
+  12 pin channels (the channel array/IRQs are extended to 32). `sim_tiny3217`
+  wires DAC0's output IRQ to the ADC's DAC0 channel, so firmware can measure the
+  DAC through the ADC.
+- **Temperature sensor (MUXPOS 0x1E):** returns the calibrated code that inverts
+  the datasheet transfer function `T_K = ((RES - TEMPSENSE1)*TEMPSENSE0 + 0x80)
+  >> 8` from a settable die temperature and the SIGROW.TEMPSENSE0/1 cal (which
+  SYSCFG/SIGROW now populates), so firmware applying the formula recovers the
+  temperature. The die temperature is set via `avr_adc_modern_set_temp_k()` or by
+  raising the 0x1E channel IRQ (which carries Kelvin, not mV).
 
 Deliberate simplifications: event-triggered start is not modelled; the
-temperature-sensor channel returns its raw settable input rather than a
-SIGROW-calibrated temperature.
+temperature reading is independent of the actual REFSEL (the datasheet procedure
+assumes the 1.1 V internal reference).
 
 Verified in `tests/test_avrxt_engine.c` (now 175 checks): AIN IRQ wiring, 10-bit
 result 512 and 8-bit result 128 from 1650 mV against the 3300 mV vref, RESRDY
@@ -1004,9 +1010,11 @@ regression-clean.
   debug pin is not simulated.
 - Writes to REVID and DEVICEID are ignored (read-only).
 
-Deliberate simplifications: the SERNUM (serial number) and calibration
-(TEMPSENSE, OSCnnERRxV) signature-row bytes are device-unique factory data with
-no canonical simulator value and are left as zero read-only storage.
+The SIGROW.TEMPSENSE0/1 temperature-sensor calibration bytes are populated with
+representative values (gain 128, offset 50) that the ADC temp-sensor channel uses
+(see ADC0). Deliberate simplification: the SERNUM (serial number) and oscillator-
+error (OSCnnERRxV) signature-row bytes are device-unique factory data with no
+canonical simulator value and are left as zero read-only storage.
 
 Verified in `tests/test_avrxt_engine.c` (now 306 checks): DEVICEID[2:0] equals
 the device signature and the core's `signature[]`, DEVICEID/REVID are read-only,

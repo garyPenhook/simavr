@@ -49,6 +49,10 @@ avr_syscfg_reset(avr_io_t *io)
 	avr->data[p->sigrow_base + SIGROWR_DEVICEID0] = avr->signature[0];
 	avr->data[p->sigrow_base + SIGROWR_DEVICEID1] = avr->signature[1];
 	avr->data[p->sigrow_base + SIGROWR_DEVICEID2] = avr->signature[2];
+
+	/* Temperature-sensor calibration (read by the ADC temp channel and firmware). */
+	avr->data[p->sigrow_base + SIGROWR_TEMPSENSE0] = AVR_SIGROW_TEMPSENSE0_CAL;
+	avr->data[p->sigrow_base + SIGROWR_TEMPSENSE1] = AVR_SIGROW_TEMPSENSE1_CAL;
 }
 
 static const char *irq_names[1] = { NULL };

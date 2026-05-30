@@ -24,9 +24,17 @@
 	settable vref_mv). sim_tiny3217 wires VREF.ADC0REFSEL to the ADC internal
 	reference; both references default to 3300 mV until programmed.
 
-	Not modelled: event-triggered start, and the temperature-sensor transfer
-	function (the 0x1E channel returns its raw settable input, not a
-	SIGROW-calibrated temperature).
+	The temperature-sensor channel (MUXPOS 0x1E) returns a calibrated code: given
+	a settable die temperature (Kelvin) and the SIGROW.TEMPSENSE0/1 gain/offset,
+	it produces the ADC code that inverts the datasheet transfer function
+	T_K = ((RES - TEMPSENSE1) * TEMPSENSE0 + 0x80) >> 8, so firmware applying that
+	formula recovers the configured temperature. The die temperature is set via
+	avr_adc_modern_set_temp_k() or by raising the temperature-sensor channel IRQ
+	(MUXPOS 0x1E), which carries Kelvin rather than millivolts.
+
+	Not modelled: event-triggered start. The temperature reading is independent of
+	the actual REFSEL (the datasheet measurement procedure assumes the 1.1V
+	internal reference).
 
 	Copyright 2026 simavr authors
 
@@ -102,6 +110,10 @@ typedef struct avr_adc_modern_t {
 	uint32_t	acc_sum;	/* running sum of samples taken so far */
 	uint16_t	acc_count;	/* samples taken in the current burst */
 	uint16_t	acc_target;	/* samples to accumulate (1..64) */
+
+	/* Temperature sensor (MUXPOS 0x1E). */
+	avr_io_addr_t	r_tempcal;	/* data addr of SIGROW.TEMPSENSE0 (0 = none) */
+	int32_t		temp_k;		/* modelled die temperature (Kelvin) */
 } avr_adc_modern_t;
 
 /*
@@ -125,6 +137,14 @@ avr_adc_modern_set_vref(avr_adc_modern_t * p, uint32_t vref_mv);
 /* Set the internal reference (CTRLC.REFSEL=INTREF), driven by the VREF block. */
 void
 avr_adc_modern_set_intref(avr_adc_modern_t * p, uint32_t intref_mv);
+
+/* Point the temperature-sensor channel at the SIGROW.TEMPSENSE0 cal address. */
+void
+avr_adc_modern_set_tempsense(avr_adc_modern_t * p, avr_io_addr_t tempcal_addr);
+
+/* Set the modelled die temperature (Kelvin) read by the temp-sensor channel. */
+void
+avr_adc_modern_set_temp_k(avr_adc_modern_t * p, int32_t kelvin);
 
 /* Raise AINn (channel 'n') with a millivolt value to drive that analog input. */
 #define AVR_IOCTL_ADCM_GETIRQ(_name) AVR_IOCTL_DEF('a','d','m',(_name))
