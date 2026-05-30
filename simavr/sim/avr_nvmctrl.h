@@ -6,10 +6,11 @@
 	the classic EECR/EEDR/EEAR and SPMCSR registers with a command-register
 	model over memory-mapped EEPROM and flash.
 
-	This models EEPROM programming: the EEPROM is mapped into the data space;
-	writing to it loads a page buffer, and a (CCP-protected) command in
-	NVMCTRL.CTRLA commits, erases, or clears it. Flash self-programming is not
-	modelled yet.
+	This models EEPROM and flash programming: both are mapped into the data
+	space; writing to either loads a page buffer, and a (CCP-protected) command
+	in NVMCTRL.CTRLA commits, erases, or clears it. The command acts on whichever
+	section (EEPROM or flash) was most recently written to, mirroring the single
+	shared NVM page buffer of the hardware.
 
 	Copyright 2026 simavr authors
 
@@ -50,6 +51,14 @@ enum {
 };
 
 #define AVR_NVM_EE_MAX 512	/* max modelled EEPROM size */
+#define AVR_NVM_FLASH_PAGE_MAX 512	/* max modelled flash page size */
+
+/* Which NVM section the shared page buffer was last loaded for. */
+enum {
+	AVR_NVM_SEC_NONE = 0,
+	AVR_NVM_SEC_EE,
+	AVR_NVM_SEC_FLASH,
+};
 
 typedef struct avr_nvmctrl_t {
 	avr_io_t	io;
@@ -60,13 +69,26 @@ typedef struct avr_nvmctrl_t {
 	avr_io_addr_t	ee_start;	// data address of mapped EEPROM byte 0
 	uint16_t	ee_size;	// EEPROM size in bytes
 
+	avr_io_addr_t	flash_start;	// data address of mapped flash byte 0 (0 = none)
+	uint32_t	flash_size;	// flash size in bytes
+	uint16_t	flash_page;	// flash page size in bytes
+
 	avr_int_vector_t	eeready;	// NVMCTRL_EE (EEPROM ready)
+
+	uint8_t		last_section;	// AVR_NVM_SEC_* most recently written
 
 	/* EEPROM page buffer: bytes written to the mapped region accumulate here
 	 * until a commit command moves the dirty ones into the committed EEPROM
 	 * (which lives directly in avr->data[ee_start..]). */
 	uint8_t		buf[AVR_NVM_EE_MAX];
 	uint8_t		dirty[AVR_NVM_EE_MAX];
+
+	/* Flash page buffer: bytes written to the mapped flash region accumulate
+	 * here for the page they address (fbuf_page is that page's flash offset).
+	 * A commit command moves the dirty ones into avr->flash[]. */
+	uint32_t	fbuf_page;	// flash offset of the buffered page's byte 0
+	uint8_t		fbuf[AVR_NVM_FLASH_PAGE_MAX];
+	uint8_t		fdirty[AVR_NVM_FLASH_PAGE_MAX];
 } avr_nvmctrl_t;
 
 /*
@@ -81,6 +103,18 @@ avr_nvmctrl_init(
 		avr_io_addr_t ee_start,
 		uint16_t ee_size,
 		uint8_t vec_eeready);
+
+/*
+ * Enable flash self-programming. 'flash_start' is the data address where flash
+ * byte 0 is mapped (avr->arch.flashmap_start), 'flash_size' the flash size and
+ * 'flash_page' the page size in bytes. Installs the engine's flash-write hook.
+ */
+void
+avr_nvmctrl_set_flash(
+		avr_nvmctrl_t * p,
+		avr_io_addr_t flash_start,
+		uint32_t flash_size,
+		uint16_t flash_page);
 
 #ifdef __cplusplus
 };

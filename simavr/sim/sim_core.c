@@ -364,10 +364,15 @@ static inline void _avr_set_ram(avr_t * avr, uint16_t addr, uint8_t v)
 	if (addr <= avr->ioend)
 		_avr_set_r(avr, addr, v);
 	else if (unlikely(avr->arch.flashmap_start) &&
-				addr >= avr->arch.flashmap_start)
-		// Writes to the flash mapped into data space are ignored here;
-		// self-programming goes through the NVM controller instead.
+				addr >= avr->arch.flashmap_start) {
+		// Writes to the flash mapped into data space do not land in flash
+		// directly: self-programming goes through the NVM controller, which
+		// loads a page buffer (avr->flashmap_write) and commits it on command.
+		// With no NVM hook installed the write is ignored (read-only flash).
+		if (avr->flashmap_write)
+			avr->flashmap_write(avr, addr, v, avr->flashmap_write_param);
 		return;
+	}
 	else
 		avr_core_watch_write(avr, addr, v);
 }

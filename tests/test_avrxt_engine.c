@@ -982,6 +982,81 @@ int main(void)
 		check("EEERASE wipes byte 5", cpu_read(m, EE + 5), 0xff);
 	}
 
+	printf("== modern NVMCTRL flash self-programming (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t NV = 0x1000, EE = 0x1400;
+		enum { CTRLA = 0x00 };
+		enum { CMD_PAGEWRITE = 1, CMD_PAGEERASE = 2, CMD_PAGEBUFCLR = 4 };
+		/* Flash is mapped at 0x8000; target page 2 (offset 0x100) to avoid the
+		 * program at flash 0. Self-programming stores go through ST/STS, which
+		 * the engine routes to the NVM page buffer (cpu_write would bypass it). */
+		const uint16_t FA = 0x8100;	/* data address of flash offset 0x100 */
+		const uint32_t FO = 0x100;	/* flash[] offset it maps to */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* Program: LDI r16,0xAB; STS 0x8100,r16; LDI r16,0xCD; STS 0x8101,r16 */
+		put16(m, 0x00, 0xea0b);			/* LDI r16, 0xAB */
+		put16(m, 0x02, 0x9300); put16(m, 0x04, FA);	/* STS 0x8100, r16 */
+		put16(m, 0x06, 0xec0d);			/* LDI r16, 0xCD */
+		put16(m, 0x08, 0x9300); put16(m, 0x0a, FA + 1);	/* STS 0x8101, r16 */
+		m->pc = 0;
+		for (int i = 0; i < 4; i++) step(m);	/* run the four instructions */
+
+		/* The stores loaded the page buffer but did not touch flash. */
+		check("flash unchanged before command", m->flash[FO], 0x00);
+
+		/* A page command without an open CCP window is ignored. */
+		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
+		check("flash commit ignored without CCP", m->flash[FO], 0x00);
+
+		/* PAGEWRITE commits the buffered bytes into flash. */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
+		check("flash byte 0 written (0xAB)", m->flash[FO], 0xab);
+		check("flash byte 1 written (0xCD)", m->flash[FO + 1], 0xcd);
+		check("flash neighbour untouched", m->flash[FO + 2], 0x00);
+
+		/* The committed byte is visible through the mapped-flash read path. */
+		m->pc = 0;
+		put16(m, 0x00, 0x9000); put16(m, 0x02, FA);	/* LDS r0, 0x8100 */
+		m->data[0] = 0;
+		step(m);
+		check("mapped-flash read sees commit", m->data[0], 0xab);
+
+		/* PAGEERASE erases the addressed page to 0xFF. */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEERASE);
+		check("flash page erased to 0xFF", m->flash[FO], 0xff);
+
+		/* PAGEBUFCLR discards a pending flash buffer load. */
+		m->pc = 0;
+		put16(m, 0x00, 0xea0b);			/* LDI r16, 0xAB */
+		put16(m, 0x02, 0x9300); put16(m, 0x04, FA);	/* STS 0x8100, r16 */
+		step(m); step(m);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEBUFCLR);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
+		check("PAGEBUFCLR discarded flash write", m->flash[FO], 0xff);
+
+		/* Section independence: an EEPROM write then a flash write leaves the
+		 * shared buffer aimed at flash, so the command acts on flash only. */
+		cpu_write(m, EE + 0, 0x55);		/* loads EE buffer (last_section=EE) */
+		m->pc = 0;
+		put16(m, 0x00, 0xea0b);			/* LDI r16, 0xAB */
+		put16(m, 0x02, 0x9300); put16(m, 0x04, FA);	/* STS -> flash (last=FLASH) */
+		step(m); step(m);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
+		check("command hit flash, not EEPROM", m->flash[FO], 0xab);
+		check("EEPROM left uncommitted", cpu_read(m, EE + 0), 0xff);
+	}
+
 	printf("== modern RTC counter (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t R = 0x140;

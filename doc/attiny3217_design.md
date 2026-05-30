@@ -543,7 +543,7 @@ draining, RXC pending when enabled, and input ignored with RXEN=0. End-to-end: a
 avr-gcc echo firmware (`RXCIF`→`RXDATAL`→poll `DREIF`→`TXDATAL`) round-trips
 "Hi!" through the core's USART0 wire IRQs.
 
-### Phase 4 — peripheral: NVMCTRL (EEPROM) — **DONE**
+### Phase 4 — peripheral: NVMCTRL (EEPROM + flash self-programming) — **DONE**
 `avr_nvmctrl.[ch]`, wired into `sim_tiny3217` at 0x1000 (EE-ready vector = 30),
 managing the memory-mapped EEPROM at 0x1400 (256 B). It replaces the classic
 EECR/SPMCSR with the modern command-register model.
@@ -559,14 +559,29 @@ EECR/SPMCSR with the modern command-register model.
 - Commands complete instantly (STATUS.EEBUSY/FBUSY never observed set), so the
   usual `while (NVMCTRL.STATUS & EEBUSY)` poll passes. INTFLAGS is W1C.
 - The committed-bytes-only flush means single-byte writes preserve their
-  neighbours (matching practical use). Flash self-programming is not modelled
-  (writes to mapped flash are ignored by the engine).
+  neighbours (matching practical use).
+- **Flash self-programming** (`avr_nvmctrl_set_flash`, wired for the 32 KB flash
+  mapped at 0x8000 with 128-byte pages): on a real AVRxt, stores to the mapped
+  flash region load an NVM page buffer rather than writing flash. The engine's
+  `_avr_set_ram` previously dropped those writes; it now forwards them through a
+  new `avr->flashmap_write` hook that NVMCTRL installs, loading a 128-byte flash
+  page buffer (dirty-masked) for the addressed page. The CTRLA page commands then
+  act on whichever section — EEPROM or flash — was most recently written,
+  modelling the single shared NVM page buffer: PAGEWRITE stores the dirty bytes
+  into `avr->flash[]`, PAGEERASE fills the page with 0xFF, PAGEERASEWRITE does
+  both, PAGEBUFCLR discards, and CHIPERASE wipes flash *and* EEPROM. Flash
+  completion clears STATUS.FBUSY (flash has no ready interrupt). Stores still go
+  through ST/STS — `avr_core_watch_write` bypasses the hook by design.
 
-Verified in `tests/test_avrxt_engine.c` (now 147 checks): erased read 0xFF,
-buffered write not visible until the command, commit ignored without CCP,
-ERASEWRITE/PAGEWRITE commit (neighbours preserved), PAGEBUFCLR abort, the
-EE-ready interrupt + W1C, and EEERASE wiping the array. End-to-end: an avr-gcc
-firmware writes two EEPROM bytes via `_PROTECTED_WRITE_SPM(NVMCTRL.CTRLA,
+Verified in `tests/test_avrxt_engine.c` (now 326 checks): for EEPROM — erased
+read 0xFF, buffered write not visible until the command, commit ignored without
+CCP, ERASEWRITE/PAGEWRITE commit (neighbours preserved), PAGEBUFCLR abort, the
+EE-ready interrupt + W1C, EEERASE wiping the array. For flash self-programming —
+real STS stores load the page buffer without touching flash, a command without
+CCP is ignored, PAGEWRITE commits into `avr->flash[]` (visible via a mapped-flash
+LDS), PAGEERASE erases the page, PAGEBUFCLR aborts, and an EEPROM-then-flash
+write sequence proves the command targets the last-written section. End-to-end:
+an avr-gcc firmware writes two EEPROM bytes via `_PROTECTED_WRITE_SPM(NVMCTRL.CTRLA,
 PAGEERASEWRITE)`, reads them back, and drives their XOR (0x99) onto PORTA —
 EEPROM + CCP + PORT together.
 
@@ -943,8 +958,9 @@ All named ATtiny3217 peripheral and identity blocks are now modelled.
 ## 9. Files touched (summary)
 
 Engine: `sim_avr.h` (arch fields incl. `sleep_enabled`, MAX_IOs, `fuse[10]`,
-`lowio_redirect[]`), `sim_avr.c` (init defaults), `sim_core.c` (offset/SP/SREG
-params, AVRxt timing, low-I/O redirect in `_avr_set_ram`/`_avr_get_ram`,
+`lowio_redirect[]`, `flashmap_write` self-program hook), `sim_avr.c` (init
+defaults), `sim_core.c` (offset/SP/SREG params, AVRxt timing, low-I/O redirect
+in `_avr_set_ram`/`_avr_get_ram`, mapped-flash writes routed to `flashmap_write`,
 modern SLEEP gated on `arch.sleep_enabled`), `sim_avr_types.h`
 (`avr_regbit_t.reg` widened 9→13 bits for modern register addresses),
 `sim_core_declare.h` (+ new `sim_core_declare_modern.h`),
@@ -953,7 +969,7 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 `avr_port_modern.[ch]` (PORT/VPORT — DONE)**, **new `avr_clkctrl.[ch]`
 (CLKCTRL — DONE)**, **new `avr_tcb.[ch]` (TCB0/1 — DONE)**, **new
 `avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
-DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
+DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM + flash selfprog — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —

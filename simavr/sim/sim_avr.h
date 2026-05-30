@@ -395,6 +395,16 @@ typedef struct avr_t {
 	uint16_t			lowio_redirect[AVR_LOWIO_REDIRECT_SIZE];
 
 	/*
+	 * Modern AVR flash self-programming. Writes to the flash mapped into the
+	 * data space (>= arch.flashmap_start) are not stored directly; on a real
+	 * AVRxt they load the NVM page buffer, and a NVMCTRL command then commits
+	 * them to flash. If this hook is set (by avr_nvmctrl) the engine forwards
+	 * such writes to it; when NULL the writes are ignored (read-only flash).
+	 */
+	void (*flashmap_write)(struct avr_t * avr, uint16_t addr, uint8_t v, void * param);
+	void *				flashmap_write_param;
+
+	/*
 	 * This block allows sharing of the IO write/read on addresses between
 	 * multiple callbacks. In 99% of case it's not needed, however on the tiny*
 	 * (tiny85 at last) some registers have bits that are used by different

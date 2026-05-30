@@ -66,7 +66,12 @@ static void nvm_bufclr(avr_nvmctrl_t *p)
 	memset(p->dirty, 0, p->ee_size);
 }
 
-/* Mark a command complete: not busy, EEPROM ready, raise interrupt if enabled. */
+static void nvm_fbufclr(avr_nvmctrl_t *p)
+{
+	memset(p->fdirty, 0, p->flash_page);
+}
+
+/* Mark an EEPROM command complete: not busy, EEPROM ready, raise if enabled. */
 static void nvm_complete(avr_nvmctrl_t *p)
 {
 	avr_t *avr = p->io.avr;
@@ -78,18 +83,67 @@ static void nvm_complete(avr_nvmctrl_t *p)
 		avr_raise_interrupt(avr, &p->eeready);
 }
 
+/* Mark a flash command complete: clear FBUSY. Flash has no ready interrupt. */
+static void nvm_flash_complete(avr_nvmctrl_t *p)
+{
+	avr_t *avr = p->io.avr;
+	avr_core_watch_write(avr, p->r_status, avr->data[p->r_status] & ~FBUSY_bm);
+}
+
 /* A byte written to the mapped EEPROM region: load the page buffer. */
 static void
 avr_nvmctrl_ee_write(struct avr_t *avr, avr_io_addr_t addr,
 					 uint8_t v, void *param)
 {
 	avr_nvmctrl_t *p = (avr_nvmctrl_t *)param;
+	(void)avr;
 	uint16_t off = addr - p->ee_start;
 	if (off >= p->ee_size)
 		return;
 	p->buf[off] = v;
 	p->dirty[off] = 1;
+	p->last_section = AVR_NVM_SEC_EE;
 	/* note: avr->data[addr] (committed EEPROM) is intentionally left unchanged */
+}
+
+/* A byte written to the mapped flash region: load the flash page buffer for the
+ * page it addresses (installed as avr->flashmap_write by avr_nvmctrl_set_flash). */
+static void
+avr_nvmctrl_flash_write(struct avr_t *avr, uint16_t addr, uint8_t v, void *param)
+{
+	avr_nvmctrl_t *p = (avr_nvmctrl_t *)param;
+	(void)avr;
+	uint32_t off = (uint32_t)addr - p->flash_start;
+	if (off >= p->flash_size)
+		return;
+	uint32_t page = off & ~(uint32_t)(p->flash_page - 1);
+	/* The shared page buffer holds one page; addressing a new page starts a
+	 * fresh buffer (firmware clears it explicitly between pages in practice). */
+	if (page != p->fbuf_page) {
+		nvm_fbufclr(p);
+		p->fbuf_page = page;
+	}
+	uint16_t i = off & (p->flash_page - 1);
+	p->fbuf[i] = v;
+	p->fdirty[i] = 1;
+	p->last_section = AVR_NVM_SEC_FLASH;
+}
+
+/* Commit / erase the buffered flash page. 'erase' fills the page with 0xFF
+ * first; 'write' stores the buffered (dirty) bytes. */
+static void nvm_flash_op(avr_nvmctrl_t *p, int erase, int write)
+{
+	avr_t *avr = p->io.avr;
+	for (uint16_t i = 0; i < p->flash_page; i++) {
+		uint32_t fa = p->fbuf_page + i;
+		if (fa >= p->flash_size)
+			break;
+		if (erase)
+			avr->flash[fa] = 0xff;
+		if (write && p->fdirty[i])
+			avr->flash[fa] = p->fbuf[i];
+	}
+	nvm_fbufclr(p);
 }
 
 static void
@@ -103,6 +157,30 @@ avr_nvmctrl_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 	if (!avr_ccp_io_write_enabled(avr))
 		return;
 	avr_core_watch_write(avr, p->r_ctrla, v);
+
+	/* CHIPERASE wipes both sections regardless of what was last written. */
+	if (cmd == CMD_CHIPERASE) {
+		for (uint16_t i = 0; i < p->ee_size; i++)
+			avr_core_watch_write(avr, p->ee_start + i, 0xff);
+		for (uint32_t i = 0; i < p->flash_size; i++)
+			avr->flash[i] = 0xff;
+		nvm_bufclr(p);
+		nvm_fbufclr(p);
+		nvm_complete(p);
+		return;
+	}
+
+	/* Page commands act on whichever section the page buffer was loaded for. */
+	if (p->last_section == AVR_NVM_SEC_FLASH) {
+		switch (cmd) {
+		case CMD_PAGEWRITE:		nvm_flash_op(p, 0, 1); nvm_flash_complete(p); break;
+		case CMD_PAGEERASE:		nvm_flash_op(p, 1, 0); nvm_flash_complete(p); break;
+		case CMD_PAGEERASEWRITE:	nvm_flash_op(p, 1, 1); nvm_flash_complete(p); break;
+		case CMD_PAGEBUFCLR:		nvm_fbufclr(p); nvm_flash_complete(p); break;
+		default:			break;
+		}
+		return;
+	}
 
 	switch (cmd) {
 	case CMD_PAGEWRITE:
@@ -125,7 +203,6 @@ avr_nvmctrl_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 		nvm_complete(p);
 		break;
 	case CMD_EEERASE:
-	case CMD_CHIPERASE:
 		for (uint16_t i = 0; i < p->ee_size; i++)
 			avr_core_watch_write(avr, p->ee_start + i, 0xff);
 		nvm_bufclr(p);
@@ -153,6 +230,10 @@ avr_nvmctrl_reset(avr_io_t *io)
 	avr_nvmctrl_t *p = (avr_nvmctrl_t *)io;
 	avr_t *avr = p->io.avr;
 	nvm_bufclr(p);
+	if (p->flash_page)
+		nvm_fbufclr(p);
+	p->fbuf_page = 0;
+	p->last_section = AVR_NVM_SEC_NONE;
 	/* Erased EEPROM reads as 0xFF unless something loaded it. */
 	for (uint16_t i = 0; i < p->ee_size; i++)
 		if (avr->data[p->ee_start + i] == 0)
@@ -203,4 +284,22 @@ avr_nvmctrl_init(
 	/* Intercept writes to the mapped EEPROM region (page-buffer load). */
 	for (uint16_t i = 0; i < p->ee_size; i++)
 		avr_register_io_write(avr, ee_start + i, avr_nvmctrl_ee_write, p);
+}
+
+void
+avr_nvmctrl_set_flash(
+		avr_nvmctrl_t * p,
+		avr_io_addr_t flash_start,
+		uint32_t flash_size,
+		uint16_t flash_page)
+{
+	avr_t *avr = p->io.avr;
+	p->flash_start = flash_start;
+	p->flash_size = flash_size;
+	p->flash_page = flash_page > AVR_NVM_FLASH_PAGE_MAX ?
+					AVR_NVM_FLASH_PAGE_MAX : flash_page;
+
+	/* The engine forwards writes to the mapped flash region to our page buffer. */
+	avr->flashmap_write = avr_nvmctrl_flash_write;
+	avr->flashmap_write_param = p;
 }

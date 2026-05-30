@@ -133,6 +133,8 @@ tiny3217_init(struct avr_t * avr)
 	/* NVMCTRL at 0x1000; EEPROM mapped at 0x1400 (256 bytes). */
 	avr_nvmctrl_init(avr, &mcu->nvmctrl, 0x1000, 0x1400, 256,
 					 NVMCTRL_EE_vect_num);
+	/* Flash self-programming: 32 KB mapped at 0x8000, 128-byte pages. */
+	avr_nvmctrl_set_flash(&mcu->nvmctrl, 0x8000, 32768, 128);
 
 	/* PORTA/B/C at 0x400/0x420/0x440; VPORTA/B/C at 0x00/0x04/0x08. */
 	avr_port_modern_init(avr, &mcu->porta, 'A', 0x0400, 0x0000,
