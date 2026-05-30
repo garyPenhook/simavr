@@ -835,15 +835,33 @@ BUSY never set, OK cleared on disable, the RESET strobe clearing OK and
 self-clearing CTRLA, and the NMIEN lock keeping CTRLA (and OK) fixed against a
 disable attempt.
 
+### Phase 4 — peripheral: SLPCTRL (sleep controller) — **DONE**
+`avr_slpctrl.[ch]`, wired into `sim_tiny3217` at 0x50. SLPCTRL.CTRLA holds the
+sleep enable (SEN) and sleep mode (SMODE: IDLE/STANDBY/POWER-DOWN).
+- **Engine change (modern-gated):** the SLEEP instruction handler in `sim_core.c`
+  now sleeps on a modern core only while `avr->arch.sleep_enabled` is set; classic
+  cores still sleep unconditionally (no `AVR_ARCH_F_MODERN` bit). A new
+  `arch.sleep_enabled` field carries this. SLPCTRL maintains it from CTRLA.SEN, so
+  `SLEEP` correctly does nothing until firmware sets SEN.
+- Wake-up uses the engine's existing model (a serviceable interrupt resumes
+  execution). SMODE is stored; which clocks/peripherals each mode keeps running is
+  not modelled.
+
+Verified in `tests/test_avrxt_engine.c` (now 255 checks): executing the SLEEP
+opcode leaves the CPU running while SEN is clear, enters cpu_Sleeping once SEN is
+set, CTRLA stores SEN|SMODE, and clearing SEN disables sleep again. Classic
+SLEEP-driven firmware is regression-clean (full suite passes).
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): SLPCTRL, RSTCTRL, BOD, VREF, and the rest — added
-incrementally next.
+RAM at those addresses): RSTCTRL, BOD, VREF, and the rest — added incrementally
+next.
 
 ## 9. Files touched (summary)
 
-Engine: `sim_avr.h` (arch fields, MAX_IOs, `fuse[10]`, `lowio_redirect[]`),
-`sim_avr.c` (init defaults), `sim_core.c` (offset/SP/SREG params, AVRxt timing,
-low-I/O redirect in `_avr_set_ram`/`_avr_get_ram`), `sim_avr_types.h`
+Engine: `sim_avr.h` (arch fields incl. `sleep_enabled`, MAX_IOs, `fuse[10]`,
+`lowio_redirect[]`), `sim_avr.c` (init defaults), `sim_core.c` (offset/SP/SREG
+params, AVRxt timing, low-I/O redirect in `_avr_set_ram`/`_avr_get_ram`,
+modern SLEEP gated on `arch.sleep_enabled`), `sim_avr_types.h`
 (`avr_regbit_t.reg` widened 9→13 bits for modern register addresses),
 `sim_core_declare.h` (+ new `sim_core_declare_modern.h`),
 `sim_interrupts.[ch]` (CPUINT path), new `avr_ccp.[ch]`.
@@ -856,8 +874,8 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
 config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
-always-OK)**; remaining peripherals (SLPCTRL, RSTCTRL, BOD, VREF, …) to be added
-as stubs then deepened.
+always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**; remaining peripherals
+(RSTCTRL, BOD, VREF, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

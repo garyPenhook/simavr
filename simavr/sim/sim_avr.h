@@ -374,6 +374,10 @@ typedef struct avr_t {
 		// to constants). flashmap_start is the data address where flash byte 0
 		// appears (0 = no mapping).
 		uint16_t	flashmap_start;
+		// Modern sleep gating: on modern cores the SLEEP instruction only puts
+		// the CPU to sleep while SLPCTRL.CTRLA.SEN is set (maintained here by
+		// avr_slpctrl). Unused on classic cores (which sleep unconditionally).
+		uint8_t		sleep_enabled;
 	} arch;
 
 	/*

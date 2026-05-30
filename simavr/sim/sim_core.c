@@ -1121,7 +1121,11 @@ run_one_again:
 					 * Without this check, it was possible to incorrectly enter a state
 					 * in which the cpu was sleeping and interrupts were disabled. For more
 					 * details, see the commit message. */
-					if (!avr_has_pending_interrupts(avr) || !avr->sreg[S_I])
+					/* On modern cores SLEEP is a no-op unless sleep is enabled
+					 * in SLPCTRL (classic cores sleep unconditionally). */
+					if ((!(avr->arch.flags & AVR_ARCH_F_MODERN) ||
+							avr->arch.sleep_enabled) &&
+						(!avr_has_pending_interrupts(avr) || !avr->sreg[S_I]))
 						avr->state = cpu_Sleeping;
 				}	break;
 				case 0x9598: { // BREAK -- 1001 0101 1001 1000

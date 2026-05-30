@@ -43,6 +43,7 @@
 #include "avr_wdt.h"
 #include "avr_watchdog.h"	/* AVR_IOCTL_WATCHDOG_RESET */
 #include "avr_crcscan.h"
+#include "avr_slpctrl.h"
 
 static int failures;
 
@@ -1763,6 +1764,40 @@ int main(void)
 		cpu_write(m, C + CTRLA, 0x00);	/* attempt to disable */
 		check("CTRLA locked by NMIEN", m->data[C + CTRLA], ENABLE | NMIEN);
 		check("CRCSCAN still OK (locked)", !!(m->data[C + STATUS] & OK), 1);
+	}
+
+	printf("== modern SLPCTRL (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t S = 0x50;
+		enum { CTRLA = 0x00 };
+		enum { SEN = 0x01, SMODE_PDOWN = (2 << 1) };
+		const uint16_t SLEEP_OP = 0x9588;
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		/* With SEN clear, SLEEP is a no-op on modern cores. */
+		put16(m, 0, SLEEP_OP); m->pc = 0; m->state = cpu_Running;
+		cpu_write(m, S + CTRLA, 0x00);
+		m->pc = avr_run_one(m);
+		check("no sleep when SEN clear", m->state == cpu_Sleeping, 0);
+
+		/* SMODE is stored for read-back; SEN drives the sleep gate. */
+		cpu_write(m, S + CTRLA, SEN | SMODE_PDOWN);
+		check("SLPCTRL CTRLA stores SEN|SMODE", cpu_read(m, S + CTRLA), SEN | SMODE_PDOWN);
+
+		/* With SEN set, SLEEP puts the CPU to sleep. */
+		put16(m, 0, SLEEP_OP); m->pc = 0; m->state = cpu_Running;
+		m->pc = avr_run_one(m);
+		check("sleeps when SEN set", m->state == cpu_Sleeping, 1);
+
+		/* Clearing SEN again disables sleep. */
+		cpu_write(m, S + CTRLA, 0x00);
+		put16(m, 0, SLEEP_OP); m->pc = 0; m->state = cpu_Running;
+		m->pc = avr_run_one(m);
+		check("no sleep after SEN cleared", m->state == cpu_Sleeping, 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
