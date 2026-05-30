@@ -37,6 +37,7 @@
 #include "avr_ac.h"
 #include "avr_dac.h"
 #include "avr_ccl.h"
+#include "avr_evsys.h"
 
 static int failures;
 
@@ -73,6 +74,15 @@ static void dac_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
 {
 	(void)irq; (void)param;
 	g_dac_out = value;
+}
+
+/* Counts the rising edges (value==1) seen on an EVSYS user output. */
+static int g_evsys_pulses;
+static void evsys_count_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq; (void)param;
+	if (value)
+		g_evsys_pulses++;
 }
 
 static void check(const char *what, long got, long want)
@@ -1491,6 +1501,64 @@ int main(void)
 		cpu_write(m, L + CTRLA, 0x00);
 		check("LUT0 forced 0 when CCL disabled", l0, 0);
 		check("LUT1 forced 0 when CCL disabled", l1, 0);
+	}
+
+	printf("== modern EVSYS (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t E = 0x180;
+		enum { ASYNCUSER0 = 0x12, ASYNCUSER1 = 0x13, ASYNCUSER2 = 0x14,
+			   SYNCUSER0 = 0x22, SYNCSTROBE = 0x01 };
+		enum { SEL_ASYNCCH0 = 3, SEL_SYNCCH0 = 1 };	/* user channel-select values */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		uint8_t u0 = 0, u1 = 0, u2 = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_USER0 + 0), rec_irq, &u0);
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_USER0 + 1), rec_irq, &u1);
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_USER0 + 2), rec_irq, &u2);
+		/* ASYNCCH0 == channel index 2. */
+		avr_irq_t *ch2 = avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_CH0 + 2);
+
+		/* Route ASYNCUSER0 -> ASYNCCH0, then drive the channel level. */
+		cpu_write(m, E + ASYNCUSER0, SEL_ASYNCCH0);
+		avr_raise_irq(ch2, 1);
+		check("USER0 follows channel high", u0, 1);
+		avr_raise_irq(ch2, 0);
+		check("USER0 follows channel low", u0, 0);
+
+		/* Fan-out: a second user on the same channel sees it too. */
+		cpu_write(m, E + ASYNCUSER1, SEL_ASYNCCH0);
+		avr_raise_irq(ch2, 1);
+		check("USER0 high (fan-out)", u0, 1);
+		check("USER1 high (fan-out)", u1, 1);
+
+		/* Re-routing delivers the channel's current level immediately. */
+		cpu_write(m, E + ASYNCUSER2, SEL_ASYNCCH0);	/* channel is currently 1 */
+		check("re-routed USER2 gets current level", u2, 1);
+
+		/* Turning a user off stops delivery. */
+		cpu_write(m, E + ASYNCUSER0, 0x00);
+		u0 = 0xaa;	/* sentinel */
+		avr_raise_irq(ch2, 0);
+		avr_raise_irq(ch2, 1);
+		check("USER0 off receives nothing", u0, 0xaa);
+		check("USER1 still receiving", u1, 1);
+
+		/* Software strobe pulses a sync channel to its users. */
+		g_evsys_pulses = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_USER0 + 13),
+			evsys_count_hook, NULL);
+		cpu_write(m, E + SYNCUSER0, SEL_SYNCCH0);	/* SYNCUSER0 -> SYNCCH0 (ch0) */
+		cpu_write(m, E + SYNCSTROBE, 0x01);		/* strobe SYNCCH0 */
+		check("sync strobe pulses the routed user once", g_evsys_pulses, 1);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

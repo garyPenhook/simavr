@@ -734,8 +734,33 @@ AND of IO pins (truth-table evaluation over the input combinations), a LINK chai
 (LUT1 = NOT of LUT0's output, following it combinationally), and CTRLA.ENABLE
 gating both outputs to 0 when cleared.
 
+### Phase 4 — peripheral: EVSYS (event system) — **DONE**
+`avr_evsys.[ch]`, wired into `sim_tiny3217` at 0x180 (no interrupt). Models the
+event-routing fabric as an observable switch matrix:
+- **Channels:** six — ch0/1 = SYNCCH0/1, ch2..5 = ASYNCCH0..3. Each carries a
+  level (0/1) driven by a generator or test via the matching CHn IRQ, or pulsed
+  by the ASYNCSTROBE/SYNCSTROBE registers.
+- **Users:** each user register (ASYNCUSER0..12, SYNCUSER0..1) selects a channel
+  — the select value v maps uniformly to channel v-1 (0 = off). When a routed
+  channel changes (or a user is re-routed) the user's current value is emitted on
+  its USERn OUT IRQ; one channel fans out to all users selecting it.
+
+Deliberate simplification: the generator-selection registers (ASYNCCHn/SYNCCHn)
+still store, but generators are not auto-wired into the fabric — a channel is
+driven via its CHn IRQ (or the strobe). This keeps EVSYS observable and lets
+event-aware peripherals/tests be connected later without engine changes.
+
+Implementation note: `avr_io_setirqs()` builds each IRQ's name by dereferencing
+`irq_names[i]`, so every entry must be non-NULL (a NULL crashes there, not in the
+guarded `avr_init_irq` path) — EVSYS names all 21 IRQs.
+
+Verified in `tests/test_avrxt_engine.c` (now 223 checks): a user following its
+routed channel high/low, fan-out to two users on one channel, a re-routed user
+receiving the channel's current level immediately, an "off" user receiving
+nothing, and a software strobe pulsing the routed user once.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): EVSYS, PORTMUX, and the rest — added incrementally next.
+RAM at those addresses): PORTMUX, TCD0, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -752,8 +777,8 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
-**new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**;
-remaining peripherals (EVSYS, PORTMUX, …) to be added as stubs then deepened.
+**new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**;
+remaining peripherals (PORTMUX, TCD0, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217
