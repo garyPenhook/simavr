@@ -852,9 +852,24 @@ opcode leaves the CPU running while SEN is clear, enters cpu_Sleeping once SEN i
 set, CTRLA stores SEN|SMODE, and clearing SEN disables sleep again. Classic
 SLEEP-driven firmware is regression-clean (full suite passes).
 
+### Phase 4 — peripheral: RSTCTRL (reset controller) — **DONE**
+`avr_rstctrl.[ch]`, wired into `sim_tiny3217` at 0x40. RSTCTRL.RSTFR records the
+cause of the last reset and RSTCTRL.SWRR triggers a software reset.
+- **PORF:** the power-on reset flag is set at the initial power-up.
+- **Software reset:** writing SWRR.SWRE resets the device (the same safe
+  avr->run-swap mechanism as the watchdog) and the reset hook sets RSTFR.SWRF.
+- **RSTFR** is write-1-to-clear.
+
+Deliberate simplifications: BOR / external / UPDI reset causes are not generated,
+and a WDT timeout does not set WDRF (the WDT models the reset effect, not the
+cause flag).
+
+Verified in `tests/test_avrxt_engine.c` (now 260 checks): PORF set at power-on,
+RSTFR W1C, and a software reset zeroing the cycle counter and setting SWRF
+(without re-setting PORF). Full suite regression-clean.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): RSTCTRL, BOD, VREF, and the rest — added incrementally
-next.
+RAM at those addresses): BOD, VREF, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -874,8 +889,8 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
 config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
-always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**; remaining peripherals
-(RSTCTRL, BOD, VREF, …) to be added as stubs then deepened.
+always-OK)**, **new `avr_slpctrl.[ch]` (SLPCTRL — DONE)**, **new `avr_rstctrl.[ch]` (RSTCTRL —
+DONE)**; remaining peripherals (BOD, VREF, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

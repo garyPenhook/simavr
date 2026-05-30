@@ -44,6 +44,7 @@
 #include "avr_watchdog.h"	/* AVR_IOCTL_WATCHDOG_RESET */
 #include "avr_crcscan.h"
 #include "avr_slpctrl.h"
+#include "avr_rstctrl.h"
 
 static int failures;
 
@@ -1798,6 +1799,38 @@ int main(void)
 		put16(m, 0, SLEEP_OP); m->pc = 0; m->state = cpu_Running;
 		m->pc = avr_run_one(m);
 		check("no sleep after SEN cleared", m->state == cpu_Sleeping, 0);
+	}
+
+	printf("== modern RSTCTRL (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t R = 0x40;
+		enum { RSTFR = 0x00, SWRR = 0x01 };
+		enum { PORF = 0x01, SWRF = 0x10, SWRE = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		put16(m, 0, 0xcfff);	/* RJMP .-2 self-loop */
+		m->pc = 0;
+
+		/* Power-on reset flag is set at the initial power-up. */
+		check("RSTFR.PORF set at power-on", !!(m->data[R + RSTFR] & PORF), 1);
+
+		/* RSTFR is write-1-to-clear. */
+		cpu_write(m, R + RSTFR, PORF);
+		check("RSTFR.PORF cleared by W1C", !!(m->data[R + RSTFR] & PORF), 0);
+
+		/* Run a little so the cycle counter is non-zero, then software-reset. */
+		for (int i = 0; i < 10; i++)
+			avr_run(m);
+		long before = (long)m->cycle;
+		cpu_write(m, R + SWRR, SWRE);	/* arm the software reset */
+		avr_run(m);			/* performs avr_reset() */
+
+		check("software reset zeroed the cycle counter", (long)m->cycle < before, 1);
+		check("RSTFR.SWRF set after software reset", !!(m->data[R + RSTFR] & SWRF), 1);
+		check("PORF not re-set on software reset", !!(m->data[R + RSTFR] & PORF), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
