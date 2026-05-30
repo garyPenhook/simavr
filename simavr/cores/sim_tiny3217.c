@@ -21,6 +21,7 @@ void t3217_init(struct avr_t * avr)
 	struct mcu_t * mcu = (struct mcu_t *)avr;
 
 	avr_clkctrl_init(avr, &mcu->clkctrl);
+	avr_nvmctrl_init(avr, &mcu->nvmctrl);
 	avr_cpuint_init(avr, &mcu->cpuint);
 	avr_port_init(avr, &mcu->porta);
 	avr_port_init(avr, &mcu->portb);

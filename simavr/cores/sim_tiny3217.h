@@ -25,6 +25,7 @@
 #include "avr_tca.h"
 #include "avr_usart.h"
 #include "avr_clkctrl.h"
+#include "avr_nvmctrl.h"
 
 // --- ATtiny3217 memory map (data space) ---
 #define T3217_FLASHEND	0x7FFF		// 32 KB
@@ -41,6 +42,8 @@
 #define T3217_RSTFR	0x0040		// RSTCTRL.RSTFR (reset flags)
 #define T3217_CLKCTRL	0x0060		// clock controller
 #define T3217_CPUINT	0x0110		// CPUINT controller
+#define T3217_NVMCTRL	0x1000		// NVM controller
+#define T3217_EEPROM	0x1400		// mapped EEPROM (256 B, page 64)
 #define T3217_PORTA	0x0400
 #define T3217_PORTB	0x0420
 #define T3217_PORTC	0x0440
@@ -55,6 +58,7 @@ void t3217_reset(struct avr_t * avr);
 struct mcu_t {
 	avr_t		core;
 	avr_clkctrl_t	clkctrl;
+	avr_nvmctrl_t	nvmctrl;
 	avr_cpuint_t	cpuint;
 	avr_port_t	porta, portb, portc;
 	avr_usart_t	usart0;
@@ -103,6 +107,18 @@ const struct mcu_t SIM_CORENAME = {
 		.reset = t3217_reset,
 	},
 	.clkctrl = { .r_base = T3217_CLKCTRL },
+	.nvmctrl = {
+		.r_base = T3217_NVMCTRL,
+		.eeprom_base = T3217_EEPROM,
+		.eeprom_size = T3217_E2SIZE,
+		.page_size = 64,
+		.eeready = {
+			.vector = 30,	// NVMCTRL_EE_vect_num
+			.enable = AVR_IO_REGBIT(T3217_NVMCTRL + 0x03, 0),	// INTCTRL.EEREADY
+			.raised = AVR_IO_REGBIT(T3217_NVMCTRL + 0x04, 0),	// INTFLAGS.EEREADY
+			.raise_sticky = 1,
+		},
+	},
 	.cpuint = { .r_base = T3217_CPUINT },
 	.porta = { .name = 'A', .r_base = T3217_PORTA },
 	.portb = { .name = 'B', .r_base = T3217_PORTB },

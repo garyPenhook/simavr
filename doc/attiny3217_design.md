@@ -404,9 +404,22 @@ firmware loads and runs end-to-end.
 - **Verified:** `tests/attiny3217_tca.c` — TCA0 overflow ISR toggles PA3 and a
   CMP0 compare ISR toggles PA4; the host observes both.
 
+**NVMCTRL (EEPROM) added:**
+- **`sim/avr_nvmctrl.{c,h}`**: NVM controller, EEPROM path. The mapped EEPROM
+  (0x1400, 256 B) uses a page-buffer model — writes to the mapped region stage
+  into a buffer, and a CTRLA command (PAGEWRITE / PAGEERASEWRITE / PAGEERASE /
+  EEERASE / page-buffer-clear) commits or erases. EEPROM lives in a persistent
+  module buffer (init 0xFF) that survives avr_reset() and is mirrored into the
+  data space for direct mapped reads (repopulated in the module reset, which
+  runs after avr_reset() zeroes the data space). EEREADY interrupt (vector 30).
+  Flash self-programming (SPM through the mapped flash window) not yet modelled.
+- **Verified:** `tests/attiny3217_eeprom.c` writes two bytes via the mapped
+  region + PAGEERASEWRITE, reads them back, and signals success on PA3.
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
-Phase 1), prescaler→frequency in CLKCTRL, TCA split/PWM modes, RTC/PIT,
-NVMCTRL, SPI0/TWI0, ADC0, USART RX-path test, and stubs for the rest.
+Phase 1), prescaler→frequency in CLKCTRL, TCA split/PWM modes, flash
+self-programming, ELF .eeprom preload, RTC/PIT, SPI0/TWI0, ADC0, USART RX-path
+test, and stubs for the rest.
 
 ## 9. Files touched (summary)
 
