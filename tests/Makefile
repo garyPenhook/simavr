@@ -75,5 +75,16 @@ ${OBJ}/test_attiny3217_blink: test_attiny3217_blink.c | ${OBJ}
 	$(CC) ${CPPFLAGS} -I${simavr}/simavr/sim -I${simavr}/simavr/cores \
 		-o $@ $< -L${simavr}/simavr/${OBJ} -lsimavr -lelf -lm
 
+# ATtiny3217 modern-AVR self-test: real compiled firmware that exercises the
+# deepened peripherals (EEPROM, temp sensor, TCB0, TCA0) and reports a pass
+# bitmask the host harness checks.
+attiny3217-selftest: attiny3217_selftest.axf ${OBJ}/test_attiny3217_selftest
+	@echo "--- ATtiny3217 self-test ---"
+	@LD_LIBRARY_PATH=${simavr}/simavr/${OBJ} ${OBJ}/test_attiny3217_selftest attiny3217_selftest.axf
+
+${OBJ}/test_attiny3217_selftest: test_attiny3217_selftest.c | ${OBJ}
+	$(CC) ${CPPFLAGS} -I${simavr}/simavr/sim -I${simavr}/simavr/cores \
+		-o $@ $< -L${simavr}/simavr/${OBJ} -lsimavr -lelf -lm
+
 clean: clean-${OBJ}
 	rm -f *.axf *.hex *.vcd

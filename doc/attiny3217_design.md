@@ -1073,6 +1073,28 @@ DONE)**, **new `avr_bod.[ch]` (BOD / VLM — DONE)**, **new `avr_syscfg.[ch]`
 (SYSCFG + SIGROW device identity — DONE)**.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
-Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217
-wiring).
+Tests: `tests/test_avrxt_engine.c` (host-driven model checks — engine + every
+peripheral, ~351 checks). Real-firmware validation (compiled with avr-gcc against
+the device headers, so it also confirms the modelled register layout matches what
+firmware uses): `tests/attiny3217_blink.c` + `test_attiny3217_blink.c`
+(`make attiny3217-demo` — PA0 toggles), and `tests/attiny3217_selftest.c` +
+`test_attiny3217_selftest.c` (`make attiny3217-selftest` — EEPROM read-back, the
+SIGROW-calibrated temperature sensor, and TCB0/TCA0 counting, each reported as a
+pass bit in GPIOR0).
 ```
+
+## 10. Validation against real firmware
+
+The host-driven `test_avrxt_engine.c` checks are thorough but largely exercise the
+models on their own terms. To guard against a model that is internally consistent
+but does not match what real firmware expects, two compiled-firmware harnesses run
+genuine avr-gcc output on the core (kept out of the default `run_tests` because
+they need a modern avr-gcc with ATtiny3217 support):
+
+- **`make attiny3217-demo`** — the blink firmware; the host checks PA0 toggles.
+- **`make attiny3217-selftest`** — `attiny3217_selftest.c` pokes the peripherals
+  through `<avr/io.h>` register structs (so a register-layout mismatch would fail
+  to compile or misbehave) and self-checks EEPROM write/read-back via NVMCTRL, the
+  temperature-sensor channel decoded with the datasheet transfer function and the
+  SIGROW calibration, and TCB0/TCA0 actually counting; it reports a per-subtest
+  pass bitmask in GPIOR0 that the host harness verifies.
