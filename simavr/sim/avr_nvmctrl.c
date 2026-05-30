@@ -15,10 +15,14 @@
 	  PAGEERASE                   set the dirty bytes to 0xFF
 	  PAGEBUFCLR                  discard the buffer
 	  EEERASE / CHIPERASE         erase the whole EEPROM to 0xFF
-	Completion sets INTFLAGS.EEREADY and raises NVMCTRL_EE if enabled. Commands
-	complete instantly (STATUS busy flags are never observed set). Flash
-	self-programming is not modelled (writes to mapped flash are ignored by the
-	engine).
+	The committed data lands immediately (so reads are always correct), but the
+	matching STATUS busy flag (EEBUSY for EEPROM, FBUSY for flash) is asserted for
+	a nominal duration via a cycle timer; on completion it clears and — for
+	EEPROM — INTFLAGS.EEREADY is set and NVMCTRL_EE raised if enabled. Flash
+	self-programming commits to avr->flash[]; see avr_nvmctrl_set_flash().
+
+	Not modelled: the FUSEWRITE command (fuse self-programming via NVMCTRL.ADDR/
+	DATA, rare in application code and normally done by the UPDI programmer).
 
 	Copyright 2026 simavr authors
 
@@ -41,6 +45,12 @@
 #include <stdio.h>
 #include <string.h>
 #include "avr_nvmctrl.h"
+#include "sim_cycle_timers.h"
+
+/* Nominal NVM operation duration. Real flash/EEPROM writes take ~ms; the exact
+ * value is not critical for simulation — it just makes STATUS.E/FBUSY briefly
+ * observable so polling firmware (and the ready interrupt) behave. */
+#define NVM_OP_CYCLES	100
 
 /* CTRLA command field */
 #define CMD_gm		0x07
@@ -71,24 +81,40 @@ static void nvm_fbufclr(avr_nvmctrl_t *p)
 	memset(p->fdirty, 0, p->flash_page);
 }
 
-/* Mark an EEPROM command complete: not busy, EEPROM ready, raise if enabled. */
-static void nvm_complete(avr_nvmctrl_t *p)
+/* Operation finished (cycle timer): clear the busy flag and, for EEPROM, set
+ * EEREADY and raise NVMCTRL_EE if enabled (flash has no ready interrupt). */
+static avr_cycle_count_t
+nvm_op_done(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
-	avr_t *avr = p->io.avr;
-	avr_core_watch_write(avr, p->r_status,
-			avr->data[p->r_status] & ~(EEBUSY_bm | FBUSY_bm));
-	avr_core_watch_write(avr, p->r_intflags,
-			avr->data[p->r_intflags] | EEREADY_bm);
-	if (avr->data[p->r_intctrl] & EEREADY_bm)
-		avr_raise_interrupt(avr, &p->eeready);
+	avr_nvmctrl_t *p = (avr_nvmctrl_t *)param;
+	(void)when;
+	uint8_t st = avr->data[p->r_status];
+
+	if (st & EEBUSY_bm) {
+		avr_core_watch_write(avr, p->r_status, st & ~EEBUSY_bm);
+		avr_core_watch_write(avr, p->r_intflags,
+				avr->data[p->r_intflags] | EEREADY_bm);
+		if (avr->data[p->r_intctrl] & EEREADY_bm)
+			avr_raise_interrupt(avr, &p->eeready);
+	}
+	if (avr->data[p->r_status] & FBUSY_bm)
+		avr_core_watch_write(avr, p->r_status,
+				avr->data[p->r_status] & ~FBUSY_bm);
+	return 0;
 }
 
-/* Mark a flash command complete: clear FBUSY. Flash has no ready interrupt. */
-static void nvm_flash_complete(avr_nvmctrl_t *p)
+/* Start an NVM operation: assert the busy flag and schedule its completion.
+ * The data is already committed by the caller, so reads stay correct; only the
+ * STATUS busy phase and the ready interrupt are delayed. */
+static void nvm_begin(avr_nvmctrl_t *p, uint8_t busy_bm)
 {
 	avr_t *avr = p->io.avr;
-	avr_core_watch_write(avr, p->r_status, avr->data[p->r_status] & ~FBUSY_bm);
+	avr_core_watch_write(avr, p->r_status, avr->data[p->r_status] | busy_bm);
+	avr_cycle_timer_register(avr, NVM_OP_CYCLES, nvm_op_done, p);
 }
+
+static void nvm_complete(avr_nvmctrl_t *p)	{ nvm_begin(p, EEBUSY_bm); }
+static void nvm_flash_complete(avr_nvmctrl_t *p)	{ nvm_begin(p, FBUSY_bm); }
 
 /* A byte written to the mapped EEPROM region: load the page buffer. */
 static void
@@ -229,6 +255,7 @@ avr_nvmctrl_reset(avr_io_t *io)
 {
 	avr_nvmctrl_t *p = (avr_nvmctrl_t *)io;
 	avr_t *avr = p->io.avr;
+	avr_cycle_timer_cancel(avr, nvm_op_done, p);
 	nvm_bufclr(p);
 	if (p->flash_page)
 		nvm_fbufclr(p);

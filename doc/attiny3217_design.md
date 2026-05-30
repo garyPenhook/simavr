@@ -556,8 +556,15 @@ EECR/SPMCSR with the modern command-register model.
   dirty buffer bytes; PAGEERASE sets them to 0xFF; PAGEBUFCLR discards the
   buffer; EEERASE / CHIPERASE wipe the whole EEPROM. Completion sets
   INTFLAGS.EEREADY and raises `NVMCTRL_EE` if enabled.
-- Commands complete instantly (STATUS.EEBUSY/FBUSY never observed set), so the
-  usual `while (NVMCTRL.STATUS & EEBUSY)` poll passes. INTFLAGS is W1C.
+- **Busy timing:** the committed data lands immediately (reads are always
+  correct), but the matching STATUS busy flag (EEBUSY for EEPROM, FBUSY for
+  flash) is asserted for a nominal duration via a cycle timer; on completion it
+  clears and — for EEPROM — INTFLAGS.EEREADY is set and NVMCTRL_EE raised if
+  enabled. So `while (NVMCTRL.STATUS & EEBUSY)` polling sees a real busy phase
+  and the EE-ready interrupt fires on completion rather than at command time.
+  INTFLAGS is W1C. (FUSEWRITE — fuse self-programming via NVMCTRL.ADDR/DATA — is
+  not modelled; it is rare in application code and normally done by the UPDI
+  programmer.)
 - The committed-bytes-only flush means single-byte writes preserve their
   neighbours (matching practical use).
 - **Flash self-programming** (`avr_nvmctrl_set_flash`, wired for the 32 KB flash
@@ -573,14 +580,16 @@ EECR/SPMCSR with the modern command-register model.
   completion clears STATUS.FBUSY (flash has no ready interrupt). Stores still go
   through ST/STS — `avr_core_watch_write` bypasses the hook by design.
 
-Verified in `tests/test_avrxt_engine.c` (now 326 checks): for EEPROM — erased
+Verified in `tests/test_avrxt_engine.c` (now 347 checks): for EEPROM — erased
 read 0xFF, buffered write not visible until the command, commit ignored without
-CCP, ERASEWRITE/PAGEWRITE commit (neighbours preserved), PAGEBUFCLR abort, the
-EE-ready interrupt + W1C, EEERASE wiping the array. For flash self-programming —
-real STS stores load the page buffer without touching flash, a command without
-CCP is ignored, PAGEWRITE commits into `avr->flash[]` (visible via a mapped-flash
-LDS), PAGEERASE erases the page, PAGEBUFCLR aborts, and an EEPROM-then-flash
-write sequence proves the command targets the last-written section. End-to-end:
+CCP, ERASEWRITE/PAGEWRITE commit (neighbours preserved), EEBUSY asserted during
+the op then clearing with EEREADY set on completion, PAGEBUFCLR abort, the
+EE-ready interrupt firing after the busy phase + W1C, EEERASE wiping the array.
+For flash self-programming — real STS stores load the page buffer without
+touching flash, a command without CCP is ignored, PAGEWRITE commits into
+`avr->flash[]` (visible via a mapped-flash LDS) with FBUSY asserted, PAGEERASE
+erases the page, PAGEBUFCLR aborts, and an EEPROM-then-flash write sequence
+proves the command targets the last-written section. End-to-end:
 an avr-gcc firmware writes two EEPROM bytes via `_PROTECTED_WRITE_SPM(NVMCTRL.CTRLA,
 PAGEERASEWRITE)`, reads them back, and drives their XOR (0x99) onto PORTA —
 EEPROM + CCP + PORT together.

@@ -924,10 +924,16 @@ int main(void)
 			   CMD_EEERASE = 6 };
 		enum { EEREADY = 0x01 };
 
+		enum { EEBUSY = 0x02 };
+
 		avr_t *m = avr_make_mcu_by_name("attiny3217");
 		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
 		m->log = LOG_ERROR;
 		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs, so avr_run advances cleanly */
+
+		/* Run out the nominal NVM busy phase (operations are no longer instant). */
+		#define NVM_RUN() do { for (int i = 0; i < 200; i++) avr_run(m); } while (0)
 
 		check("erased EEPROM reads 0xFF", cpu_read(m, EE + 5), 0xff);
 
@@ -940,13 +946,19 @@ int main(void)
 		cpu_write(m, NV + CTRLA, CMD_PAGEERASEWRITE);
 		check("commit ignored without CCP", cpu_read(m, EE + 5), 0xff);
 
-		/* With CCP, ERASEWRITE commits the buffered byte. */
+		/* With CCP, ERASEWRITE commits the buffered byte immediately, then the
+		 * controller is briefly EEBUSY before EEREADY is flagged. */
 		avr_ccp_write(m, AVR_CCP_IOREG);
 		cpu_write(m, NV + CTRLA, CMD_PAGEERASEWRITE);
 		check("ERASEWRITE commits byte", cpu_read(m, EE + 5), 0xab);
-		check("EEREADY flag set after commit",
+		check("EEBUSY set during op", !!(m->data[NV + STATUS] & EEBUSY), 1);
+		check("EEREADY not yet set while busy",
+			  !!(m->data[NV + INTFLAGS] & EEREADY), 0);
+		NVM_RUN();
+		check("EEBUSY clears after op", !!(m->data[NV + STATUS] & EEBUSY), 0);
+		check("EEREADY set on completion",
 			  !!(m->data[NV + INTFLAGS] & EEREADY), 1);
-		check("EEBUSY clear (instant)", !!(m->data[NV + STATUS] & 0x02), 0);
+		cpu_write(m, NV + INTFLAGS, EEREADY);	/* clear for later */
 
 		/* Multiple bytes, in place. */
 		cpu_write(m, EE + 0, 0x11);
@@ -956,21 +968,25 @@ int main(void)
 		check("byte 0 committed", cpu_read(m, EE + 0), 0x11);
 		check("byte 1 committed", cpu_read(m, EE + 1), 0x22);
 		check("untouched byte preserved", cpu_read(m, EE + 5), 0xab);
+		NVM_RUN();
 
 		/* PAGEBUFCLR aborts a pending buffer load. */
 		cpu_write(m, EE + 0, 0x99);
 		avr_ccp_write(m, AVR_CCP_IOREG);
 		cpu_write(m, NV + CTRLA, CMD_PAGEBUFCLR);
+		NVM_RUN();
 		avr_ccp_write(m, AVR_CCP_IOREG);
 		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
 		check("PAGEBUFCLR discarded the write", cpu_read(m, EE + 0), 0x11);
+		NVM_RUN();
 
-		/* EE interrupt fires when enabled. */
+		/* EE interrupt fires when enabled — after the busy phase completes. */
 		cpu_write(m, NV + INTFLAGS, EEREADY);	/* clear */
 		cpu_write(m, NV + INTCTRL, EEREADY);	/* enable */
 		cpu_write(m, EE + 2, 0x33);
 		avr_ccp_write(m, AVR_CCP_IOREG);
 		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
+		NVM_RUN();
 		check("EE interrupt pending", avr_has_pending_interrupts(m), 1);
 		cpu_write(m, NV + INTFLAGS, EEREADY);	/* W1C */
 		check("EEREADY cleared by W1C", !!(m->data[NV + INTFLAGS] & EEREADY), 0);
@@ -980,6 +996,9 @@ int main(void)
 		cpu_write(m, NV + CTRLA, CMD_EEERASE);
 		check("EEERASE wipes byte 0", cpu_read(m, EE + 0), 0xff);
 		check("EEERASE wipes byte 5", cpu_read(m, EE + 5), 0xff);
+		NVM_RUN();
+
+		#undef NVM_RUN
 	}
 
 	printf("== modern NVMCTRL flash self-programming (sim_tiny3217) ==\n");
@@ -1020,6 +1039,7 @@ int main(void)
 		check("flash byte 0 written (0xAB)", m->flash[FO], 0xab);
 		check("flash byte 1 written (0xCD)", m->flash[FO + 1], 0xcd);
 		check("flash neighbour untouched", m->flash[FO + 2], 0x00);
+		check("FBUSY set during flash op", !!(m->data[NV + 0x02] & 0x01), 1);
 
 		/* The committed byte is visible through the mapped-flash read path. */
 		m->pc = 0;
