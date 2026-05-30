@@ -39,6 +39,7 @@
 #include "avr_ccl.h"
 #include "avr_evsys.h"
 #include "avr_portmux.h"
+#include "avr_tcd.h"
 
 static int failures;
 
@@ -1585,6 +1586,69 @@ int main(void)
 
 		/* A neighbouring register is unaffected. */
 		check("PORTMUX CTRLD untouched", cpu_read(m, P + PORTMUXR_CTRLD), 0);
+	}
+
+	printf("== modern TCD0 (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t T = 0xa80;
+		enum { ENABLE = 0x01, SYNCPRES_DIV2 = (1 << 1) };
+		enum { OVF = 0x01 };
+		enum { ENRDY = 0x01, CMDRDY = 0x02 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		/* The double-buffered sync logic always reports ready. */
+		check("TCD STATUS ready (ENRDY|CMDRDY)",
+			  cpu_read(m, T + TCDR_STATUS) & (ENRDY | CMDRDY), ENRDY | CMDRDY);
+
+		/* TOP = CMPBCLR = 100 => period (TOP+1) = 101 counts, prescale 1. */
+		cpu_write(m, T + TCDR_CMPBCLRL, 100);
+		cpu_write(m, T + TCDR_CMPBCLRH, 0);
+		cpu_write(m, T + TCDR_INTCTRL, OVF);
+		long t0 = (long)m->cycle;
+		cpu_write(m, T + TCDR_CTRLA, ENABLE);	/* SYNCPRES/CNTPRES DIV1 */
+
+		long tovf = -1;
+		for (int i = 0; i < 400 && tovf < 0; i++) {
+			avr_run(m);
+			if (m->data[T + TCDR_INTFLAGS] & OVF) tovf = (long)m->cycle;
+		}
+		check("OVF near 101 cycles", (tovf - t0) >= 98 && (tovf - t0) <= 106, 1);
+		check("TCD raises (enabled) interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* W1C and confirm the periodic cadence (~101 cycles later). */
+		cpu_write(m, T + TCDR_INTFLAGS, OVF);
+		check("OVF cleared by W1C", !!(m->data[T + TCDR_INTFLAGS] & OVF), 0);
+		long t1 = -1;
+		for (int i = 0; i < 400 && t1 < 0; i++) {
+			avr_run(m);
+			if (m->data[T + TCDR_INTFLAGS] & OVF) t1 = (long)m->cycle;
+		}
+		check("second OVF ~101 cycles later", (t1 - tovf) >= 98 && (t1 - tovf) <= 106, 1);
+
+		/* Disable: no further overflows. */
+		cpu_write(m, T + TCDR_INTFLAGS, OVF);
+		cpu_write(m, T + TCDR_CTRLA, 0x00);
+		int fired = 0;
+		for (int i = 0; i < 400; i++) {
+			avr_run(m);
+			if (m->data[T + TCDR_INTFLAGS] & OVF) { fired = 1; break; }
+		}
+		check("no OVF after disable", fired, 0);
+
+		/* SYNCPRES = DIV2 doubles the period (~202 cycles). */
+		cpu_write(m, T + TCDR_INTFLAGS, OVF);
+		long base = (long)m->cycle, t2 = -1;
+		cpu_write(m, T + TCDR_CTRLA, ENABLE | SYNCPRES_DIV2);
+		for (int i = 0; i < 700 && t2 < 0; i++) {
+			avr_run(m);
+			if (m->data[T + TCDR_INTFLAGS] & OVF) t2 = (long)m->cycle;
+		}
+		check("SYNCPRES/2 period ~202 cycles", (t2 - base) >= 198 && (t2 - base) <= 208, 1);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

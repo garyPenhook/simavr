@@ -50,11 +50,12 @@
 #include "avr_ccl.h"
 #include "avr_evsys.h"
 #include "avr_portmux.h"
+#include "avr_tcd.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
- * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS and PORTMUX.
+ * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX and TCD0.
  */
 struct mcu_t {
 	avr_t				core;
@@ -73,6 +74,7 @@ struct mcu_t {
 	avr_ccl_t			ccl;
 	avr_evsys_t			evsys;
 	avr_portmux_t		portmux;
+	avr_tcd_t			tcd0;
 };
 
 /*
@@ -153,6 +155,9 @@ tiny3217_init(struct avr_t * avr)
 
 	/* PORTMUX (peripheral pin routing) config store at 0x0200. */
 	avr_portmux_init(avr, &mcu->portmux, 0x0200, '0');
+
+	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector. */
+	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, '0');
 }
 
 static void

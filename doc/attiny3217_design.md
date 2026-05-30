@@ -774,9 +774,28 @@ Verified in `tests/test_avrxt_engine.c` (now 229 checks): CTRLA/CTRLB reset to 0
 CTRLA/B/C store and read back their selections, and a neighbouring register is
 left untouched.
 
+### Phase 4 — peripheral: TCD0 (12-bit timer type D) — **DONE**
+`avr_tcd.[ch]`, wired into `sim_tiny3217` at 0x0A80 (vector OVF=15). TCD is an
+asynchronous high-resolution-PWM timer; this models its periodic-overflow use.
+- **Scheduling:** a simavr cycle timer is scheduled (CMPBCLR+1)*prescale CPU
+  cycles ahead; on expiry the OVF flag is set and TCD0_OVF raised (if
+  INTCTRL.OVF), then it reschedules — a clean periodic source. INTFLAGS is W1C.
+- **Clock:** the TCD source is approximated as CLK_PER, divided by CTRLA.SYNCPRES
+  (1/2/4/8) and CNTPRES (1/4/32). CMPBCLR (12-bit) is TOP.
+- **Sync protocol:** STATUS always reads ENRDY|CMDRDY, so the double-buffered
+  enable/command polling (`while (!(TCD0.STATUS & ENRDY))`) passes.
+
+Deliberate simplifications: the waveform outputs (WOA/WOB), TRIGA/TRIGB compare
+events, dithering, fault control and input capture are not modelled, and the
+exact TCD clock source is approximated as CLK_PER (those registers still store).
+
+Verified in `tests/test_avrxt_engine.c` (now 236 checks): STATUS ready, first OVF
+at ~101 cycles for CMPBCLR=100 + enabled-interrupt raise, W1C, the periodic
+cadence, clean stop on disable, and SYNCPRES=DIV2 doubling the period.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): TCD0, WDT(new), CRCSCAN, and the rest — added
-incrementally next.
+RAM at those addresses): WDT(new), CRCSCAN, SLPCTRL, RSTCTRL, and the rest —
+added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -794,8 +813,8 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
-config store)**; remaining peripherals (TCD0, WDT, CRCSCAN, …) to be added as
-stubs then deepened.
+config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**; remaining peripherals
+(WDT, CRCSCAN, SLPCTRL, RSTCTRL, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217
