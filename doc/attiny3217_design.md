@@ -637,8 +637,38 @@ free-running repeated conversions at the right cadence, clean stop on disable,
 and the window comparator (ABOVE fires, INSIDE-of-a-non-matching-window does not)
 with its WCOMP interrupt.
 
+### Phase 4 — peripheral: SPI0 — **DONE**
+`avr_spi_modern.[ch]`, wired into `sim_tiny3217` at 0x820 (vector SPI0_INT=26).
+Models the normal (non-buffered) mode in host and client roles, driving the
+*same* wire IRQ convention as the classic `avr_spi.c` (`SPI_IRQ_INPUT`/`_OUTPUT`,
+`AVR_IOCTL_SPI_GETIRQ`) so existing simavr SPI endpoints connect unchanged — only
+the register glue is new.
+- **Host (master):** writing DATA schedules a transfer of `prescaler * 8` CPU
+  cycles (CTRLA.PRESC DIV4/16/64/128, halved by CLK2X). On completion the byte is
+  emitted on `SPI_IRQ_OUTPUT` (MOSI), INTFLAGS.IF is set and SPI0_INT raised if
+  INTCTRL.IE. A connected part's synchronous reply on `SPI_IRQ_INPUT` (MISO) is
+  latched into DATA as the received byte.
+- **Client (slave):** a byte arriving on `SPI_IRQ_INPUT` is latched into DATA
+  (setting IF) and the current DATA is echoed back on `SPI_IRQ_OUTPUT`.
+- **Flags:** IF (INTFLAGS bit7) is enabled by INTCTRL.IE (bit0) and cleared by
+  reading DATA (the normal-mode "read INTFLAGS then access DATA" sequence; a W1C
+  is also accepted). Writing DATA mid-transfer sets WRCOL and is ignored.
+
+Deliberate simplifications (consistent with the classic SPI's synchronous wire):
+buffered mode (CTRLB.BUFEN and the RXCIF/TXCIF/DREIF/SSIF/BUFOVF flag set with
+their separate enables), the SS client-select trigger, and exact CPOL/CPHA/bit
+order are not modelled (the configuration still stores).
+
+Verified in `tests/test_avrxt_engine.c` (now 187 checks): host transfer against a
+complement-echo client — IF deferred then set at ~32 cycles (DIV4), the MOSI byte
+observed, the MISO reply latched, the IE interrupt raised, IF cleared by the DATA
+read, and a write-collision (mid-transfer DATA write sets WRCOL and is dropped,
+the first byte still clocked); and the client path — a received byte latched with
+IF set, the held DATA echoed on MISO, and IF cleared by the DATA read.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): SPI0, AC, DAC, and the rest — added incrementally next.
+RAM at those addresses): AC, DAC, CCL, EVSYS, and the rest — added incrementally
+next.
 
 ## 9. Files touched (summary)
 
@@ -653,8 +683,9 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 (CLKCTRL — DONE)**, **new `avr_tcb.[ch]` (TCB0/1 — DONE)**, **new
 `avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
 DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
-`avr_adc_modern.[ch]` (ADC0 — DONE)**; planned
-`avr_spi_modern.[ch]`, plus stubs.
+`avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
+`avr_spi_modern.[ch]` (SPI0 — DONE)**; remaining peripherals (AC, DAC, CCL,
+EVSYS, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

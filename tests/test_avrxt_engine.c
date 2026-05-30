@@ -33,6 +33,7 @@
 #include "avr_nvmctrl.h"
 #include "avr_rtc.h"
 #include "avr_adc_modern.h"
+#include "avr_spi_modern.h"
 
 static int failures;
 
@@ -42,6 +43,25 @@ static void rec_irq(struct avr_irq_t *irq, uint32_t value, void *param)
 {
 	(void)irq;
 	*(uint8_t *)param = value & 0xff;
+}
+
+/* SPI test hooks: an echo "slave" that answers each clocked-out byte with its
+ * complement (host test), and a plain capture of bytes seen on an OUTPUT IRQ. */
+static avr_t *g_spi_avr;
+static uint8_t g_spi_mosi;	/* last byte the host clocked out */
+static uint8_t g_spi_out;	/* last byte a client echoed back */
+static void spi_echo_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq; (void)param;
+	g_spi_mosi = value & 0xff;
+	avr_irq_t *in = avr_io_getirq(g_spi_avr, AVR_IOCTL_SPI_GETIRQ('0'),
+								  SPI_IRQ_INPUT);
+	avr_raise_irq(in, (value ^ 0xff) & 0xff);	/* reply = complement */
+}
+static void spi_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq; (void)param;
+	g_spi_out = value & 0xff;
 }
 
 static void check(const char *what, long got, long want)
@@ -1189,6 +1209,86 @@ int main(void)
 			avr_run(m);
 		check("WCMP not set (512 outside [600,700])",
 			  !!(m->data[A + ADCMR_INTFLAGS] & F_WCMP), 0);
+	}
+
+	printf("== modern SPI0 host (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t S = 0x820;
+		enum { ENABLE = 0x01, MASTER = 0x20 };	/* PRESC DIV4 (8*4=32 cyc) */
+		enum { IE = 0x01 };
+		enum { F_WRCOL = 0x40, F_IF = 0x80 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		/* Wire an echo "client" onto MOSI that replies with the complement. */
+		g_spi_avr = m;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_SPI_GETIRQ('0'), SPI_IRQ_OUTPUT),
+			spi_echo_hook, NULL);
+
+		cpu_write(m, S + SPIMR_CTRLA, ENABLE | MASTER);
+		cpu_write(m, S + SPIMR_INTCTRL, IE);
+
+		long t0 = (long)m->cycle;
+		cpu_write(m, S + SPIMR_DATA, 0x5a);
+		check("IF not set immediately", !!(m->data[S + SPIMR_INTFLAGS] & F_IF), 0);
+
+		long tif = -1;
+		for (int i = 0; i < 400 && tif < 0; i++) {
+			avr_run(m);
+			if (m->data[S + SPIMR_INTFLAGS] & F_IF) tif = (long)m->cycle;
+		}
+		check("IF set after ~32 cycles (DIV4)", (tif - t0) >= 28 && (tif - t0) <= 40, 1);
+		check("MOSI byte seen by client", g_spi_mosi, 0x5a);
+		check("received MISO (complement)", cpu_read(m, S + SPIMR_DATA), 0xa5);
+		check("transfer raises (IE) interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* Reading DATA cleared IF. */
+		check("IF cleared by DATA read", !!(m->data[S + SPIMR_INTFLAGS] & F_IF), 0);
+
+		/* Write collision: a second DATA write before the transfer finishes. */
+		cpu_write(m, S + SPIMR_DATA, 0x11);	/* starts a transfer (busy) */
+		cpu_write(m, S + SPIMR_DATA, 0x22);	/* mid-flight => WRCOL, ignored */
+		check("WRCOL set on mid-transfer write",
+			  !!(m->data[S + SPIMR_INTFLAGS] & F_WRCOL), 1);
+		for (int i = 0; i < 400 && !(m->data[S + SPIMR_INTFLAGS] & F_IF); i++)
+			avr_run(m);
+		check("first byte (0x11) clocked, not 0x22", g_spi_mosi, 0x11);
+	}
+
+	printf("== modern SPI0 client (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t S = 0x820;
+		enum { ENABLE = 0x01 };	/* MASTER clear => client */
+		enum { F_IF = 0x80 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		g_spi_out = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_SPI_GETIRQ('0'), SPI_IRQ_OUTPUT),
+			spi_capture_hook, NULL);
+
+		cpu_write(m, S + SPIMR_CTRLA, ENABLE);	/* client */
+		cpu_write(m, S + SPIMR_DATA, 0x3c);	/* byte to shift out on next clock */
+
+		/* A host clocks 0x77 into us: we latch it and echo our 0x3c back. */
+		avr_irq_t *in = avr_io_getirq(m, AVR_IOCTL_SPI_GETIRQ('0'), SPI_IRQ_INPUT);
+		avr_raise_irq(in, 0x77);
+		/* Check IF before reading DATA (a DATA read clears IF). */
+		check("client IF set on receive", !!(m->data[S + SPIMR_INTFLAGS] & F_IF), 1);
+		check("client latched received byte", m->data[S + SPIMR_DATA], 0x77);
+		check("client echoed its DATA on MISO", g_spi_out, 0x3c);
+		check("DATA read clears client IF",
+			  (cpu_read(m, S + SPIMR_DATA), !!(m->data[S + SPIMR_INTFLAGS] & F_IF)), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
