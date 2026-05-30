@@ -32,6 +32,7 @@
 #include "avr_usart_modern.h"
 #include "avr_nvmctrl.h"
 #include "avr_rtc.h"
+#include "avr_adc_modern.h"
 
 static int failures;
 
@@ -1069,6 +1070,125 @@ int main(void)
 			if (m->data[R + RTCR_PITINTFLAGS] & F_PI) { fired = 1; break; }
 		}
 		check("no PI after disable", fired, 0);
+	}
+
+	printf("== modern ADC0 (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t A = 0x600;
+		enum { ENABLE = 0x01, FREERUN = 0x02, RESSEL_8BIT = 0x04 };
+		enum { STCONV = 0x01 };
+		enum { F_RESRDY = 0x01, F_WCMP = 0x02 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		/* Present 1650 mV on AIN3 (half of the default 3300 mV vref). */
+		avr_irq_t *ain3 = avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), 3);
+		check("ADC AIN3 irq exists", ain3 != NULL, 1);
+		avr_raise_irq(ain3, 1650);
+
+		/* 10-bit single shot: 1650/3300 * 1024 = 512. */
+		cpu_write(m, A + ADCMR_MUXPOS, 3);
+		cpu_write(m, A + ADCMR_INTCTRL, F_RESRDY);
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);		/* 10-bit, PRESC DIV2 */
+		long t0 = (long)m->cycle;
+		cpu_write(m, A + ADCMR_COMMAND, STCONV);
+
+		long tr = -1;
+		for (int i = 0; i < 400 && tr < 0; i++) {
+			avr_run(m);
+			if (m->data[A + ADCMR_INTFLAGS] & F_RESRDY) tr = (long)m->cycle;
+		}
+		check("RESRDY after ~26 cycles (DIV2)", (tr - t0) >= 24 && (tr - t0) <= 32, 1);
+		uint16_t res = m->data[A + ADCMR_RESL] | (m->data[A + ADCMR_RESH] << 8);
+		check("10-bit result = 512", res, 512);
+		check("RESRDY raises (enabled) interrupt", avr_has_pending_interrupts(m), 1);
+		check("STCONV self-cleared", !!(m->data[A + ADCMR_COMMAND] & STCONV), 0);
+
+		/* W1C the flag. */
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);
+		check("RESRDY cleared by W1C", !!(m->data[A + ADCMR_INTFLAGS] & F_RESRDY), 0);
+
+		/* 8-bit single shot: 1650/3300 * 256 = 128. */
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE | RESSEL_8BIT);
+		cpu_write(m, A + ADCMR_COMMAND, STCONV);
+		for (int i = 0; i < 400 && !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++)
+			avr_run(m);
+		res = m->data[A + ADCMR_RESL] | (m->data[A + ADCMR_RESH] << 8);
+		check("8-bit result = 128", res, 128);
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);
+
+		/* Free-running mode: conversions keep coming (~26 cycles apart). */
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE | FREERUN);	/* back to 10-bit */
+		int hits = 0;
+		long last = -1, maxgap = 0;
+		for (int i = 0; i < 4000 && hits < 4; i++) {
+			avr_run(m);
+			if (m->data[A + ADCMR_INTFLAGS] & F_RESRDY) {
+				if (last >= 0 && (long)m->cycle - last > maxgap)
+					maxgap = (long)m->cycle - last;
+				last = (long)m->cycle;
+				hits++;
+				cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);	/* W1C, expect re-set */
+			}
+		}
+		check("free-run produces repeated conversions", hits >= 4, 1);
+		check("free-run cadence ~26 cycles", maxgap >= 24 && maxgap <= 34, 1);
+
+		/* Stop free-running; the stream halts. */
+		cpu_write(m, A + ADCMR_CTRLA, 0x00);		/* disable */
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);
+		int fired = 0;
+		for (int i = 0; i < 400; i++) {
+			avr_run(m);
+			if (m->data[A + ADCMR_INTFLAGS] & F_RESRDY) { fired = 1; break; }
+		}
+		check("no conversion after disable", fired, 0);
+	}
+
+	printf("== modern ADC0 window comparator (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t A = 0x600;
+		enum { ENABLE = 0x01, STCONV = 0x01 };
+		enum { F_RESRDY = 0x01, F_WCMP = 0x02 };
+		enum { WINCM_ABOVE = 2, WINCM_INSIDE = 3 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		avr_irq_t *ain0 = avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), 0);
+		avr_raise_irq(ain0, 1650);	/* => result 512 (10-bit) */
+
+		/* ABOVE window with WINHT=100: result 512 > 100 => WCMP fires. */
+		cpu_write(m, A + ADCMR_MUXPOS, 0);
+		cpu_write(m, A + ADCMR_WINHTL, 100); cpu_write(m, A + ADCMR_WINHTL + 1, 0);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_ABOVE);
+		cpu_write(m, A + ADCMR_INTCTRL, F_WCMP);	/* WCMP enable only */
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);
+		cpu_write(m, A + ADCMR_COMMAND, STCONV);
+		for (int i = 0; i < 400 && !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++)
+			avr_run(m);
+		check("WCMP set (512 ABOVE 100)", !!(m->data[A + ADCMR_INTFLAGS] & F_WCMP), 1);
+		check("WCMP raises (enabled) interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* INSIDE [600,700]: result 512 is outside => WCMP must NOT fire. */
+		cpu_write(m, A + ADCMR_INTFLAGS, F_WCMP | F_RESRDY);
+		cpu_write(m, A + ADCMR_WINLTL, 600 & 0xff);
+		cpu_write(m, A + ADCMR_WINLTL + 1, 600 >> 8);
+		cpu_write(m, A + ADCMR_WINHTL, 700 & 0xff);
+		cpu_write(m, A + ADCMR_WINHTL + 1, 700 >> 8);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_INSIDE);
+		cpu_write(m, A + ADCMR_COMMAND, STCONV);
+		for (int i = 0; i < 400 && !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++)
+			avr_run(m);
+		check("WCMP not set (512 outside [600,700])",
+			  !!(m->data[A + ADCMR_INTFLAGS] & F_WCMP), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

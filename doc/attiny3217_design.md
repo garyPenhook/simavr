@@ -605,8 +605,40 @@ sets while masked with nothing raised, then enabling the set flag raises now);
 and the PIT (CYC4 → first PI ~406 cycles, enabled-interrupt raise, W1C, periodic
 cadence, clean stop on disable).
 
+### Phase 4 — peripheral: ADC0 — **DONE**
+`avr_adc_modern.[ch]`, wired into `sim_tiny3217` at 0x600 (vectors RESRDY=20,
+WCOMP=21). Models single-shot and free-running conversions; reuses the classic
+ADC's "analog input as a wire IRQ" idea — each channel's voltage (millivolts) is
+presented by raising the matching AINn IRQ (`AVR_IOCTL_ADCM_GETIRQ(name)`).
+- **Conversion:** writing COMMAND.STCONV (with CTRLA.ENABLE) schedules a simavr
+  cycle timer for a realistic duration (~13 ADC clocks at the CTRLC.PRESC
+  prescaler, DIV2..DIV256 → 26..3328 CPU cycles). On completion the MUXPOS
+  channel's mV is converted against `vref_mv` into RES at 10-bit
+  (CTRLA.RESSEL=0) or 8-bit resolution, STCONV self-clears, INTFLAGS.RESRDY is
+  set and ADC0_RESRDY raised if enabled.
+- **Free-running (CTRLA.FREERUN):** the completion handler re-queues the next
+  conversion, giving a steady RESRDY cadence; clearing ENABLE stops the stream.
+- **Window comparator (CTRLE.WINCM):** BELOW / ABOVE / INSIDE / OUTSIDE evaluated
+  against WINLT/WINHT after each conversion; a hit sets INTFLAGS.WCMP and raises
+  ADC0_WCOMP if enabled. Both flags are W1C; both vectors use `raise_sticky`.
+- **Reference:** `vref_mv` defaults to 3300 mV and is settable via
+  `avr_adc_modern_set_vref()` (the VREF peripheral / CTRLC.REFSEL is not
+  modelled).
+
+Deliberate simplifications: sample accumulation (CTRLB.SAMPNUM) is treated as a
+single sample; exact reference selection, event-triggered start, and the
+temperature-sensor / DAC / internal channels are not modelled (registers still
+store, so configuring firmware is fine).
+
+Verified in `tests/test_avrxt_engine.c` (now 175 checks): AIN IRQ wiring, 10-bit
+result 512 and 8-bit result 128 from 1650 mV against the 3300 mV vref, RESRDY
+timing (~26 cycles at DIV2) + enabled-interrupt raise, STCONV self-clear, W1C,
+free-running repeated conversions at the right cadence, clean stop on disable,
+and the window comparator (ABOVE fires, INSIDE-of-a-non-matching-window does not)
+with its WCOMP interrupt.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): ADC0, SPI0, AC, and the rest — added incrementally next.
+RAM at those addresses): SPI0, AC, DAC, and the rest — added incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -620,8 +652,9 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 `avr_port_modern.[ch]` (PORT/VPORT — DONE)**, **new `avr_clkctrl.[ch]`
 (CLKCTRL — DONE)**, **new `avr_tcb.[ch]` (TCB0/1 — DONE)**, **new
 `avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
-DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**; planned
-`avr_adc_modern.[ch]`, `avr_spi_modern.[ch]`, plus stubs.
+DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
+`avr_adc_modern.[ch]` (ADC0 — DONE)**; planned
+`avr_spi_modern.[ch]`, plus stubs.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217
