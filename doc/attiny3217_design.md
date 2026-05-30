@@ -358,10 +358,25 @@ firmware loads and runs end-to-end.
   through the pin IRQ. Auto-built by the test Makefile (`-mmcu` derived from the
   filename) and runs under `make run_tests`.
 
+**M2 progress — interrupts + a timer run:**
+- **CPUINT register block** (`sim/avr_cpuint.{c,h}`): maps CTRLA (LVL0RR),
+  STATUS (read), LVL0PRI (read/write, reflects round-robin updates) and LVL1VEC
+  onto the Phase 3 engine API. CVT/IVSEL not modelled.
+- **TCB timer** (`sim/avr_tcb.{c,h}`): periodic-interrupt mode (CNTMODE=0) on
+  CLK_PER with the CLKSEL prescale, CCMP period, sticky CAPT flag + interrupt,
+  live CNT read. Other TCB modes warn and are not yet modelled. TCB0/TCB1 wired
+  with vectors 13/14.
+- **Engine fix:** `avr_regbit_t.reg` widened 9→16 bits. The old 9-bit field
+  (max 0x1FF) could not address modern peripheral registers (TCB at 0xA45,
+  etc.); now covers the whole data space. Same storage, no API change, classic
+  cores unaffected.
+- **Verified:** `tests/attiny3217_tcb_irq.c` — TCB0 periodic ISR toggles PA3;
+  the host test observes ~2000 toggles, proving TCB → CPUINT dispatch (JMP
+  vector table) → ISR → sticky-flag clear → modern RETI end to end.
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
-Phase 1), CLKCTRL, the CPUINT register block at 0x110 (wire to the Phase 3
-API), TCB/TCA, RTC/PIT, USART0, NVMCTRL, SPI0/TWI0, ADC0, and stubs for the
-rest. See the priority order earlier in this document.
+Phase 1), CLKCTRL (prescaler/frequency), TCA, RTC/PIT, USART0, NVMCTRL,
+SPI0/TWI0, ADC0, and stubs for the rest. See the priority order earlier.
 
 ## 9. Files touched (summary)
 

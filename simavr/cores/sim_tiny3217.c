@@ -5,20 +5,7 @@
 
 	Copyright 2024 simavr modern-AVR fork (garyPenhook)
 
-	This file is part of simavr.
-
-	simavr is free software: you can redistribute it and/or modify
-	it under the terms of the GNU General Public License as published by
-	the Free Software Foundation, either version 3 of the License, or
-	(at your option) any later version.
-
-	simavr is distributed in the hope that it will be useful,
-	but WITHOUT ANY WARRANTY; without even the implied warranty of
-	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-	GNU General Public License for more details.
-
-	You should have received a copy of the GNU General Public License
-	along with simavr.  If not, see <http://www.gnu.org/licenses/>.
+	This file is part of simavr. GNU GPL v3 or later; see COPYING.
  */
 
 #include "sim_avr.h"
@@ -33,9 +20,12 @@ void t3217_init(struct avr_t * avr)
 {
 	struct mcu_t * mcu = (struct mcu_t *)avr;
 
+	avr_cpuint_init(avr, &mcu->cpuint);
 	avr_port_init(avr, &mcu->porta);
 	avr_port_init(avr, &mcu->portb);
 	avr_port_init(avr, &mcu->portc);
+	avr_tcb_init(avr, &mcu->tcb0);
+	avr_tcb_init(avr, &mcu->tcb1);
 }
 
 void t3217_reset(struct avr_t * avr)

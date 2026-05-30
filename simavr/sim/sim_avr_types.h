@@ -39,10 +39,13 @@ typedef uint16_t	avr_io_addr_t;
  * gcc is happy passing these as register value, so you don't need to
  * use a pointer when passing them along to functions.
  *
- * 9 bits ought to be enough, as it's the maximum I've seen (atmega2560)
+ * 9 bits was enough for classic AVRs (atmega2560 tops out near 0x1FF), but
+ * modern AVRs (AVRxt) place peripheral registers up to ~0xA80 in the data
+ * space, so the register address field is widened to 16 bits. This still fits
+ * within the 32-bit storage and does not change the API.
  */
 typedef struct avr_regbit_t {
-	uint32_t reg : 9, bit : 3, mask : 8;
+	uint32_t reg : 16, bit : 3, mask : 8;
 } avr_regbit_t;
 
 // printf() conversion specifier for avr_cycle_count_t
