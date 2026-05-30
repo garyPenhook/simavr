@@ -661,6 +661,24 @@ free-running repeated conversions at the right cadence, clean stop on disable,
 and the window comparator (ABOVE fires, INSIDE-of-a-non-matching-window does not)
 with its WCOMP interrupt.
 
+### PTC (Peripheral Touch Controller) — **not implementable (by nature)**
+Investigated and deliberately not modelled. The PTC has **no documented,
+separately-addressable register block**: the datasheet peripheral address map
+lists 0x0600 as "ADC0 / Peripheral Touch Controller" — the PTC shares ADC0's
+address space and uses the ADC for conversion — and the device header
+(`iotn3217.h`) defines no PTC registers, no PTC struct, and no PTC interrupt
+vector. Per datasheet §32.6 the PTC is accessed *only* through Microchip's
+closed-source Atmel START QTouch® library, which pokes undocumented registers in
+that shared space.
+
+There is therefore nothing to model at the register level, and the "input" is a
+physical electrode capacitance with no simulation analog. Fabricating a register
+block would be fiction, so simavr models the documented ADC0 at 0x0600 (above)
+and leaves the QTouch register protocol unmodelled: QTouch-based touch firmware
+will not run under simavr, but all other firmware — including code that uses
+ADC0 directly — is unaffected. This is a hard limitation of the closed
+peripheral, not a deferred TODO.
+
 ### Phase 4 — peripheral: SPI0 — **DONE**
 `avr_spi_modern.[ch]`, wired into `sim_tiny3217` at 0x820 (vector SPI0_INT=26).
 Models the normal (non-buffered) mode in host and client roles, driving the
@@ -993,7 +1011,10 @@ Verified in `tests/test_avrxt_engine.c` (now 306 checks): DEVICEID[2:0] equals
 the device signature and the core's `signature[]`, DEVICEID/REVID are read-only,
 REVID reports rev A, and EXTBRK stores. Full suite regression-clean.
 
-All named ATtiny3217 peripheral and identity blocks are now modelled.
+All documented ATtiny3217 peripheral and identity blocks are now modelled. The
+sole exception is the PTC (Peripheral Touch Controller), which has no documented
+registers and shares ADC0's address space — see the PTC note above; it is a hard
+limitation of that closed peripheral, not a remaining TODO.
 
 ## 9. Files touched (summary)
 
