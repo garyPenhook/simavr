@@ -39,6 +39,9 @@
 #define FREERUN_bm	0x02
 #define RESSEL_bm	0x04	/* 1 = 8-bit, 0 = 10-bit */
 
+/* CTRLB */
+#define SAMPNUM_gm	0x07	/* accumulate 1<<SAMPNUM samples */
+
 /* CTRLC */
 #define PRESC_gm	0x07
 
@@ -70,6 +73,32 @@ static uint16_t rd16(avr_t *avr, avr_io_addr_t a)
 static int adc_enabled(avr_adc_modern_t *p)
 {
 	return (rd(p->io.avr, p->r_ctrla) & ENABLE_bm) != 0;
+}
+
+/* Number of samples accumulated per conversion: 1<<SAMPNUM (1..64). */
+static uint16_t adc_sampnum(avr_adc_modern_t *p)
+{
+	return 1u << (rd(p->io.avr, p->r_ctrlb) & SAMPNUM_gm);
+}
+
+/* The input voltage (mV) for the MUXPOS-selected channel. GND reads 0; the
+ * other internal sources (DAC0 / INTREF / temp) use their settable input. */
+static uint32_t adc_channel_mv(avr_adc_modern_t *p)
+{
+	uint8_t ch = rd(p->io.avr, p->r_muxpos) & 0x1f;
+	if (ch == AVR_ADCM_CH_GND)
+		return 0;
+	return ch < AVR_ADCM_CHANNELS ? p->chan_mv[ch] : 0;
+}
+
+/* One sample of the selected channel, as an 8- or 10-bit code. */
+static uint32_t adc_one_sample(avr_adc_modern_t *p)
+{
+	avr_t *avr = p->io.avr;
+	uint32_t vref = p->vref_mv ? p->vref_mv : 3300;
+	uint32_t maxc = (rd(avr, p->r_ctrla) & RESSEL_bm) ? 255 : 1023;
+	uint32_t res = (adc_channel_mv(p) * (maxc + 1)) / vref;
+	return res > maxc ? maxc : res;
 }
 
 /* Conversion duration in CPU cycles: ~13 ADC clocks at the CTRLC prescaler. */
@@ -104,18 +133,12 @@ static void adc_window_compare(avr_adc_modern_t *p, uint16_t res)
 	}
 }
 
-/* Perform one conversion: sample the selected channel and store RES. */
-static void adc_do_conversion(avr_adc_modern_t *p)
+/* Finish an accumulation burst: store the summed result, flag RESRDY, run the
+ * window comparator and clear STCONV. */
+static void adc_finish(avr_adc_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
-	uint8_t ch = rd(avr, p->r_muxpos) & 0x1f;
-	uint32_t mv = ch < AVR_ADCM_CHANNELS ? p->chan_mv[ch] : 0;
-	uint32_t vref = p->vref_mv ? p->vref_mv : 3300;
-	uint32_t maxc = (rd(avr, p->r_ctrla) & RESSEL_bm) ? 255 : 1023;
-
-	uint32_t res = (mv * (maxc + 1)) / vref;
-	if (res > maxc)
-		res = maxc;
+	uint32_t res = p->acc_sum > 0xffff ? 0xffff : p->acc_sum;
 
 	avr_core_watch_write(avr, p->r_res, res & 0xff);
 	avr_core_watch_write(avr, p->r_res + 1, (res >> 8) & 0xff);
@@ -139,11 +162,21 @@ avr_adc_modern_complete(struct avr_t *avr, avr_cycle_count_t when, void *param)
 	if (!adc_enabled(p))
 		return 0;
 
-	adc_do_conversion(p);
+	/* Accumulate one sample of the burst. */
+	p->acc_sum += adc_one_sample(p);
+	p->acc_count++;
+	if (p->acc_count < p->acc_target)
+		return when + adc_conv_cycles(p);	/* more samples to take */
 
-	/* Free-running mode immediately queues the next conversion. */
-	if (rd(avr, p->r_ctrla) & FREERUN_bm)
+	adc_finish(p);
+
+	/* Free-running mode immediately starts the next accumulation burst. */
+	if (rd(avr, p->r_ctrla) & FREERUN_bm) {
+		p->acc_sum = 0;
+		p->acc_count = 0;
+		p->acc_target = adc_sampnum(p);
 		return when + adc_conv_cycles(p);
+	}
 	return 0;
 }
 
@@ -152,9 +185,13 @@ avr_adc_modern_start(avr_adc_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
 	avr_cycle_timer_cancel(avr, avr_adc_modern_complete, p);
-	if (adc_enabled(p))
-		avr_cycle_timer_register(avr, adc_conv_cycles(p),
-								 avr_adc_modern_complete, p);
+	if (!adc_enabled(p))
+		return;
+	p->acc_sum = 0;
+	p->acc_count = 0;
+	p->acc_target = adc_sampnum(p);
+	avr_cycle_timer_register(avr, adc_conv_cycles(p),
+							 avr_adc_modern_complete, p);
 }
 
 static void
@@ -219,6 +256,13 @@ static const char *irq_names[AVR_ADCM_CHANNELS] = {
 	"adc.ain4",  "adc.ain5",  "adc.ain6",  "adc.ain7",
 	"adc.ain8",  "adc.ain9",  "adc.ain10", "adc.ain11",
 	"adc.ain12", "adc.ain13", "adc.ain14", "adc.ain15",
+	"adc.ain16", "adc.ain17", "adc.ain18", "adc.ain19",
+	"adc.ain20", "adc.ain21", "adc.ain22", "adc.ain23",
+	"adc.ain24", "adc.ain25", "adc.ain26", "adc.ain27",
+	[AVR_ADCM_CH_DAC0]	= "adc.dac0",
+	[AVR_ADCM_CH_INTREF]	= "adc.intref",
+	[AVR_ADCM_CH_TEMPSENSE]	= "adc.temp",
+	[AVR_ADCM_CH_GND]	= "adc.gnd",
 };
 
 static avr_io_t _io = {
@@ -247,6 +291,7 @@ avr_adc_modern_init(
 	p->name = name;
 	p->base = base;
 	p->r_ctrla = base + ADCMR_CTRLA;
+	p->r_ctrlb = base + ADCMR_CTRLB;
 	p->r_ctrlc = base + ADCMR_CTRLC;
 	p->r_ctrle = base + ADCMR_CTRLE;
 	p->r_muxpos = base + ADCMR_MUXPOS;

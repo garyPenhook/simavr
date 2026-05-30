@@ -175,11 +175,15 @@ tiny3217_init(struct avr_t * avr)
 	/* AC0 (analog comparator) at 0x0680: AC0_AC vector. */
 	avr_ac_init(avr, &mcu->ac0, 0x0680, AC0_AC_vect_num, '0');
 
-	/* DAC0 (8-bit) at 0x06A0; its output feeds AC0's DAC negative input. */
+	/* DAC0 (8-bit) at 0x06A0; its output feeds AC0's DAC negative input and the
+	 * ADC0 internal DAC0 channel (MUXPOS 0x1C). */
 	avr_dac_init(avr, &mcu->dac0, 0x06a0, '0');
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
 			tiny3217_dac_to_ac, &mcu->ac0);
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_ADCM_GETIRQ('0'), AVR_ADCM_CH_DAC0));
 
 	/* CCL (configurable custom logic) at 0x01C0; 2 LUTs on the ATtiny3217. */
 	avr_ccl_init(avr, &mcu->ccl, 0x01c0, 2, '0');

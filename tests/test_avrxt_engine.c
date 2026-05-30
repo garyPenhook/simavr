@@ -1317,6 +1317,61 @@ int main(void)
 			  !!(m->data[A + ADCMR_INTFLAGS] & F_WCMP), 0);
 	}
 
+	printf("== modern ADC0 accumulation + internal channels (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t A = 0x600;
+		enum { ENABLE = 0x01, STCONV = 0x01 };
+		enum { F_RESRDY = 0x01 };
+		enum { SAMPNUM_ACC4 = 2 };	/* CTRLB value 2 => 4 samples */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		#define ADC_CONVERT() do { \
+			cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY); \
+			cpu_write(m, A + ADCMR_COMMAND, STCONV); \
+			for (int i = 0; i < 4000 && \
+				 !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++) avr_run(m); \
+		} while (0)
+		#define ADC_RES() (cpu_read(m, A + ADCMR_RESL) | \
+						   (cpu_read(m, A + ADCMR_RESH) << 8))
+
+		/* AIN0 = 1650 mV, vref 3300 => single 10-bit sample = 512. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), 0), 1650);
+		cpu_write(m, A + ADCMR_MUXPOS, 0);
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);
+
+		/* SAMPNUM=0: a single sample. */
+		ADC_CONVERT();
+		check("single sample = 512", ADC_RES(), 512);
+
+		/* SAMPNUM=ACC4: the result is the sum of 4 samples = 2048. */
+		cpu_write(m, A + ADCMR_CTRLB, SAMPNUM_ACC4);
+		ADC_CONVERT();
+		check("4-sample accumulation = 2048", ADC_RES(), 2048);
+		cpu_write(m, A + ADCMR_CTRLB, 0);	/* back to single */
+
+		/* GND internal channel (0x1F) reads 0. */
+		cpu_write(m, A + ADCMR_MUXPOS, AVR_ADCM_CH_GND);
+		ADC_CONVERT();
+		check("GND channel reads 0", ADC_RES(), 0);
+
+		/* DAC0 internal channel (0x1C): DAC0 output is wired to it. Enable DAC0
+		 * (vref 1100) with DATA=128 => 550 mV; ADC (vref 3300) => 550*1024/3300
+		 * = 170. */
+		cpu_write(m, 0x6a0 + 0x00, 0x01);	/* DAC0.CTRLA = ENABLE */
+		cpu_write(m, 0x6a0 + 0x01, 128);	/* DAC0.DATA */
+		cpu_write(m, A + ADCMR_MUXPOS, AVR_ADCM_CH_DAC0);
+		ADC_CONVERT();
+		check("DAC0 channel reads DAC output (~170)", ADC_RES(), 170);
+
+		#undef ADC_CONVERT
+		#undef ADC_RES
+	}
+
 	printf("== modern SPI0 host (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t S = 0x820;

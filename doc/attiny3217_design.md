@@ -620,7 +620,7 @@ sets while masked with nothing raised, then enabling the set flag raises now);
 and the PIT (CYC4 → first PI ~406 cycles, enabled-interrupt raise, W1C, periodic
 cadence, clean stop on disable).
 
-### Phase 4 — peripheral: ADC0 — **DONE**
+### Phase 4 — peripheral: ADC0 (incl. accumulation + internal channels) — **DONE**
 `avr_adc_modern.[ch]`, wired into `sim_tiny3217` at 0x600 (vectors RESRDY=20,
 WCOMP=21). Models single-shot and free-running conversions; reuses the classic
 ADC's "analog input as a wire IRQ" idea — each channel's voltage (millivolts) is
@@ -639,11 +639,20 @@ presented by raising the matching AINn IRQ (`AVR_IOCTL_ADCM_GETIRQ(name)`).
 - **Reference:** `vref_mv` defaults to 3300 mV and is settable via
   `avr_adc_modern_set_vref()` (the VREF peripheral / CTRLC.REFSEL is not
   modelled).
+- **Sample accumulation (CTRLB.SAMPNUM):** a conversion now accumulates 1..64
+  samples — the completion handler takes one sample per per-sample interval and
+  sums them, raising RESRDY (and re-arming free-running) only once the whole
+  burst finishes, with the summed value (clamped to 16-bit) in RES. The window
+  comparator runs against the accumulated result.
+- **Internal channels (MUXPOS):** GND (0x1F) reads 0; DAC0 (0x1C), the internal
+  reference (0x1D) and the temperature sensor (0x1E) are addressable as settable
+  mV inputs alongside the 12 pin channels (the channel array/IRQs are extended to
+  32). `sim_tiny3217` wires DAC0's output IRQ to the ADC's DAC0 channel, so
+  firmware can measure the DAC through the ADC.
 
-Deliberate simplifications: sample accumulation (CTRLB.SAMPNUM) is treated as a
-single sample; exact reference selection, event-triggered start, and the
-temperature-sensor / DAC / internal channels are not modelled (registers still
-store, so configuring firmware is fine).
+Deliberate simplifications: exact reference selection (CTRLC.REFSEL) and
+event-triggered start are not modelled; the temperature-sensor channel returns
+its raw settable input rather than a SIGROW-calibrated temperature.
 
 Verified in `tests/test_avrxt_engine.c` (now 175 checks): AIN IRQ wiring, 10-bit
 result 512 and 8-bit result 128 from 1650 mV against the 3300 mV vref, RESRDY

@@ -11,10 +11,18 @@
 	realistic number of CPU cycles (~13 ADC clocks at the CTRLC prescaler) so
 	RESRDY-interrupt and free-running firmware behaves.
 
-	Not modelled: sample accumulation (CTRLB.SAMPNUM — treated as a single
-	sample), exact reference selection (CTRLC.REFSEL / the VREF peripheral — a
-	plain settable vref_mv is used instead), event-triggered start, the
-	temperature sensor / DAC / internal channels.
+	Sample accumulation (CTRLB.SAMPNUM) is modelled: a conversion accumulates
+	1..64 samples (each taking the per-sample time) and the sum is stored in RES,
+	with RESRDY raised only once the whole burst completes. The MUXPOS internal
+	channels are addressable too: GND (0x1F) reads 0, and DAC0 (0x1C), the
+	internal reference (0x1D) and the temperature sensor (0x1E) are driven as
+	settable millivolt inputs like the pin channels (sim_tiny3217 wires DAC0's
+	output to its ADC channel).
+
+	Not modelled: exact reference selection (CTRLC.REFSEL / the VREF peripheral —
+	a plain settable vref_mv is used instead), event-triggered start, and the
+	temperature-sensor transfer function (the 0x1E channel returns its raw settable
+	input, not a SIGROW-calibrated temperature).
 
 	Copyright 2026 simavr authors
 
@@ -43,12 +51,16 @@ extern "C" {
 
 #include "sim_avr.h"
 
-#define AVR_ADCM_CHANNELS	16
+#define AVR_ADCM_CHANNELS	32	/* AIN0..11 + internal sources (DAC0/INTREF/TEMP/GND) */
+#define AVR_ADCM_CH_DAC0	0x1c
+#define AVR_ADCM_CH_INTREF	0x1d
+#define AVR_ADCM_CH_TEMPSENSE	0x1e
+#define AVR_ADCM_CH_GND		0x1f
 
 /* Register offsets within an ADC block (device header ADC_t). */
 enum {
 	ADCMR_CTRLA = 0x00,
-	ADCMR_CTRLB = 0x01,
+	ADCMR_CTRLB = 0x01,	/* SAMPNUM accumulation */
 	ADCMR_CTRLC = 0x02,
 	ADCMR_CTRLD = 0x03,
 	ADCMR_CTRLE = 0x04,
@@ -70,7 +82,7 @@ typedef struct avr_adc_modern_t {
 	char		name;		/* '0', … */
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_ctrla, r_ctrlc, r_ctrle, r_muxpos, r_command;
+	avr_io_addr_t	r_ctrla, r_ctrlb, r_ctrlc, r_ctrle, r_muxpos, r_command;
 	avr_io_addr_t	r_intctrl, r_intflags;
 	avr_io_addr_t	r_res, r_winlt, r_winht;	/* 16-bit (low byte address) */
 
@@ -80,6 +92,11 @@ typedef struct avr_adc_modern_t {
 	uint32_t	vref_mv;	/* reference voltage in mV (default 3300) */
 	uint16_t	chan_mv[AVR_ADCM_CHANNELS];	/* per-channel input (mV) */
 	int			base_irq;	/* global irq number of channel 0 */
+
+	/* Sample accumulation (CTRLB.SAMPNUM) in progress. */
+	uint32_t	acc_sum;	/* running sum of samples taken so far */
+	uint16_t	acc_count;	/* samples taken in the current burst */
+	uint16_t	acc_target;	/* samples to accumulate (1..64) */
 } avr_adc_modern_t;
 
 /*
