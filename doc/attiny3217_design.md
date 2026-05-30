@@ -815,9 +815,29 @@ the dog in time to prevent the reset. (The test spins on a self-looping `RJMP .-
 so the PC does not overrun flashend during the tens-of-thousands-of-cycles
 timeout.)
 
+### Phase 4 — peripheral: CRCSCAN — **DONE (always-OK model)**
+`avr_crcscan.[ch]`, wired into `sim_tiny3217` at 0x120. On hardware CRCSCAN
+computes a CRC over a flash section and compares it with a programmed checksum,
+resetting or raising the NMI on mismatch. A loaded simulation image has no
+authoritative external checksum, so the scan completes **instantly and reports
+OK** (STATUS.OK set, BUSY never observed), letting firmware that enables CRCSCAN
+and waits for OK proceed.
+- **CTRLA.RESET** strobe clears the result and disables the peripheral (and
+  self-clears).
+- **CTRLA.NMIEN** locks CTRLA read-only until reset (the device cannot disable a
+  scan that arms the NMI).
+
+Deliberate simplification: the actual CRC computation and the mismatch-triggered
+reset/NMI are not modelled (the scan always reports OK on the loaded image).
+
+Verified in `tests/test_avrxt_engine.c` (now 251 checks): OK set on enable with
+BUSY never set, OK cleared on disable, the RESET strobe clearing OK and
+self-clearing CTRLA, and the NMIEN lock keeping CTRLA (and OK) fixed against a
+disable attempt.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): CRCSCAN, SLPCTRL, RSTCTRL, BOD, VREF, and the rest —
-added incrementally next.
+RAM at those addresses): SLPCTRL, RSTCTRL, BOD, VREF, and the rest — added
+incrementally next.
 
 ## 9. Files touched (summary)
 
@@ -835,9 +855,9 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
-config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**;
-remaining peripherals (CRCSCAN, SLPCTRL, RSTCTRL, BOD, VREF, …) to be added as
-stubs then deepened.
+config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**, **new `avr_crcscan.[ch]` (CRCSCAN —
+always-OK)**; remaining peripherals (SLPCTRL, RSTCTRL, BOD, VREF, …) to be added
+as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

@@ -42,6 +42,7 @@
 #include "avr_tcd.h"
 #include "avr_wdt.h"
 #include "avr_watchdog.h"	/* AVR_IOCTL_WATCHDOG_RESET */
+#include "avr_crcscan.h"
 
 static int failures;
 
@@ -1727,6 +1728,41 @@ int main(void)
 			qprev = c;
 		}
 		check("no WDT reset when petted in time", q_reset, 0);
+	}
+
+	printf("== modern CRCSCAN (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t C = 0x120;
+		enum { CTRLA = 0x00, STATUS = 0x02 };
+		enum { ENABLE = 0x01, NMIEN = 0x02, RESET = 0x80 };
+		enum { BUSY = 0x01, OK = 0x02 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		/* Enabling completes instantly: OK set, never BUSY. */
+		cpu_write(m, C + CTRLA, ENABLE);
+		check("CRCSCAN OK after enable", !!(m->data[C + STATUS] & OK), 1);
+		check("CRCSCAN never BUSY", !!(m->data[C + STATUS] & BUSY), 0);
+
+		/* Disabling clears the result. */
+		cpu_write(m, C + CTRLA, 0x00);
+		check("CRCSCAN OK cleared when disabled", !!(m->data[C + STATUS] & OK), 0);
+
+		/* RESET strobe clears the result and disables (and self-clears). */
+		cpu_write(m, C + CTRLA, ENABLE);
+		cpu_write(m, C + CTRLA, RESET);
+		check("CRCSCAN OK cleared by RESET", !!(m->data[C + STATUS] & OK), 0);
+		check("CRCSCAN RESET self-clears CTRLA", m->data[C + CTRLA], 0);
+
+		/* NMIEN locks CTRLA: the scan cannot be disabled until reset. */
+		cpu_write(m, C + CTRLA, ENABLE | NMIEN);
+		check("CRCSCAN OK with NMIEN", !!(m->data[C + STATUS] & OK), 1);
+		cpu_write(m, C + CTRLA, 0x00);	/* attempt to disable */
+		check("CTRLA locked by NMIEN", m->data[C + CTRLA], ENABLE | NMIEN);
+		check("CRCSCAN still OK (locked)", !!(m->data[C + STATUS] & OK), 1);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

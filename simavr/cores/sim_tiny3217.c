@@ -52,12 +52,13 @@
 #include "avr_portmux.h"
 #include "avr_tcd.h"
 #include "avr_wdt.h"
+#include "avr_crcscan.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
- * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX, TCD0 and
- * the WDT.
+ * TWI0, the RTC (+PIT), ADC0, SPI0, AC0, DAC0, CCL, EVSYS, PORTMUX, TCD0,
+ * the WDT and CRCSCAN.
  */
 struct mcu_t {
 	avr_t				core;
@@ -78,6 +79,7 @@ struct mcu_t {
 	avr_portmux_t		portmux;
 	avr_tcd_t			tcd0;
 	avr_wdt_modern_t	wdt;
+	avr_crcscan_t		crcscan;
 };
 
 /*
@@ -164,6 +166,9 @@ tiny3217_init(struct avr_t * avr)
 
 	/* WDT (modern reset-only watchdog) at 0x0100. */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
+
+	/* CRCSCAN (flash CRC memory scan) at 0x0120. */
+	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, '0');
 }
 
 static void
