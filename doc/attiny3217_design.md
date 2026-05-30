@@ -793,8 +793,30 @@ Verified in `tests/test_avrxt_engine.c` (now 236 checks): STATUS ready, first OV
 at ~101 cycles for CMPBCLR=100 + enabled-interrupt raise, W1C, the periodic
 cadence, clean stop on disable, and SYNCPRES=DIV2 doubling the period.
 
+### Phase 4 — peripheral: WDT (modern watchdog) — **DONE**
+`avr_wdt.[ch]`, wired into `sim_tiny3217` at 0x100 (no interrupt — the modern WDT
+is reset-only). When CTRLA.PERIOD is non-OFF a cycle timer is armed for the
+timeout; a WDR instruction (delivered via the shared `AVR_IOCTL_WATCHDOG_RESET`
+ioctl) re-arms it, and an expiry resets the device.
+- **Reset mechanism:** mirrors the classic watchdog — `avr->run` is swapped to a
+  callback that calls `avr_reset()`, restored from the reset hook (a safe reset
+  from inside the run loop).
+- **Window mode:** with CTRLA.WINDOW set, a WDR that arrives before the closed
+  window has elapsed also resets the device.
+- **Clock:** the 1.024 kHz WDT clock; PERIOD/WINDOW value v → 8<<(v-1) WDT cycles,
+  converted to CPU cycles via avr->frequency.
+- **Protection:** CTRLA is CCP-protected (honoured only inside a CCP window) and
+  frozen once STATUS.LOCK is set; STATUS.SYNCBUSY always reads not-busy.
+
+Verified in `tests/test_avrxt_engine.c` (now 243 checks): STATUS not busy, a bare
+CTRLA write ignored vs a CCP write accepted, LOCK freezing CTRLA, a timeout
+resetting the device (observed via the cycle counter zeroing), and a WDR petting
+the dog in time to prevent the reset. (The test spins on a self-looping `RJMP .-2`
+so the PC does not overrun flashend during the tens-of-thousands-of-cycles
+timeout.)
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): WDT(new), CRCSCAN, SLPCTRL, RSTCTRL, and the rest —
+RAM at those addresses): CRCSCAN, SLPCTRL, RSTCTRL, BOD, VREF, and the rest —
 added incrementally next.
 
 ## 9. Files touched (summary)
@@ -813,8 +835,9 @@ DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[c
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
 `avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**,
 **new `avr_dac.[ch]` (DAC0 — DONE)**, **new `avr_ccl.[ch]` (CCL — DONE)**, **new `avr_evsys.[ch]` (EVSYS — DONE)**, **new `avr_portmux.[ch]` (PORTMUX —
-config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**; remaining peripherals
-(WDT, CRCSCAN, SLPCTRL, RSTCTRL, …) to be added as stubs then deepened.
+config store)**, **new `avr_tcd.[ch]` (TCD0 — DONE)**, **new `avr_wdt.[ch]` (WDT — DONE)**;
+remaining peripherals (CRCSCAN, SLPCTRL, RSTCTRL, BOD, VREF, …) to be added as
+stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

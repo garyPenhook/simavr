@@ -40,6 +40,8 @@
 #include "avr_evsys.h"
 #include "avr_portmux.h"
 #include "avr_tcd.h"
+#include "avr_wdt.h"
+#include "avr_watchdog.h"	/* AVR_IOCTL_WATCHDOG_RESET */
 
 static int failures;
 
@@ -1649,6 +1651,82 @@ int main(void)
 			if (m->data[T + TCDR_INTFLAGS] & OVF) t2 = (long)m->cycle;
 		}
 		check("SYNCPRES/2 period ~202 cycles", (t2 - base) >= 198 && (t2 - base) <= 208, 1);
+	}
+
+	printf("== modern WDT (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t W = 0x100;
+		enum { CTRLA = 0x00, STATUS = 0x01 };
+		enum { PERIOD_8CLK = 0x01, PERIOD_16CLK = 0x02 };
+		enum { SYNCBUSY = 0x01, LOCK = 0x80 };
+
+		/* --- CCP gating + STATUS + LOCK --- */
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		/* The WDT runs for tens of thousands of cycles; rather than fill flash
+		 * with NOPs (the PC would overrun flashend and crash), spin on a
+		 * self-looping RJMP .-2 at address 0 so cycles advance with a fixed PC. */
+		put16(m, 0, 0xcfff);
+
+		check("WDT STATUS not busy (SYNCBUSY 0)", cpu_read(m, W + STATUS) & SYNCBUSY, 0);
+
+		/* A bare (non-CCP) CTRLA write is ignored. */
+		cpu_write(m, W + CTRLA, PERIOD_8CLK);
+		check("CTRLA write ignored without CCP", cpu_read(m, W + CTRLA), 0);
+
+		/* A CCP-protected write configures the period. */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, W + CTRLA, PERIOD_8CLK);
+		check("CTRLA set via CCP", cpu_read(m, W + CTRLA), PERIOD_8CLK);
+
+		/* STATUS.LOCK freezes CTRLA until reset. */
+		cpu_write(m, W + STATUS, LOCK);
+		check("STATUS.LOCK set", !!(cpu_read(m, W + STATUS) & LOCK), 1);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, W + CTRLA, PERIOD_16CLK);
+		check("CTRLA frozen by LOCK", cpu_read(m, W + CTRLA), PERIOD_8CLK);
+
+		/* --- timeout resets the device --- */
+		avr_t *r = avr_make_mcu_by_name("attiny3217");
+		r->log = LOG_ERROR;
+		avr_init(r);
+		put16(r, 0, 0xcfff);	/* RJMP .-2 self-loop */
+
+		avr_ccp_write(r, AVR_CCP_IOREG);
+		cpu_write(r, W + CTRLA, PERIOD_8CLK);
+		int reset_seen = 0;
+		long prev = (long)r->cycle;
+		for (int i = 0; i < 200000 && !reset_seen; i++) {
+			avr_run(r);
+			long c = (long)r->cycle;
+			if (c < prev) reset_seen = 1;	/* avr_reset zeroed the cycle count */
+			prev = c;
+		}
+		check("WDT reset fires on timeout", reset_seen, 1);
+
+		/* --- petting (WDR) in time prevents the reset --- */
+		avr_t *q = avr_make_mcu_by_name("attiny3217");
+		q->log = LOG_ERROR;
+		avr_init(q);
+		put16(q, 0, 0xcfff);	/* RJMP .-2 self-loop */
+		long Tq = 8 * (long)q->frequency / 1024;
+
+		avr_ccp_write(q, AVR_CCP_IOREG);
+		cpu_write(q, W + CTRLA, PERIOD_8CLK);
+		while ((long)q->cycle < Tq * 6 / 10)	/* run to ~60% of the period */
+			avr_run(q);
+		avr_ioctl(q, AVR_IOCTL_WATCHDOG_RESET, 0);	/* WDR: pet the dog */
+		long pet_at = (long)q->cycle, qprev = (long)q->cycle;
+		int q_reset = 0;
+		while ((long)q->cycle < pet_at + Tq * 8 / 10) {	/* 0.8T since pet < T */
+			avr_run(q);
+			long c = (long)q->cycle;
+			if (c < qprev) { q_reset = 1; break; }
+			qprev = c;
+		}
+		check("no WDT reset when petted in time", q_reset, 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
