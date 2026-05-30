@@ -666,8 +666,33 @@ read, and a write-collision (mid-transfer DATA write sets WRCOL and is dropped,
 the first byte still clocked); and the client path — a received byte latched with
 IF set, the held DATA echoed on MISO, and IF cleared by the DATA read.
 
+### Phase 4 — peripheral: AC0 (analog comparator) — **DONE**
+`avr_ac.[ch]`, wired into `sim_tiny3217` at 0x680 (vector AC0_AC=17). Models the
+comparator as a combinational function of its selected inputs: STATUS.STATE =
+(V+ > V-), optionally inverted (MUXCTRLA.INVERT). Analog voltages (millivolts)
+are presented on the AINP0..3 / AINN0..1 IRQs (`AVR_IOCTL_AC_GETIRQ(name)`).
+- **Input MUX:** MUXCTRLA.MUXPOS picks AINP0..3; MUXNEG picks AINN0/AINN1, the
+  internal VREF, or the DAC output. VREF/DAC are settable values
+  (`avr_ac_set_refs()`, defaults 1100 mV / 0 mV) since those peripherals are not
+  modelled.
+- **Output:** recomputed on any input or config change; STATUS.STATE tracks the
+  live output and it is mirrored on the OUT IRQ (so it can drive a pin or be
+  observed). STATUS is refreshed on read too.
+- **Interrupt:** the CTRLA.INTMODE edge (BOTHEDGE / POSEDGE / NEGEDGE) sets the
+  W1C STATUS.CMP flag and raises AC0_AC if INTCTRL.CMP is enabled (`raise_sticky`,
+  with enable-while-set re-raising).
+
+Deliberate simplifications: hysteresis (CTRLA.HYSMODE), low-power / run-standby
+timing and the physical OUTEN pin buffer are not modelled (the OUT IRQ is always
+emitted; the configuration still stores).
+
+Verified in `tests/test_avrxt_engine.c` (now 200 checks): STATE low while
+disabled, STATE high/low tracking V+ vs V- with the OUT IRQ following, INVERT
+flipping the output, a positive-edge interrupt (CMP flag + AC0_AC raise, W1C,
+negedge ignored in POSEDGE mode), and comparison against the internal VREF.
+
 Still stubs/absent (firmware that only configures them will currently see plain
-RAM at those addresses): AC, DAC, CCL, EVSYS, and the rest — added incrementally
+RAM at those addresses): DAC, CCL, EVSYS, and the rest — added incrementally
 next.
 
 ## 9. Files touched (summary)
@@ -684,8 +709,8 @@ Peripherals: **new `avr_twi_modern.[ch]` (TWI0 — DONE)**, **new
 `avr_tca.[ch]` (TCA0 — DONE)**, **new `avr_usart_modern.[ch]` (USART0 —
 DONE)**, **new `avr_nvmctrl.[ch]` (NVMCTRL/EEPROM — DONE)**, **new `avr_rtc.[ch]` (RTC + PIT — DONE)**, **new
 `avr_adc_modern.[ch]` (ADC0 — DONE)**, **new
-`avr_spi_modern.[ch]` (SPI0 — DONE)**; remaining peripherals (AC, DAC, CCL,
-EVSYS, …) to be added as stubs then deepened.
+`avr_spi_modern.[ch]` (SPI0 — DONE)**, **new `avr_ac.[ch]` (AC0 — DONE)**;
+remaining peripherals (DAC, CCL, EVSYS, …) to be added as stubs then deepened.
 Core: **new `simavr/cores/sim_tiny3217.c`**, **new
 `cores/sim_core_declare_modern.h`**, bundled **`cores/avr/iotn3217.h`**.
 Tests: `tests/test_avrxt_engine.c` (engine + TWI0 + PORT/VPORT + sim_tiny3217

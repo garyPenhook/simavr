@@ -34,6 +34,7 @@
 #include "avr_rtc.h"
 #include "avr_adc_modern.h"
 #include "avr_spi_modern.h"
+#include "avr_ac.h"
 
 static int failures;
 
@@ -1289,6 +1290,71 @@ int main(void)
 		check("client echoed its DATA on MISO", g_spi_out, 0x3c);
 		check("DATA read clears client IF",
 			  (cpu_read(m, S + SPIMR_DATA), !!(m->data[S + SPIMR_INTFLAGS] & F_IF)), 0);
+	}
+
+	printf("== modern AC0 (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t C = 0x680;
+		enum { ENABLE = 0x01, INTMODE_POSEDGE = 0x30 };
+		enum { INVERT = 0x80, MUXNEG_VREF = 0x02 };
+		enum { CMP = 0x01, STATE = 0x10 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		avr_irq_t *ainp0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0);
+		avr_irq_t *ainn0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINN0);
+		check("AC AINP0 irq exists", ainp0 != NULL, 1);
+		uint8_t out = 0xff;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_OUT), rec_irq, &out);
+
+		/* V+ = 2000 mV, V- = 1000 mV (AINN0), MUXPOS/NEG = PIN0. */
+		avr_raise_irq(ainp0, 2000);
+		avr_raise_irq(ainn0, 1000);
+		check("STATE 0 while disabled", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+
+		cpu_write(m, C + ACR_CTRLA, ENABLE);	/* INTMODE BOTHEDGE, no int */
+		check("STATE 1 (V+ > V-)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+		check("OUT IRQ went high", out, 1);
+
+		/* Drop V+ below V-: output falls. */
+		avr_raise_irq(ainp0, 500);
+		check("STATE 0 (V+ < V-)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+		check("OUT IRQ went low", out, 0);
+
+		/* INVERT flips the output for the same inputs. */
+		cpu_write(m, C + ACR_MUXCTRLA, INVERT);	/* MUXPOS/NEG PIN0, inverted */
+		check("INVERT => STATE 1 (V+ < V-)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+		cpu_write(m, C + ACR_MUXCTRLA, 0x00);	/* back to normal */
+
+		/* Positive-edge interrupt. */
+		cpu_write(m, C + ACR_STATUS, CMP);		/* clear any stale flag */
+		cpu_write(m, C + ACR_CTRLA, ENABLE | INTMODE_POSEDGE);
+		cpu_write(m, C + ACR_INTCTRL, CMP);		/* enable AC interrupt */
+		avr_raise_irq(ainp0, 500);			/* ensure low first */
+		cpu_write(m, C + ACR_STATUS, CMP);		/* clear */
+
+		avr_raise_irq(ainp0, 2000);			/* low->high: posedge */
+		check("posedge sets CMP flag", !!(m->data[C + ACR_STATUS] & CMP), 1);
+		check("AC raises (enabled) interrupt", avr_has_pending_interrupts(m), 1);
+
+		/* W1C the flag; a negative edge must NOT set it in POSEDGE mode. */
+		cpu_write(m, C + ACR_STATUS, CMP);
+		check("CMP cleared by W1C", !!(m->data[C + ACR_STATUS] & CMP), 0);
+		avr_raise_irq(ainp0, 300);			/* high->low: negedge */
+		check("negedge ignored in POSEDGE mode", !!(m->data[C + ACR_STATUS] & CMP), 0);
+
+		/* MUXNEG = VREF (default 1100 mV): compare against the reference. */
+		cpu_write(m, C + ACR_STATUS, CMP);
+		cpu_write(m, C + ACR_MUXCTRLA, MUXNEG_VREF);
+		avr_raise_irq(ainp0, 2000);			/* 2000 > 1100 */
+		check("STATE 1 vs VREF (2000 > 1100)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+		avr_raise_irq(ainp0, 800);			/* 800 < 1100 */
+		check("STATE 0 vs VREF (800 < 1100)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

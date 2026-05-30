@@ -45,11 +45,12 @@
 #include "avr_rtc.h"
 #include "avr_adc_modern.h"
 #include "avr_spi_modern.h"
+#include "avr_ac.h"
 
 /*
  * The ATtiny3217 device structure. Grows as peripherals are added; for now it
  * carries the core, CLKCTRL, NVMCTRL, PORTA/B/C (+VPORTs), TCA0, TCB0/1, USART0,
- * TWI0, the RTC (+PIT), ADC0 and SPI0.
+ * TWI0, the RTC (+PIT), ADC0, SPI0 and AC0.
  */
 struct mcu_t {
 	avr_t				core;
@@ -63,6 +64,7 @@ struct mcu_t {
 	avr_rtc_t			rtc;
 	avr_adc_modern_t	adc0;
 	avr_spi_modern_t	spi0;
+	avr_ac_t			ac0;
 };
 
 static void
@@ -112,6 +114,9 @@ tiny3217_init(struct avr_t * avr)
 
 	/* SPI0 at 0x0820: single SPI0_INT vector (normal mode). */
 	avr_spi_modern_init(avr, &mcu->spi0, 0x0820, SPI0_INT_vect_num, '0');
+
+	/* AC0 (analog comparator) at 0x0680: AC0_AC vector. */
+	avr_ac_init(avr, &mcu->ac0, 0x0680, AC0_AC_vect_num, '0');
 }
 
 static void
