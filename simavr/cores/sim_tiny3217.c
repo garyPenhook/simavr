@@ -28,6 +28,7 @@ void t3217_init(struct avr_t * avr)
 	avr_port_init(avr, &mcu->portc);
 	avr_usart_init(avr, &mcu->usart0);
 	avr_spim_init(avr, &mcu->spi0);
+	avr_adcm_init(avr, &mcu->adc0);
 	avr_tca_init(avr, &mcu->tca0);
 	avr_tcb_init(avr, &mcu->tcb0);
 	avr_tcb_init(avr, &mcu->tcb1);

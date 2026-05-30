@@ -425,10 +425,20 @@ firmware loads and runs end-to-end.
 - **Verified:** `tests/attiny3217_spi.c` does a master transfer; the host wires
   MOSI→MISO (loopback) and the firmware confirms it received what it sent.
 
+**ADC0 added:**
+- **`sim/avr_adc_modern.{c,h}`**: single-shot ADC. The analog input per channel
+  is supplied (in mV) by raising the matching AINn IRQ; writing COMMAND.STCONV
+  converts the MUXPOS channel against vref into RES (10- or 8-bit per RESSEL),
+  sets RESRDY and raises the interrupt. Free-running, window comparator,
+  accumulation and exact reference selection are not modelled; vref defaults to
+  ~VDD (5000 mV, configurable per core).
+- **Verified:** `tests/attiny3217_adc.c` — host presents 2500 mV on AIN3 (half
+  of the 5000 mV ref); firmware reads ~512 (10-bit half-scale).
+
 Still to do in Phase 4: VPORT (needs low-IO callback support, deferred from
 Phase 1), prescaler→frequency in CLKCTRL, TCA split/PWM modes, flash
-self-programming, ELF .eeprom preload, RTC/PIT, TWI0, ADC0, USART/SPI RX-path
-and slave tests, and stubs for the rest.
+self-programming, ELF .eeprom preload, RTC/PIT, TWI0, ADC reference selection
++ free-running, USART/SPI RX-path and slave tests, and stubs for the rest.
 
 ## 9. Files touched (summary)
 

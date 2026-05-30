@@ -25,6 +25,7 @@
 #include "avr_tca.h"
 #include "avr_usart.h"
 #include "avr_spi_modern.h"
+#include "avr_adc_modern.h"
 #include "avr_clkctrl.h"
 #include "avr_nvmctrl.h"
 
@@ -42,6 +43,7 @@
 
 #define T3217_RSTFR	0x0040		// RSTCTRL.RSTFR (reset flags)
 #define T3217_CLKCTRL	0x0060		// clock controller
+#define T3217_ADC0	0x0600		// analog-to-digital converter
 #define T3217_CPUINT	0x0110		// CPUINT controller
 #define T3217_NVMCTRL	0x1000		// NVM controller
 #define T3217_EEPROM	0x1400		// mapped EEPROM (256 B, page 64)
@@ -65,6 +67,7 @@ struct mcu_t {
 	avr_port_t	porta, portb, portc;
 	avr_usart_t	usart0;
 	avr_spim_t	spi0;
+	avr_adcm_t	adc0;
 	avr_tca_t	tca0;
 	avr_tcb_t	tcb0, tcb1;
 };
@@ -155,6 +158,16 @@ const struct mcu_t SIM_CORENAME = {
 			.vector = 26,	// SPI0_INT_vect_num
 			.enable = AVR_IO_REGBIT(T3217_SPI0 + 0x02, 0),	// INTCTRL.IE
 			.raised = AVR_IO_REGBIT(T3217_SPI0 + 0x03, 7),	// INTFLAGS.IF
+			.raise_sticky = 1,
+		},
+	},
+	.adc0 = {
+		.name = '0', .r_base = T3217_ADC0,
+		.vref_mv = 5000,	// default reference ~VDD (simplified)
+		.resrdy = {
+			.vector = 20,	// ADC0_RESRDY_vect_num
+			.enable = AVR_IO_REGBIT(T3217_ADC0 + 0x0A, 0),	// INTCTRL.RESRDY
+			.raised = AVR_IO_REGBIT(T3217_ADC0 + 0x0B, 0),	// INTFLAGS.RESRDY
 			.raise_sticky = 1,
 		},
 	},
