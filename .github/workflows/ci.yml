@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  avrxt-engine:
+    name: Build simavr + run AVRxt engine tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libelf-dev zlib1g-dev pkg-config
+
+      - name: Build simavr (library + run_avr)
+        run: make -C simavr
+
+      - name: Build and run the ATtiny3217 / modern-AVR engine tests
+        run: |
+          set -e
+          OBJ=$(ls -d simavr/obj-*)
+          echo "Using simavr objects in: $OBJ"
+          # test_avrxt_engine is pure host code (no avr-gcc needed): it drives
+          # the engine + every modern peripheral with hand-assembled opcodes
+          # and register pokes, then self-checks (260 assertions).
+          cc -I simavr/sim -I simavr/cores \
+             -o test_avrxt_engine tests/test_avrxt_engine.c \
+             -L "$OBJ" -lsimavr -lelf -lm
+          LD_LIBRARY_PATH="$OBJ" ./test_avrxt_engine

@@ -1,6 +1,14 @@
 simavr - a lean and mean Atmel AVR simulator for linux
 ======
 
+[![CI](https://github.com/garyPenhook/simavr/actions/workflows/ci.yml/badge.svg)](https://github.com/garyPenhook/simavr/actions/workflows/ci.yml)
+
+> **This is a fork** that adds modern AVR (AVRxt) support — a working **ATtiny3217**
+> (tinyAVR® 1-series) core. It is **not** the same as upstream or the distro packages;
+> see [Modern AVR (AVRxt) / ATtiny3217 support](#modern-avr-avrxt--attiny3217-support--this-fork)
+> below, and note that **`apt`/`brew` install upstream simavr, not this fork** — you
+> must build from source (see [Installation](#installation)).
+
 _simavr_ is an AVR simulator for linux, or any platform that uses avr-gcc. It uses 
 avr-gcc's own register definition to simplify creating new targets for supported AVR
 devices. The core was made to be small and compact, and hackable so allow quick 
@@ -64,6 +72,28 @@ The modern engine and every peripheral above are covered by
 
 Installation
 ------------
+
+> ⚠️ **To use this fork's ATtiny3217 / modern-AVR support, build from source from
+> this repository.** The package-manager options below (`apt`, Homebrew, the Ubuntu
+> package) install **upstream** simavr, which does **not** contain any of the
+> modern-AVR work described above — installing those will *not* give you the
+> ATtiny3217 core.
+>
+> ```sh
+> git clone https://github.com/garyPenhook/simavr
+> cd simavr
+> make                         # builds the library and simavr/run_avr
+> # optional, system-wide:  sudo make install RELEASE=1
+> # quick check:            simavr/run_avr --list-cores | tr ' ' '\n' | grep attiny3217
+> ```
+>
+> You'll also need a **modern `avr-gcc`** (one that supports `-mmcu=attiny3217`,
+> e.g. avr-gcc 12+) to *compile* ATtiny3217 firmware; older packaged `gcc-avr`
+> toolchains can't target it. simavr itself builds with a plain host compiler.
+
+The upstream installation options below remain valid for stock simavr (classic
+AVR parts only):
+
 On OSX, we recommend using [homebrew](https://brew.sh):
 
     brew tap osx-cross/avr

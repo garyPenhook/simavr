@@ -27,6 +27,13 @@ IPATH 		+= ${simavr}/simavr/sim
 
 tests_src	:= ${wildcard test_*.c}
 
+# The ATtiny3217 modern-AVR blink demo (attiny3217_blink.c + its host harness)
+# needs a modern avr-gcc with ATtiny3217 support, which stock packaged/CI
+# toolchains lack. Keep it out of the default build & run so everything else
+# still passes; build and run it explicitly with:  make attiny3217-demo
+sources		:= $(filter-out attiny3217_%,$(sources))
+tests_src	:= $(filter-out test_attiny3217_%,$(tests_src))
+
 all: obj axf hex tst
 
 include ../Makefile.common
@@ -56,6 +63,17 @@ run_tests: all
 	done ;\
 	echo "Tests run: $$num_run  Successes: $$(($$num_run-$$num_failed))  Failures: $$num_failed" ;\
 	exit $$num_failed
+
+# ATtiny3217 modern-AVR blink demo (needs a modern avr-gcc, see note above).
+# Builds the firmware ELF and a host program that loads it, runs it on simavr,
+# and verifies the LED on PA0 toggles.
+attiny3217-demo: attiny3217_blink.axf ${OBJ}/test_attiny3217_blink
+	@echo "--- ATtiny3217 blink demo ---"
+	@LD_LIBRARY_PATH=${simavr}/simavr/${OBJ} ${OBJ}/test_attiny3217_blink attiny3217_blink.axf
+
+${OBJ}/test_attiny3217_blink: test_attiny3217_blink.c | ${OBJ}
+	$(CC) ${CPPFLAGS} -I${simavr}/simavr/sim -I${simavr}/simavr/cores \
+		-o $@ $< -L${simavr}/simavr/${OBJ} -lsimavr -lelf -lm
 
 clean: clean-${OBJ}
 	rm -f *.axf *.hex *.vcd
