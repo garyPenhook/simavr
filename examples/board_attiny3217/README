@@ -11,14 +11,23 @@ The firmware (attiny3217_blink.c) is written against the device header's
 memory-mapped peripheral structs (PORTA, PORTB, USART0), not the flat
 <avr/io.h> register macros used by the classic examples.
 
-Build & run
------------
+Build & run (from this folder)
+------------------------------
 
-    make
-    ./obj-*/blink.elf          # run from this directory (loads the .axf here)
+Open a console, change into this folder, build, then run:
 
-Expected output: PA0 reported toggling 20 times over 200 simulated ms, and a
-GTKWave-openable trace written to attiny3217_blink.vcd.
+    cd examples/board_attiny3217     # the demo loads its .axf from here
+    make                             # builds the host program + firmware (.axf)
+    ./obj-*/blink.elf                # run the demo
+
+The runnable program is the host binary built under obj-<arch>/ (for example
+obj-x86_64-pc-linux-gnu/blink.elf); the ./obj-*/ glob just picks it regardless
+of architecture. Run it from this folder so it finds attiny3217_blink.axf.
+
+Expected output: the firmware's USART0 greeting and "tick N" counter echoed to
+the terminal (the host hooks USART0's UART IRQ), interleaved with the first few
+PA0 toggles, then a summary — PA0 toggled 20 times over 200 simulated ms — plus
+a GTKWave-openable trace written to attiny3217_blink.vcd.
 
 Toolchain note
 --------------

@@ -133,8 +133,9 @@ board in that directory targets a classic AVR):
   structure on the other modern family.
 * [`board_modern_avr`](examples/board_modern_avr) — a **coverage** board: one
   device-agnostic firmware is built for *every* supported modern core (all 15
-  tinyAVR 1-series + 8 megaAVR-0) and the host runner boots each, checking PA0
-  toggles and USART0 transmits. `make run` reports `23/23 cores PASSED`.
+  tinyAVR 1-series + 8 megaAVR-0) and the host runner boots each and checks that
+  seven core peripherals respond — PORT, TCA0, TCB0, RTC, ADC0, SPI0 and TWI0
+  (plus USART0 as the result transport). `make run` reports `23/23 cores PASSED`.
 
 Each board's Makefile gates the firmware build on a modern `avr-gcc` (12+), so a
 plain `make` across `examples/` still succeeds on older toolchains.

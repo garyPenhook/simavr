@@ -3,40 +3,58 @@ board_modern_avr — every supported modern AVR, in one board
 
 Where board_atmega4809 and board_attiny3217 are per-family demos, this board is
 the *coverage* board: it proves that **every** modern core this fork supports
-boots and runs. That is all 23:
+boots and exercises its core peripherals. That is all 23:
 
   tinyAVR 1-series (15): attiny212 214 412 414 416 417 814 816 817
                          1614 1616 1617 3214 3216 3217
   megaAVR 0-series (8):  atmega808 809 1608 1609 3208 3209 4808 4809
 
+Each core is checked against seven peripherals present identically on every
+modern part: PORT, TCA0, TCB0, RTC, ADC0, SPI0 and TWI0 (USART0 is the result
+transport, so it is covered too).
+
 How it works
 ------------
 
-  * blink_fw.c is a single device-agnostic firmware that touches only what is
-    identical on every modern AVR: PA0 (the one port+pin on every part) and
-    USART0 (same base 0x0800 everywhere). It blinks PA0 and emits one byte per
-    loop on USART0 — no PORTMUX / pin direction, since the modern USART model
-    raises its wire IRQ the instant TXDATAL is written. The Makefile compiles it
-    once per device into fw_<device>.axf, passing the device name in MCU_NAME so
-    each ELF's .mmcu section names the right core.
+  * blink_fw.c is a single device-agnostic firmware. It brings up all seven
+    peripherals through the avr-libc device-header structs (TCA0, TCB0, RTC,
+    ADC0, SPI0, TWI0, USART0) — identical across both families — and every loop
+    builds a result bitmask (one bit per peripheral that responded) and streams
+    it on USART0. It uses only PA0 and bounded waits, so one source builds and
+    runs unchanged from the 8-pin ATtiny212 to the 48-pin ATmega4809 and a
+    non-responding model can never hang the run. The Makefile compiles it once
+    per device into fw_<device>.axf, passing the device name in MCU_NAME so each
+    ELF's .mmcu section names the right core.
 
   * runner.c (the host) loads each fw_*.axf, instantiates the core named in its
-    .mmcu section, runs ~100 ms of simulated time, and checks that PA0 toggled
-    AND USART0 transmitted — i.e. the core booted and both peripherals ran. It
-    prints a PASS/FAIL line per device (PA0x<n> USART0-TXx<n>) and exits
-    non-zero if any core fails.
+    .mmcu section, attaches a tiny I2C slave at 0x50 (so the firmware's TWI0
+    transaction completes), runs ~200 ms of simulated time, and ORs the result
+    bytes. A core PASSes only if every required peripheral bit appears. It prints
+    a per-peripheral line (NAME+ responded / NAME- did not) and exits non-zero if
+    any core fails.
 
-Build & run
------------
+Build & run (from this folder)
+------------------------------
 
-    make            # builds fw_<device>.axf for every toolchain-supported core
-    make run        # runs the host runner over all of them
+Open a console, change into this folder, build, then run every core:
+
+    cd examples/board_modern_avr   # the runner loads fw_*.axf from here
+    make                           # builds the runner + fw_<device>.axf per core
+    make run                       # runs the runner over every fw_*.axf
 
 Expected output (one line per device, then a summary):
 
-    PASS  attiny3217   fw_attiny3217.axf PA0x10 USART0-TXx10
+    PASS  attiny3217   PORT+ TCA0+ TCB0+ RTC+ ADC0+ SPI0+ TWI0+
     ...
     23/23 cores PASSED
+
+To run just one device, call the host runner with that firmware:
+
+    ./obj-*/runner.elf fw_attiny3217.axf      # a single core
+    ./obj-*/runner.elf fw_atmega4809.axf fw_attiny412.axf   # a chosen few
+
+The runner binary is built under obj-<arch>/ (e.g. obj-x86_64-pc-linux-gnu/
+runner.elf); the ./obj-*/ glob picks it regardless of architecture.
 
 Toolchain note
 --------------

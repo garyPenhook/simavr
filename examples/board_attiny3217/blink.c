@@ -31,6 +31,7 @@
 
 #include "sim_avr.h"
 #include "avr_ioport.h"
+#include "avr_uart.h"
 #include "sim_elf.h"
 #include "sim_vcd_file.h"
 
@@ -49,6 +50,18 @@ pa0_changed_hook(struct avr_irq_t * irq, uint32_t value, void * param)
 	pa0_toggles++;
 	if (pa0_toggles <= 6)
 		printf("PA0 -> %u\n", value);
+}
+
+/*
+ * Called for every byte the firmware transmits on USART0. The modern USART
+ * model raises the classic UART_IRQ_OUTPUT, so we just echo the serial stream
+ * to our stdout — this is how you "see" the firmware's greeting and ticks.
+ */
+static void
+usart0_out_hook(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	putchar((char)value);
+	fflush(stdout);
 }
 
 int
@@ -76,6 +89,11 @@ main(int argc, char *argv[])
 	avr_irq_register_notify(
 		avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('A'), IOPORT_IRQ_PIN0),
 		pa0_changed_hook, NULL);
+
+	// echo USART0 transmissions to stdout (modern USART reuses the UART IRQ mesh)
+	avr_irq_register_notify(
+		avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('0'), UART_IRQ_OUTPUT),
+		usart0_out_hook, NULL);
 
 	// trace PA0 to a VCD file (open in GTKWave)
 	avr_vcd_init(avr, "attiny3217_blink.vcd", &vcd_file, 1000 /* usec */);

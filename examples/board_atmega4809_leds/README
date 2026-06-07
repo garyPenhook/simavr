@@ -1,0 +1,57 @@
+board_atmega4809_leds — modern-AVR OpenGL LED window
+====================================================
+
+The *visual* modern-AVR board: it opens a real window (OpenGL/GLUT) showing the
+eight PORTA pins of an ATmega4809 as eight LEDs, animated live by the firmware —
+a single lit LED bounces back and forth ("Knight Rider"). USART0 narration is
+echoed to the terminal.
+
+This is the GUI counterpart to the headless examples:
+  * board_atmega4809 / board_attiny3217 — console + VCD demos
+  * board_modern_avr                    — all-cores coverage runner
+Same modern engine and peripheral models, but with something to watch.
+
+Build & run (from this folder)
+------------------------------
+
+Open a console, change into this folder, build, then run:
+
+    cd examples/board_atmega4809_leds   # the demo loads its .axf from here
+    make                                # builds the host program + firmware (.axf)
+    ./obj-*/ledramp.elf                 # run the demo (opens the window)
+
+The runnable program is the host binary built under obj-<arch>/ (for example
+obj-x86_64-pc-linux-gnu/ledramp.elf); the ./obj-*/ glob just picks it regardless
+of architecture. Run it from this folder so it finds atmega4809_ledramp.axf.
+
+A window titled "simavr - atmega4809 PORTA LEDs" appears with 8 LEDs; the lit
+one sweeps left/right. The terminal shows the firmware's USART0 output ("LED N").
+Press 'q' or Esc in the window to quit. (A graphical display is required, since
+this board opens an OpenGL window.)
+
+How it works
+------------
+
+  * The firmware (atmega4809_ledramp.c) drives all of PORTA as outputs and walks
+    a single set bit across it, USART0 on the alternate route (PA4) so serial
+    stays off the LED pins.
+
+  * The host (ledramp.c) hooks the eight PORTA pin IRQs to a bitmap and draws
+    them as LEDs, hooks USART0 to stdout, and runs the AVR in a background
+    thread that is *throttled to real time* (compares simulated cycles to the
+    wall clock and sleeps the difference) so the 120 ms steps are watchable
+    instead of flashing past at simulation speed.
+
+The PORT and USART hooks are ordinary avr_irq_register_notify() calls on the
+classic IOPORT / UART IRQ meshes — the modern PORT and USART models reuse those
+abstractions, so the GUI plumbing is identical to simavr's classic GL boards
+(board_ledramp, board_hd44780).
+
+Requirements
+------------
+
+Needs OpenGL + GLUT (freeglut) dev libraries, like the other visual boards; the
+Makefile pulls them in via ../Makefile.opengl. Building the firmware needs a
+modern avr-gcc (12+) with the megaAVR-0 headers; if avr-gcc cannot target
+atmega4809 the firmware step is skipped (so a plain `make` across examples/ still
+succeeds) — install a modern avr-gcc and re-run `make` to build and run the demo.
