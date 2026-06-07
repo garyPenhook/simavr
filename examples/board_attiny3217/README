@@ -1,0 +1,38 @@
+board_attiny3217 — modern-AVR (tinyAVR 1-series) blink demo
+===========================================================
+
+The tinyAVR-1 sibling of examples/board_atmega4809. It exercises the same
+modern engine and peripheral models, on the other modern family this fork adds:
+
+  * avr_port_modern  — PA0 driven via the PORT register block (DIRSET/OUTTGL)
+  * avr_usart_modern — USART0 greeting + counter on the default TXD pin (PB2)
+
+The firmware (attiny3217_blink.c) is written against the device header's
+memory-mapped peripheral structs (PORTA, PORTB, USART0), not the flat
+<avr/io.h> register macros used by the classic examples.
+
+Build & run
+-----------
+
+    make
+    ./obj-*/blink.elf          # run from this directory (loads the .axf here)
+
+Expected output: PA0 reported toggling 20 times over 200 simulated ms, and a
+GTKWave-openable trace written to attiny3217_blink.vcd.
+
+Toolchain note
+--------------
+
+Building the firmware needs a modern avr-gcc (12+) that ships the tinyAVR-1
+device headers (verified with avr-gcc 16) — the same requirement as running any
+firmware on this fork. The Makefile detects whether avr-gcc can target
+attiny3217 and, if not, skips the firmware step (so a plain `make` across
+examples/ still succeeds) while still building the host binary. Install a modern
+avr-gcc and re-run `make` to build attiny3217_blink.axf and run the demo.
+
+Want every supported modern part, not just this one?
+-----------------------------------------------------
+
+See examples/board_modern_avr, which builds one blink firmware for every
+supported modern core (all 15 tinyAVR-1 + 8 megaAVR-0) and runs each, reporting
+which boot and blink.

@@ -1,0 +1,56 @@
+board_modern_avr — every supported modern AVR, in one board
+============================================================
+
+Where board_atmega4809 and board_attiny3217 are per-family demos, this board is
+the *coverage* board: it proves that **every** modern core this fork supports
+boots and runs. That is all 23:
+
+  tinyAVR 1-series (15): attiny212 214 412 414 416 417 814 816 817
+                         1614 1616 1617 3214 3216 3217
+  megaAVR 0-series (8):  atmega808 809 1608 1609 3208 3209 4808 4809
+
+How it works
+------------
+
+  * blink_fw.c is a single device-agnostic firmware that touches only what is
+    identical on every modern AVR: PA0 (the one port+pin on every part) and
+    USART0 (same base 0x0800 everywhere). It blinks PA0 and emits one byte per
+    loop on USART0 — no PORTMUX / pin direction, since the modern USART model
+    raises its wire IRQ the instant TXDATAL is written. The Makefile compiles it
+    once per device into fw_<device>.axf, passing the device name in MCU_NAME so
+    each ELF's .mmcu section names the right core.
+
+  * runner.c (the host) loads each fw_*.axf, instantiates the core named in its
+    .mmcu section, runs ~100 ms of simulated time, and checks that PA0 toggled
+    AND USART0 transmitted — i.e. the core booted and both peripherals ran. It
+    prints a PASS/FAIL line per device (PA0x<n> USART0-TXx<n>) and exits
+    non-zero if any core fails.
+
+Build & run
+-----------
+
+    make            # builds fw_<device>.axf for every toolchain-supported core
+    make run        # runs the host runner over all of them
+
+Expected output (one line per device, then a summary):
+
+    PASS  attiny3217   fw_attiny3217.axf PA0x10 USART0-TXx10
+    ...
+    23/23 cores PASSED
+
+Toolchain note
+--------------
+
+Building firmware needs a modern avr-gcc (12+) with the tinyAVR-1 / megaAVR-0
+device headers (verified with avr-gcc 16). The Makefile filters the device list
+down to the cores the installed avr-gcc can actually target, so a plain `make`
+never fails on an older toolchain — it just builds fewer (or no) firmwares, and
+the host runner builds regardless. `make run` then exercises whatever fw_*.axf
+are present (the .axf are build artifacts, not committed — see .gitignore).
+
+Adding a new modern device
+--------------------------
+
+Drop its sim_<device>.c in simavr/cores/ (per the auto-discovery in
+simavr/Makefile), then add its avr-gcc name to ALL_MCUS in this Makefile. No
+firmware edits are needed — blink_fw.c is device-agnostic.

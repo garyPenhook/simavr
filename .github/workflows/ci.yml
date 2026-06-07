@@ -28,7 +28,7 @@ jobs:
           echo "Using simavr objects in: $OBJ"
           # test_avrxt_engine is pure host code (no avr-gcc needed): it drives
           # the engine + every modern peripheral with hand-assembled opcodes
-          # and register pokes, then self-checks (260 assertions).
+          # and register pokes, then self-checks (380 assertions).
           cc -I simavr/sim -I simavr/cores \
              -o test_avrxt_engine tests/test_avrxt_engine.c \
              -L "$OBJ" -lsimavr -lelf -lm

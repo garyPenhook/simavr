@@ -120,8 +120,24 @@ simavr/run_avr -m attiny3217 -f 3333333 \
 ```
 
 The modern engine and every peripheral above are covered by
-`tests/test_avrxt_engine.c` (260 self‑checks); run the suite with
+`tests/test_avrxt_engine.c` (380 self‑checks); run the suite with
 `make -C tests run_tests`.
+
+**Modern-AVR example boards.** Three runnable examples under
+[`examples/`](examples) demonstrate the modern engine end to end (every other
+board in that directory targets a classic AVR):
+
+* [`board_atmega4809`](examples/board_atmega4809) — megaAVR-0 blink + USART0,
+  driving the real pins via the modern PORT and PORTMUX models.
+* [`board_attiny3217`](examples/board_attiny3217) — the tinyAVR-1 sibling, same
+  structure on the other modern family.
+* [`board_modern_avr`](examples/board_modern_avr) — a **coverage** board: one
+  device-agnostic firmware is built for *every* supported modern core (all 15
+  tinyAVR 1-series + 8 megaAVR-0) and the host runner boots each, checking PA0
+  toggles and USART0 transmits. `make run` reports `23/23 cores PASSED`.
+
+Each board's Makefile gates the firmware build on a modern `avr-gcc` (12+), so a
+plain `make` across `examples/` still succeeds on older toolchains.
 
 Installation
 ------------
