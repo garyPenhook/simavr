@@ -3,9 +3,10 @@ simavr - a lean and mean Atmel AVR simulator for linux
 
 [![CI](https://github.com/garyPenhook/simavr/actions/workflows/ci.yml/badge.svg)](https://github.com/garyPenhook/simavr/actions/workflows/ci.yml)
 
-> **This is a fork** that adds modern AVR (AVRxt) support — a working **ATtiny3217**
-> (tinyAVR® 1-series) core. It is **not** the same as upstream or the distro packages;
-> see [Modern AVR (AVRxt) / ATtiny3217 support](#modern-avr-avrxt--attiny3217-support--this-fork)
+> **This is a fork** that adds modern AVR (AVRxt) support — working cores for the
+> **entire tinyAVR® 1-series** (15 devices, ATtiny212 … ATtiny3217). It is **not**
+> the same as upstream or the distro packages;
+> see [Modern AVR (AVRxt) / tinyAVR 1-series support](#modern-avr-avrxt--tinyavr-1-series-support--this-fork)
 > below, and note that **`apt`/`brew` install upstream simavr, not this fork** — you
 > must build from source (see [Installation](#installation)).
 
@@ -102,7 +103,8 @@ Installation
 > cd simavr
 > make                         # builds the library and simavr/run_avr
 > # optional, system-wide:  sudo make install RELEASE=1
-> # quick check:            simavr/run_avr --list-cores | tr ' ' '\n' | grep attiny3217
+> # quick check (lists the tinyAVR 1-series cores):
+> #   simavr/run_avr --list-cores | tr ' ' '\n' | grep -E 'attiny(212|412|214|414|814|1614|3214|416|816|1616|3216|417|817|1617|3217)'
 > ```
 >
 > You'll also need a **modern `avr-gcc`** (one that supports `-mmcu=attiny3217`,
