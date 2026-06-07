@@ -11,8 +11,8 @@
 	  * a software reset (SWRR.SWRE) that resets the device and sets RSTFR.SWRF,
 	  * RSTFR write-1-to-clear.
 
-	Not modelled as causes: BOR/external/UPDI resets, and a WDT timeout does not
-	set WDRF (the WDT models the reset effect, not the cause flag).
+	Reset causes can also be requested by other on-chip models (e.g. BOD, WDT) or
+	by tests/boards that need to simulate an external or UPDI reset.
 
 	Copyright 2026 simavr authors
 
@@ -66,6 +66,7 @@ typedef struct avr_rstctrl_t {
 #define AVR_RSTCTRL_EXTRF	0x04
 #define AVR_RSTCTRL_WDRF	0x08
 #define AVR_RSTCTRL_SWRF	0x10
+#define AVR_RSTCTRL_UPDIRF	0x20
 
 /*
  * Request a device reset, recording 'cause_bm' in RSTFR once it completes. Uses

@@ -21,8 +21,8 @@
 	EEPROM — INTFLAGS.EEREADY is set and NVMCTRL_EE raised if enabled. Flash
 	self-programming commits to avr->flash[]; see avr_nvmctrl_set_flash().
 
-	Not modelled: the FUSEWRITE command (fuse self-programming via NVMCTRL.ADDR/
-	DATA, rare in application code and normally done by the UPDI programmer).
+	FUSEWRITE is modelled through NVMCTRL.ADDR/DATA. It updates avr->fuse[] byte
+	storage directly and reports invalid addresses through STATUS.WRERROR.
 
 	Copyright 2026 simavr authors
 
@@ -116,6 +116,17 @@ static void nvm_begin(avr_nvmctrl_t *p, uint8_t busy_bm)
 static void nvm_complete(avr_nvmctrl_t *p)	{ nvm_begin(p, EEBUSY_bm); }
 static void nvm_flash_complete(avr_nvmctrl_t *p)	{ nvm_begin(p, FBUSY_bm); }
 
+static void nvm_set_wrerror(avr_nvmctrl_t *p, int set)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t st = avr->data[p->r_status];
+	if (set)
+		st |= WRERROR_bm;
+	else
+		st &= ~WRERROR_bm;
+	avr_core_watch_write(avr, p->r_status, st);
+}
+
 /* A byte written to the mapped EEPROM region: load the page buffer. */
 static void
 avr_nvmctrl_ee_write(struct avr_t *avr, avr_io_addr_t addr,
@@ -183,6 +194,7 @@ avr_nvmctrl_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 	if (!avr_ccp_io_write_enabled(avr))
 		return;
 	avr_core_watch_write(avr, p->r_ctrla, v);
+	nvm_set_wrerror(p, 0);
 
 	/* CHIPERASE wipes both sections regardless of what was last written. */
 	if (cmd == CMD_CHIPERASE) {
@@ -193,6 +205,18 @@ avr_nvmctrl_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 		nvm_bufclr(p);
 		nvm_fbufclr(p);
 		nvm_complete(p);
+		return;
+	}
+
+	if (cmd == CMD_FUSEWRITE) {
+		uint16_t faddr = avr->data[p->r_addrl] |
+						 (avr->data[p->r_addrh] << 8);
+		if (faddr >= ARRAY_SIZE(avr->fuse)) {
+			nvm_set_wrerror(p, 1);
+			return;
+		}
+		avr->fuse[faddr] = avr->data[p->r_datal];
+		nvm_flash_complete(p);
 		return;
 	}
 
@@ -292,6 +316,9 @@ avr_nvmctrl_init(
 	p->r_status = base + NVMR_STATUS;
 	p->r_intctrl = base + NVMR_INTCTRL;
 	p->r_intflags = base + NVMR_INTFLAGS;
+	p->r_datal = base + NVMR_DATAL;
+	p->r_addrl = base + NVMR_ADDRL;
+	p->r_addrh = base + NVMR_ADDRL + 1;
 	p->ee_start = ee_start;
 	p->ee_size = ee_size > AVR_NVM_EE_MAX ? AVR_NVM_EE_MAX : ee_size;
 

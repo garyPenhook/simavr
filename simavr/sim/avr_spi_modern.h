@@ -4,14 +4,13 @@
 	"Modern" AVR (AVRxt) SPI (the register-block SPI, e.g. SPI0 at 0x0820 on the
 	tinyAVR 1-series, also megaAVR-0 and AVR Dx families).
 
-	Models the normal (non-buffered) mode in host (master) and client (slave)
-	roles, driving the *same* wire IRQ convention as the classic avr_spi.c
-	(SPI_IRQ_INPUT / SPI_IRQ_OUTPUT, AVR_IOCTL_SPI_GETIRQ) so existing simavr SPI
-	endpoints connect unchanged — only the register glue is new.
+	Models both normal mode and the common buffered-mode data path in host/master
+	and client/slave roles, driving the *same* wire IRQ convention as the classic
+	avr_spi.c (SPI_IRQ_INPUT / SPI_IRQ_OUTPUT, AVR_IOCTL_SPI_GETIRQ) so existing
+	simavr SPI endpoints connect unchanged — only the register glue is new.
 
-	Not modelled: buffered mode (CTRLB.BUFEN — the RXCIF/TXCIF/DREIF/SSIF/BUFOVF
-	flag set and their separate enables); the SS client-select trigger; exact
-	SPI modes (CPOL/CPHA) and bit order beyond storing the configuration.
+	Still not modelled: the SS client-select trigger flag / pin takeover, exact
+	SPI modes (CPOL/CPHA), and bit order beyond storing the configuration.
 
 	Copyright 2026 simavr authors
 
@@ -60,6 +59,14 @@ typedef struct avr_spi_modern_t {
 	avr_int_vector_t	vect;	/* SPIn_INT (normal-mode IF, enabled by IE) */
 
 	uint8_t		busy;		/* a transfer is in flight (host) */
+	uint8_t		tx_shift;
+	uint8_t		tx_shift_valid;
+	uint8_t		tx_buf;
+	uint8_t		tx_buf_valid;
+	uint8_t		last_in;
+	uint8_t		rx_fifo[2];
+	uint8_t		rx_head;
+	uint8_t		rx_count;
 } avr_spi_modern_t;
 
 /*

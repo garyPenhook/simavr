@@ -66,10 +66,9 @@ from each device's avr-libc header, which is generated from the same Microchip
 device files as the datasheets.
 
 The megaAVR-0 parts model six ports (A–F), TCA0, TCB0–3, USART0–3, TWI0, SPI0,
-RTC+PIT, ADC0 (with temp sensor), AC0, NVMCTRL (EEPROM + flash self-programming),
-VREF, PORTMUX, WDT, CRCSCAN, BOD/VLM, SLPCTRL, RSTCTRL and SYSCFG/SIGROW. CCL and
-EVSYS are left as plain memory (their megaAVR-0 register layouts differ from the
-tinyAVR models), and TCD/DAC are not present on this family.
+RTC+PIT, ADC0 (with temp sensor), AC0, CCL, EVSYS, NVMCTRL (EEPROM + flash
+self-programming), VREF, PORTMUX, WDT, CRCSCAN, BOD/VLM, SLPCTRL, RSTCTRL and
+SYSCFG/SIGROW. TCD and DAC are not present on this family.
 
 **Engine — a "modern AVR" mode (the classic path is left byte‑for‑byte unchanged):**
 * modern addressing model (no `0x20` I/O offset, per‑core SP/SREG, enlarged I/O map)
@@ -79,10 +78,26 @@ tinyAVR models), and TCD/DAC are not present on this family.
   into data space, and SLEEP gated by `SLPCTRL`
 
 **Modern peripherals modelled for the ATtiny3217:** CLKCTRL, RSTCTRL, SLPCTRL,
-PORT/VPORT + PORTMUX, TCA0, TCB0/1, TCD0, RTC + PIT, USART0, SPI0, TWI0,
+PORT/VPORT + PORTMUX, TCA0, TCB0/1, TCD0 (One Ramp, Two Ramp, Four Ramp, and
+Dual Slope), RTC + PIT, USART0, SPI0, TWI0,
 ADC0 (incl. the temperature sensor with SIGROW calibration), AC0, DAC0, VREF,
 NVMCTRL (EEPROM **and** flash self-programming; EEPROM persists across reset),
 CCL, EVSYS, WDT, CRCSCAN, BOD/VLM, and SYSCFG/SIGROW device identity.
+
+**Remaining modern-AVR backlog:** the major missing blocks are no longer
+top-level peripherals but feature depth inside existing models. The current
+follow-up work is:
+* `AC`: hysteresis, low-power / run-standby timing, and more physical pin-level behavior
+* `DAC`: output-buffer / run-standby / reference-behavior polish beyond the current digital-to-mV model
+* `CCL`: additional non-combinational details such as filter variants and sequencer corner cases
+* `SPI`: any remaining pin-contention / electrical-behavior realism beyond the buffered protocol model
+* `USART`: more exact one-wire / line-level behavior; sync timing is implemented
+* robustness / fidelity follow-ups:
+  `TCB` first-period scheduling when enabled with non-zero `CNT`,
+  `CCL` filter/edge timer callback cost when left running on static inputs,
+  shared `tick_ctx` typing in `avr_ccl`,
+  a clarifying comment on the manual SPI interrupt raise/clear path,
+  and a datasheet pass over the EVSYS generator source encodings currently used in the core templates
 
 It loads ordinary `avr-gcc -mmcu=attiny3217` ELF files. A blink, end to end:
 

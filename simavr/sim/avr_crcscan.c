@@ -41,6 +41,7 @@
 #define SRC_FLASH	0
 #define SRC_APP		1	/* boot + application */
 #define SRC_BOOT	2
+#define SRC_NOCRC	3
 
 /* STATUS */
 #define BUSY_bm		0x01
@@ -59,11 +60,10 @@ avr_crcscan_crc16(const uint8_t *data, uint32_t len)
 }
 
 /* Last byte index of the section selected by CTRLB.SRC. */
-static uint32_t crcscan_section_end(avr_crcscan_t *p)
+static uint32_t crcscan_section_end(avr_crcscan_t *p, uint8_t src)
 {
 	avr_t *avr = p->io.avr;
 	uint32_t end = p->flash_size - 1;	/* full flash */
-	uint8_t src = avr->data[p->r_ctrlb] & SRC_gm;
 
 	if (src == SRC_APP && p->append_idx != 0xff && avr->fuse[p->append_idx])
 		end = (uint32_t)avr->fuse[p->append_idx] * 256 - 1;
@@ -75,13 +75,27 @@ static uint32_t crcscan_section_end(avr_crcscan_t *p)
 	return end;
 }
 
+/* Boot-time CRCSRC comes from FUSE.SYSCFG0[7:6]. For compatibility with older
+ * tests/boards that never populated modern fuse defaults, an all-zero SYSCFG0
+ * is treated as "unspecified" and leaves startup CRC disabled. */
+static uint8_t crcscan_boot_src(avr_crcscan_t *p)
+{
+	avr_t *avr = p->io.avr;
+
+	if (p->syscfg0_idx == 0xff)
+		return SRC_NOCRC;
+	if (avr->fuse[p->syscfg0_idx] == 0x00)
+		return SRC_NOCRC;
+	return (avr->fuse[p->syscfg0_idx] >> 6) & SRC_gm;
+}
+
 /* Run the scan: CRC the section (minus its 2 checksum bytes) and compare with
  * the stored big-endian checksum. OK on match; on mismatch clear OK and, if
  * NMIEN, raise the NMI. */
-static void crcscan_scan(avr_crcscan_t *p)
+static int crcscan_scan(avr_crcscan_t *p, uint8_t src, int raise_nmi)
 {
 	avr_t *avr = p->io.avr;
-	uint32_t end = crcscan_section_end(p);
+	uint32_t end = crcscan_section_end(p, src);
 
 	int ok = 0;
 	if (end >= 2) {
@@ -91,8 +105,9 @@ static void crcscan_scan(avr_crcscan_t *p)
 	}
 
 	avr_core_watch_write(avr, p->r_status, ok ? OK_bm : 0);
-	if (!ok && (avr->data[p->r_ctrla] & NMIEN_bm))
+	if (!ok && raise_nmi && (avr->data[p->r_ctrla] & NMIEN_bm))
 		avr_raise_interrupt(avr, &p->nmi);
+	return ok;
 }
 
 static void
@@ -117,7 +132,8 @@ avr_crcscan_ctrla_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
 	if (v & ENABLE_bm) {
 		if (v & NMIEN_bm)
 			p->locked = 1;
-		crcscan_scan(p);	/* instant: OK/fail set now, never BUSY */
+		crcscan_scan(p, avr->data[p->r_ctrlb] & SRC_gm, 1);
+		/* instant: OK/fail set now, never BUSY */
 	} else {
 		avr_core_watch_write(avr, p->r_status, 0);
 	}
@@ -127,8 +143,11 @@ static void
 avr_crcscan_reset(avr_io_t *io)
 {
 	avr_crcscan_t *p = (avr_crcscan_t *)io;
+	uint8_t src = crcscan_boot_src(p);
 	p->locked = 0;
 	p->io.avr->data[p->r_status] = 0;
+	if (src != SRC_NOCRC && !crcscan_scan(p, src, 0))
+		p->io.avr->state = cpu_Stopped;
 }
 
 static const char *irq_names[1] = { NULL };
@@ -145,6 +164,7 @@ avr_crcscan_init(
 		avr_crcscan_t * p,
 		avr_io_addr_t base,
 		uint32_t flash_size,
+		uint8_t syscfg0_fuse_index,
 		uint8_t append_fuse_index,
 		uint8_t bootend_fuse_index,
 		uint8_t nmi_vector,
@@ -158,6 +178,7 @@ avr_crcscan_init(
 	p->r_ctrlb = base + CRCSCANR_CTRLB;
 	p->r_status = base + CRCSCANR_STATUS;
 	p->flash_size = flash_size;
+	p->syscfg0_idx = syscfg0_fuse_index;
 	p->append_idx = append_fuse_index;
 	p->bootend_idx = bootend_fuse_index;
 

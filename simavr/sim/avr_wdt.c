@@ -7,8 +7,10 @@
 	timeout; a WDR instruction (delivered via AVR_IOCTL_WATCHDOG_RESET) re-arms
 	it. If the timer expires first the device is reset. In windowed mode a WDR
 	that arrives before the closed window has elapsed also resets the device.
-	The reset is performed the same way as the classic watchdog: swap avr->run
-	to a callback that calls avr_reset(), then restore it from the reset hook.
+	The reset is performed the same way as the classic watchdog by default:
+	swap avr->run to a callback that calls avr_reset(), then restore it from the
+	reset hook. Modern cores can also route watchdog resets through RSTCTRL so
+	WDRF is recorded.
 
 	Copyright 2026 simavr authors
 
@@ -76,6 +78,10 @@ static void wdt_trigger_reset(avr_wdt_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
 	AVR_LOG(avr, LOG_TRACE, "WDT: timeout, resetting\n");
+	if (p->reset_cb) {
+		p->reset_cb(avr, p->reset_param);
+		return;
+	}
 	p->reset_context.avr_run = avr->run;
 	p->reset_context.pending = 1;
 	avr->run = wdt_do_reset;
@@ -199,4 +205,14 @@ avr_wdt_modern_init(
 	avr_register_io_write(avr, p->r_ctrla, avr_wdt_modern_ctrla_write, p);
 	avr_register_io_write(avr, p->r_status, avr_wdt_modern_status_write, p);
 	avr_register_io_read(avr, p->r_status, avr_wdt_modern_status_read, p);
+}
+
+void
+avr_wdt_modern_set_reset_handler(
+		avr_wdt_modern_t * p,
+		void (*cb)(avr_t * avr, void * param),
+		void * param)
+{
+	p->reset_cb = cb;
+	p->reset_param = param;
 }

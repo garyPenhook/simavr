@@ -59,13 +59,15 @@ typedef struct avr_usart_modern_t {
 
 	avr_io_addr_t	base;
 	avr_io_addr_t	r_rxdatal, r_rxdatah, r_txdatal, r_status;
-	avr_io_addr_t	r_ctrla, r_ctrlb, r_baud;
+	avr_io_addr_t	r_ctrla, r_ctrlb, r_ctrlc, r_baud;
 
 	avr_int_vector_t	rxc;	// USARTn_RXC (receive complete)
 	avr_int_vector_t	dre;	// USARTn_DRE (data register empty)
 	avr_int_vector_t	txc;	// USARTn_TXC (transmit complete)
 
 	usart_rx_fifo_t	rx;		// bytes received from the outside, awaiting read
+	uint8_t			tx_data;	// last byte written, completes on tx_done
+	uint8_t			tx_loopback;	// deliver tx_data into RX path on tx_done
 } avr_usart_modern_t;
 
 /*

@@ -25,9 +25,7 @@
 		#include "sim_megax08.h"
 		<literal kind declaration the build's core-table generator can grep for>
 
-	Not modelled for this family: CCL and EVSYS (the megaAVR-0 register layouts
-	differ from the tinyAVR ones the avr_ccl / avr_evsys models assume, so they are
-	left as plain memory rather than mis-modelled), and TCD/DAC (not present).
+	Not present on this family: TCD and DAC.
 
 	Copyright 2026 simavr authors
 
@@ -83,6 +81,8 @@
 #include "avr_adc_modern.h"
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
+#include "avr_ccl.h"
+#include "avr_evsys.h"
 #include "avr_portmux.h"
 #include "avr_vref.h"
 #include "avr_wdt.h"
@@ -116,6 +116,8 @@ struct mcu_t {
 	avr_adc_modern_t	adc0;
 	avr_spi_modern_t	spi0;
 	avr_ac_t			ac0;
+	avr_ccl_t			ccl;
+	avr_evsys_t			evsys;
 	avr_portmux_t		portmux;
 	avr_vref_t			vref;
 	avr_wdt_modern_t	wdt;
@@ -135,6 +137,95 @@ megax08_vref_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
 	avr_adc_modern_set_intref(&mcu->adc0, value);
 }
 
+static void
+megax08_ac0_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0x20 /* AC0 OUT */, value & 1);
+}
+
+static void
+megax08_evsys_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	if (value & 1)
+		avr_adc_modern_event_start(&mcu->adc0);
+}
+
+static void
+megax08_tcb0_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0xa0, value & 1);
+}
+
+static void
+megax08_tcb1_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0xa2, value & 1);
+}
+
+static void
+megax08_tcb2_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0xa4, value & 1);
+}
+
+#ifdef TCB3_INT_vect_num
+static void
+megax08_tcb3_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0xa6, value & 1);
+}
+#endif
+
+static void
+megax08_evsys_to_tcb0(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('0'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+
+static void
+megax08_evsys_to_tcb1(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('1'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+
+static void
+megax08_evsys_to_tcb2(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('2'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+
+#ifdef TCB3_INT_vect_num
+static void
+megax08_evsys_to_tcb3(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('3'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+#endif
+
 /*
  * A BOD brown-out resets the device through RSTCTRL, recorded in RSTFR.BORF.
  */
@@ -144,6 +235,14 @@ megax08_bod_brownout(struct avr_t * avr, void * param)
 	struct mcu_t * mcu = (struct mcu_t *)param;
 	(void)avr;
 	avr_rstctrl_request_reset(&mcu->rstctrl, AVR_RSTCTRL_BORF);
+}
+
+static void
+megax08_wdt_reset(struct avr_t * avr, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)avr;
+	avr_rstctrl_request_reset(&mcu->rstctrl, AVR_RSTCTRL_WDRF);
 }
 
 static void
@@ -209,6 +308,49 @@ megax08_init(struct avr_t * avr)
 	/* AC0 (analog comparator) at 0x0680. */
 	avr_ac_init(avr, &mcu->ac0, 0x0680, AC0_AC_vect_num, '0');
 
+	/* CCL at 0x01C0: 4 LUTs on megaAVR-0. */
+	avr_ccl_init_mega(avr, &mcu->ccl, 0x01c0, 4, '0');
+
+	/* EVSYS routing fabric at 0x0180 (megaAVR-0 register layout). */
+	avr_evsys_init_mega(avr, &mcu->evsys, 0x0180, '0');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_OUT),
+			megax08_ac0_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 8 /* USERADC0 */),
+			megax08_evsys_to_adc, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('0'), AVR_TCB_IRQ_CAPT_OUT),
+			megax08_tcb0_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('1'), AVR_TCB_IRQ_CAPT_OUT),
+			megax08_tcb1_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('2'), AVR_TCB_IRQ_CAPT_OUT),
+			megax08_tcb2_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 0 /* USERTCB0 */),
+			megax08_evsys_to_tcb0, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 1 /* USERTCB1 */),
+			megax08_evsys_to_tcb1, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 2 /* USERTCB2 */),
+			megax08_evsys_to_tcb2, mcu);
+#ifdef TCB3_INT_vect_num
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('3'), AVR_TCB_IRQ_CAPT_OUT),
+			megax08_tcb3_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 3 /* USERTCB3 */),
+			megax08_evsys_to_tcb3, mcu);
+#endif
+
 	/* PORTMUX (peripheral pin routing) config store at 0x05E0. */
 	avr_portmux_init(avr, &mcu->portmux, 0x05e0, '0');
 
@@ -220,10 +362,11 @@ megax08_init(struct avr_t * avr)
 
 	/* WDT at 0x0100. */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
+	avr_wdt_modern_set_reset_handler(&mcu->wdt, megax08_wdt_reset, mcu);
 
 	/* CRCSCAN at 0x0120; APPEND/BOOTEND fuses (indices 7/8) bound the sections,
 	 * CRC failure raises the NMI. */
-	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, FLASHEND + 1, 7, 8,
+	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, FLASHEND + 1, 5, 7, 8,
 					 CRCSCAN_NMI_vect_num, '0');
 
 	/* SLPCTRL / RSTCTRL. */

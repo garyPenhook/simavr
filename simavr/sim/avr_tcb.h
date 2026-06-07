@@ -4,10 +4,17 @@
 	"Modern" AVR (AVRxt) 16-bit Timer/Counter type B (TCB), as found on the
 	tinyAVR 1-series (ATtiny3217), megaAVR-0 and AVR Dx families.
 
-	This models the common "tick" use of a TCB: the Periodic Interrupt mode,
-	where the counter runs from the peripheral clock (optionally /2) and raises
-	the CAPT interrupt every (CCMP+1) ticks. The counter is driven by a simavr
-	cycle timer; CNT reads return a computed live value.
+	This models the common TCB operating modes used on modern AVRs:
+	  - Periodic Interrupt
+	  - Time-Out Check
+	  - Input Capture on Event
+	  - Input Capture Frequency Measurement
+	  - Input Capture Pulse-Width Measurement
+	  - Input Capture Frequency and Pulse-Width Measurement
+
+	The counter is driven from CLK_PER (optionally /2) using simavr cycle timers;
+	CNT reads return a computed live value. Event-driven modes consume an event
+	input IRQ and publish a capture-event IRQ that can be routed into EVSYS.
 
 	Copyright 2026 simavr authors
 
@@ -57,16 +64,31 @@ typedef struct avr_tcb_t {
 	char		name;		// '0', '1', …
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_ctrla, r_ctrlb, r_intctrl, r_intflags, r_status;
+	avr_io_addr_t	r_ctrla, r_ctrlb, r_evctrl, r_intctrl, r_intflags, r_status;
 	avr_io_addr_t	r_cnt, r_ccmp;	// 16-bit (low byte address)
 
 	avr_int_vector_t	vect;	// TCBn_INT (CAPT)
 
 	/* Running-counter bookkeeping (for computed CNT and rescheduling). */
-	avr_cycle_count_t	start_cycle;	// cycle at which the current period began
+	avr_cycle_count_t	start_cycle;	// cycle at which counting last resumed
 	uint32_t		prescale;	// CPU cycles per timer tick (1 or 2)
 	uint32_t		top;		// CCMP captured when the timer started
+	uint16_t		start_count;	// CNT value at start_cycle
+	uint16_t		freeze_count;	// stationary CNT when not running
+
+	uint8_t			event_level;
+	uint8_t			pw_armed;
+	uint8_t			frqpw_stage;
+	int			base_irq;
 } avr_tcb_t;
+
+enum {
+	AVR_TCB_IRQ_EVENT_IN = 0,
+	AVR_TCB_IRQ_CAPT_OUT,
+	AVR_TCB_IRQ_COUNT,
+};
+
+#define AVR_IOCTL_TCB_GETIRQ(_name) AVR_IOCTL_DEF('t','c','b',(_name))
 
 /*
  * Initialise a TCB block at data address 'base'. 'vector' is the TCBn_INT

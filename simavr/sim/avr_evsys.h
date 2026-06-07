@@ -50,8 +50,8 @@ extern "C" {
 
 #include "sim_avr.h"
 
-#define AVR_EVSYS_CHANNELS	6	/* SYNCCH0/1 + ASYNCCH0..3 */
-#define AVR_EVSYS_USERS		15	/* ASYNCUSER0..12 + SYNCUSER0..1 */
+#define AVR_EVSYS_MAX_CHANNELS	8
+#define AVR_EVSYS_MAX_USERS		24
 
 /* Register offsets within an EVSYS block (device header EVSYS_t). */
 enum {
@@ -64,14 +64,13 @@ enum {
 };
 
 /*
- * IRQs: CHn (index 0..5) drive a channel's level; USERn (index 6 + user)
- * report the value a user receives. User index 0..12 = ASYNCUSER0..12,
- * 13..14 = SYNCUSER0..1.
+ * IRQs: CHn (index 0..nchannels-1) drive a channel's level; USERn
+ * (index AVR_EVSYS_IRQ_USER0 + user) report the value a user receives.
  */
 enum {
 	AVR_EVSYS_IRQ_CH0 = 0,
-	AVR_EVSYS_IRQ_USER0 = AVR_EVSYS_CHANNELS,
-	AVR_EVSYS_IRQ_COUNT = AVR_EVSYS_CHANNELS + AVR_EVSYS_USERS,
+	AVR_EVSYS_IRQ_USER0 = AVR_EVSYS_MAX_CHANNELS,
+	AVR_EVSYS_IRQ_COUNT = AVR_EVSYS_MAX_CHANNELS + AVR_EVSYS_MAX_USERS,
 };
 
 typedef struct avr_evsys_t {
@@ -79,11 +78,15 @@ typedef struct avr_evsys_t {
 	char		name;
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_asyncstrobe, r_syncstrobe;
-	avr_io_addr_t	r_user[AVR_EVSYS_USERS];
-
-	avr_io_addr_t	r_asyncch[4];	/* ASYNCCH0..3 generator-select registers */
-	uint8_t		chan[AVR_EVSYS_CHANNELS];	/* current channel levels */
+	avr_io_addr_t	r_strobe[2];
+	uint8_t		strobe_first_channel[2];
+	uint8_t		strobe_width[2];
+	uint8_t		nstrobe;
+	avr_io_addr_t	r_user[AVR_EVSYS_MAX_USERS];
+	avr_io_addr_t	r_chan[AVR_EVSYS_MAX_CHANNELS];
+	uint8_t		nchannels;
+	uint8_t		nusers;
+	uint8_t		chan[AVR_EVSYS_MAX_CHANNELS];	/* current channel levels */
 	int			base_irq;
 } avr_evsys_t;
 
@@ -109,10 +112,17 @@ avr_evsys_init(
 		avr_io_addr_t base,
 		char name);
 
+void
+avr_evsys_init_mega(
+		avr_t * avr,
+		avr_evsys_t * p,
+		avr_io_addr_t base,
+		char name);
+
 /*
- * A generator fired: drive 'level' onto every async channel (ASYNCCH0..3) whose
- * generator-select register holds 'gen_value' (the device's ASYNCCHn source
- * encoding, e.g. AC0_OUT = 0x03), propagating to that channel's users.
+ * A generator fired: drive 'level' onto every configured channel whose
+ * generator-select register holds 'gen_value', propagating to that channel's
+ * users.
  */
 void
 avr_evsys_async_generator(avr_evsys_t * p, uint8_t gen_value, uint8_t level);

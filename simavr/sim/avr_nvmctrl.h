@@ -65,6 +65,7 @@ typedef struct avr_nvmctrl_t {
 
 	avr_io_addr_t	base;
 	avr_io_addr_t	r_ctrla, r_status, r_intctrl, r_intflags;
+	avr_io_addr_t	r_datal, r_addrl, r_addrh;
 
 	avr_io_addr_t	ee_start;	// data address of mapped EEPROM byte 0
 	uint16_t	ee_size;	// EEPROM size in bytes

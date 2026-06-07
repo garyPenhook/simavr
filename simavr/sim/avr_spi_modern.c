@@ -6,12 +6,14 @@
 
 	Wire model (identical to the classic avr_spi.c, synchronous): in host mode,
 	writing DATA schedules a transfer of (prescaler * 8) CPU cycles; on
-	completion the byte is emitted on SPI_IRQ_OUTPUT (MOSI) and the interrupt
-	flag IF is set (SPIn_INT raised if INTCTRL.IE). A connected part responds by
-	raising SPI_IRQ_INPUT, whose value is latched into DATA as the received byte
-	(also setting IF). In client mode a byte arriving on SPI_IRQ_INPUT is latched
-	and the current DATA echoed back on SPI_IRQ_OUTPUT. IF is cleared by reading
-	DATA. Writing DATA mid-transfer sets WRCOL and is ignored.
+	completion the byte is emitted on SPI_IRQ_OUTPUT (MOSI). A connected part
+	responds by raising SPI_IRQ_INPUT, whose value is latched as the received
+	byte. In client mode a byte arriving on SPI_IRQ_INPUT is latched and the
+	current transmit byte is echoed back on SPI_IRQ_OUTPUT.
+
+	Normal mode behaves like the classic SPI IF/WRCOL model. Buffered mode
+	implements a one-byte TX queue and a two-byte RX FIFO, plus RXCIF/TXCIF/DREIF
+	and BUFOVF state with the corresponding INTCTRL gating.
 
 	Copyright 2026 simavr authors
 
@@ -43,11 +45,24 @@
 #define CLK2X_bm	0x10
 #define MASTER_bm	0x20
 
+/* CTRLB */
+#define BUFWR_bm	0x40
+#define BUFEN_bm	0x80
+
 /* INTCTRL */
 #define IE_bm		0x01
+#define SSIE_bm		0x10
+#define DREIE_bm	0x20
+#define TXCIE_bm	0x40
+#define RXCIE_bm	0x80
 
 /* INTFLAGS (normal mode) */
+#define BUFOVF_bm	0x01
+#define SSIF_bm		0x10
+#define DREIF_bm	0x20
+#define TXCIF_bm	0x40
 #define WRCOL_bm	0x40
+#define RXCIF_bm	0x80
 #define IF_bm		0x80
 
 static inline uint8_t rd(avr_t *avr, avr_io_addr_t a) { return avr->data[a]; }
@@ -68,6 +83,10 @@ static int spi_master(avr_spi_modern_t *p)
 {
 	return (rd(p->io.avr, p->r_ctrla) & MASTER_bm) != 0;
 }
+static int spi_buffered(avr_spi_modern_t *p)
+{
+	return (rd(p->io.avr, p->r_ctrlb) & BUFEN_bm) != 0;
+}
 
 /* Transfer duration in CPU cycles: (prescaler / CLK2X) * 8 bits. */
 static uint32_t spi_xfer_cycles(avr_spi_modern_t *p)
@@ -80,12 +99,82 @@ static uint32_t spi_xfer_cycles(avr_spi_modern_t *p)
 	return d * 8;
 }
 
-/* Set IF and raise SPIn_INT (gated by INTCTRL.IE via the vector's enable). */
-static void spi_flag_if(avr_spi_modern_t *p)
+static avr_cycle_count_t
+avr_spi_modern_xfer(struct avr_t *avr, avr_cycle_count_t when, void *param);
+
+static void spi_update_interrupt(avr_spi_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
-	set_bits(avr, p->r_intflags, IF_bm);
-	avr_raise_interrupt(avr, &p->vect);
+	uint8_t intctrl = rd(avr, p->r_intctrl);
+	uint8_t flags = rd(avr, p->r_intflags);
+	int active;
+
+	if (spi_buffered(p))
+		active = !!(flags & intctrl & (SSIE_bm | DREIE_bm | TXCIE_bm | RXCIE_bm));
+	else
+		active = !!((flags & IF_bm) && (intctrl & IE_bm));
+
+	if (active) {
+		if (!p->vect.pending)
+			avr_raise_interrupt(avr, &p->vect);
+	} else if (p->vect.pending)
+		avr_clear_interrupt(avr, &p->vect);
+}
+
+static void spi_push_rx(avr_spi_modern_t *p, uint8_t v)
+{
+	avr_t *avr = p->io.avr;
+	if (p->rx_count >= 2) {
+		set_bits(avr, p->r_intflags, BUFOVF_bm);
+		return;
+	}
+	p->rx_fifo[(p->rx_head + p->rx_count) & 1] = v;
+	p->rx_count++;
+	if (p->rx_count == 1)
+		avr_core_watch_write(avr, p->r_data, v);
+	set_bits(avr, p->r_intflags, RXCIF_bm);
+}
+
+static void spi_pop_rx_to_data(avr_spi_modern_t *p)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t next = 0;
+	if (p->rx_count) {
+		p->rx_head = (p->rx_head + 1) & 1;
+		p->rx_count--;
+		if (p->rx_count)
+			next = p->rx_fifo[p->rx_head];
+	}
+	avr_core_watch_write(avr, p->r_data, next);
+	if (p->rx_count)
+		set_bits(avr, p->r_intflags, RXCIF_bm);
+	else
+		clr_bits(avr, p->r_intflags, RXCIF_bm);
+	clr_bits(avr, p->r_intflags, BUFOVF_bm);
+}
+
+static void spi_start_host_transfer(avr_spi_modern_t *p, uint8_t byte)
+{
+	avr_t *avr = p->io.avr;
+	p->busy = 1;
+	p->tx_shift = byte;
+	p->tx_shift_valid = 1;
+	p->last_in = 0xff;
+	avr_cycle_timer_register(avr, spi_xfer_cycles(p), avr_spi_modern_xfer, p);
+}
+
+static void spi_update_buffered_flags(avr_spi_modern_t *p, int xfer_complete)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t flags = rd(avr, p->r_intflags) & ~(DREIF_bm | TXCIF_bm);
+
+	if (!p->tx_buf_valid)
+		flags |= DREIF_bm;
+	if (xfer_complete && !p->busy && !p->tx_buf_valid && !p->tx_shift_valid)
+		flags |= TXCIF_bm;
+
+	avr_core_watch_write(avr, p->r_intflags, flags);
+	spi_update_interrupt(p);
 }
 
 /* Host transfer completes: emit MOSI and flag the result. */
@@ -93,16 +182,31 @@ static avr_cycle_count_t
 avr_spi_modern_xfer(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
 	avr_spi_modern_t *p = (avr_spi_modern_t *)param;
+	uint8_t out = p->tx_shift_valid ? p->tx_shift : rd(avr, p->r_data);
 
 	p->busy = 0;
 	if (!spi_enabled(p) || !spi_master(p))
 		return 0;
 
-	/* Emit the byte first; a connected client may synchronously answer on INPUT,
-	 * latching its MISO reply into DATA. Then flag completion exactly once (the
-	 * master-side INPUT handler intentionally does not raise IF itself). */
-	avr_raise_irq(p->io.irq + SPI_IRQ_OUTPUT, rd(avr, p->r_data));
-	spi_flag_if(p);
+	avr_raise_irq(p->io.irq + SPI_IRQ_OUTPUT, out);
+
+	if (spi_buffered(p)) {
+		spi_push_rx(p, p->last_in);
+		if (p->tx_buf_valid) {
+			uint8_t next = p->tx_buf;
+			p->tx_buf_valid = 0;
+			spi_update_buffered_flags(p, 0);
+			spi_start_host_transfer(p, next);
+			return 0;
+		}
+		p->tx_shift_valid = 0;
+		spi_update_buffered_flags(p, 1);
+		return 0;
+	}
+
+	avr_core_watch_write(avr, p->r_data, p->last_in);
+	set_bits(avr, p->r_intflags, IF_bm);
+	spi_update_interrupt(p);
 	return 0;
 }
 
@@ -116,32 +220,91 @@ avr_spi_modern_data_write(struct avr_t *avr, avr_io_addr_t addr,
 		avr_core_watch_write(avr, addr, v);
 		return;
 	}
+
+	if (spi_buffered(p)) {
+		clr_bits(avr, p->r_intflags, TXCIF_bm);
+		if (!p->busy && !p->tx_shift_valid) {
+			spi_update_buffered_flags(p, 0);
+			if (spi_master(p))
+				spi_start_host_transfer(p, v);
+			else {
+				p->tx_shift = v;
+				p->tx_shift_valid = 1;
+			}
+			return;
+		}
+		if (!p->tx_buf_valid) {
+			p->tx_buf = v;
+			p->tx_buf_valid = 1;
+			spi_update_buffered_flags(p, 0);
+		}
+		return;
+	}
+
 	/* Writing DATA while a transfer is in flight is a write collision. */
 	if (p->busy) {
 		set_bits(avr, p->r_intflags, WRCOL_bm);
+		spi_update_interrupt(p);
 		return;
 	}
 	avr_core_watch_write(avr, addr, v);
 
-	if (spi_master(p)) {
-		p->busy = 1;
-		avr_cycle_timer_register(avr, spi_xfer_cycles(p),
-								 avr_spi_modern_xfer, p);
-	}
-	/* In client mode the byte just sits in DATA until the host clocks it. */
+	if (spi_master(p))
+		spi_start_host_transfer(p, v);
 }
 
 static uint8_t
 avr_spi_modern_data_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 {
 	avr_spi_modern_t *p = (avr_spi_modern_t *)param;
-	uint8_t v = avr->data[addr];
-	/* Reading DATA clears IF (normal-mode "read INTFLAGS then access DATA"). */
+	uint8_t v;
+
+	if (spi_buffered(p)) {
+		v = rd(avr, addr);
+		if (p->rx_count)
+			spi_pop_rx_to_data(p);
+		else {
+			clr_bits(avr, p->r_intflags, RXCIF_bm | BUFOVF_bm);
+			spi_update_interrupt(p);
+		}
+		return v;
+	}
+
+	v = avr->data[addr];
 	if (rd(avr, p->r_intflags) & IF_bm) {
 		clr_bits(avr, p->r_intflags, IF_bm);
-		avr_clear_interrupt(avr, &p->vect);
 	}
 	return v;
+}
+
+static void
+avr_spi_modern_intctrl_write(struct avr_t *avr, avr_io_addr_t addr,
+							 uint8_t v, void *param)
+{
+	avr_spi_modern_t *p = (avr_spi_modern_t *)param;
+	avr_core_watch_write(avr, addr, v);
+	spi_update_interrupt(p);
+}
+
+static void
+avr_spi_modern_ctrlb_write(struct avr_t *avr, avr_io_addr_t addr,
+						   uint8_t v, void *param)
+{
+	avr_spi_modern_t *p = (avr_spi_modern_t *)param;
+	uint8_t old = rd(avr, addr);
+
+	avr_core_watch_write(avr, addr, v);
+	if (!!(old & BUFEN_bm) != !!(v & BUFEN_bm)) {
+		p->tx_shift_valid = 0;
+		p->tx_buf_valid = 0;
+		p->rx_head = 0;
+		p->rx_count = 0;
+		avr_core_watch_write(avr, p->r_intflags, 0);
+		if (v & BUFEN_bm)
+			spi_update_buffered_flags(p, 0);
+		else
+			spi_update_interrupt(p);
+	}
 }
 
 static void
@@ -149,12 +312,11 @@ avr_spi_modern_intflags_write(struct avr_t *avr, avr_io_addr_t addr,
 							  uint8_t v, void *param)
 {
 	avr_spi_modern_t *p = (avr_spi_modern_t *)param;
-	/* Buffered-mode flags are W1C; WRCOL is cleared this way too. IF follows
-	 * the read-DATA path but accept a W1C here as well for robustness. */
 	uint8_t res = avr->data[addr] & ~v;
 	avr_core_watch_write(avr, addr, res);
-	if (!(res & IF_bm))
-		avr_clear_interrupt(avr, &p->vect);
+	if (spi_buffered(p) && (v & BUFOVF_bm))
+		clr_bits(avr, p->r_intflags, BUFOVF_bm);
+	spi_update_interrupt(p);
 }
 
 /* A byte arriving from the bus (client receive, or host's MISO reply). */
@@ -168,15 +330,29 @@ avr_spi_modern_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 		return;
 
 	if (spi_master(p)) {
-		/* MISO reply to the byte we clocked out: latch it as received. IF is
-		 * raised once by avr_spi_modern_xfer() after this returns, so do not
-		 * flag it here (avoids a double interrupt per transfer). */
-		avr_core_watch_write(avr, p->r_data, value & 0xff);
+		p->last_in = value & 0xff;
 	} else {
-		/* Client: latch the received byte and echo the current DATA back. */
-		uint8_t out = rd(avr, p->r_data);
-		avr_core_watch_write(avr, p->r_data, value & 0xff);
-		spi_flag_if(p);
+		uint8_t out = p->tx_shift_valid ? p->tx_shift : rd(avr, p->r_data);
+		if (spi_buffered(p)) {
+			spi_push_rx(p, value & 0xff);
+			if (p->tx_buf_valid) {
+				p->tx_shift = p->tx_buf;
+				p->tx_shift_valid = 1;
+				p->tx_buf_valid = 0;
+				spi_update_buffered_flags(p, 0);
+			} else {
+				p->tx_shift_valid = 0;
+				spi_update_buffered_flags(p, 1);
+			}
+			if (!p->rx_count)
+				avr_core_watch_write(avr, p->r_data, value & 0xff);
+			else if (p->rx_count == 1)
+				avr_core_watch_write(avr, p->r_data, p->rx_fifo[p->rx_head]);
+		} else {
+			avr_core_watch_write(avr, p->r_data, value & 0xff);
+			set_bits(avr, p->r_intflags, IF_bm);
+			spi_update_interrupt(p);
+		}
 		avr_raise_irq(p->io.irq + SPI_IRQ_OUTPUT, out);
 	}
 }
@@ -187,6 +363,11 @@ avr_spi_modern_reset(avr_io_t *io)
 	avr_spi_modern_t *p = (avr_spi_modern_t *)io;
 	avr_cycle_timer_cancel(p->io.avr, avr_spi_modern_xfer, p);
 	p->busy = 0;
+	p->tx_shift_valid = 0;
+	p->tx_buf_valid = 0;
+	p->rx_head = 0;
+	p->rx_count = 0;
+	p->last_in = 0xff;
 }
 
 static const char *irq_names[SPI_IRQ_COUNT] = {
@@ -218,14 +399,13 @@ avr_spi_modern_init(
 	p->r_intflags = base + SPIMR_INTFLAGS;
 	p->r_data = base + SPIMR_DATA;
 
-	/* Normal mode: IF (INTFLAGS bit7) enabled by INTCTRL.IE (bit0). */
+	/* One vector number; normal mode uses IE/IF, buffered mode uses the
+	 * contiguous high nibble enables / flags (SSIF..RXCIF). */
 	p->vect.vector = vector;
 	p->vect.enable.reg = p->r_intctrl;
-	p->vect.enable.bit = 0;		/* IE */
-	p->vect.enable.mask = 1;
-	p->vect.raised.reg = p->r_intflags;
-	p->vect.raised.bit = 7;		/* IF */
-	p->vect.raised.mask = 1;
+	p->vect.enable.bit = 0;
+	p->vect.enable.mask = 0xff;
+	p->vect.raised.reg = 0;
 	p->vect.raise_sticky = 1;
 
 	avr_register_io(avr, &p->io);
@@ -235,6 +415,8 @@ avr_spi_modern_init(
 	avr_irq_register_notify(p->io.irq + SPI_IRQ_INPUT,
 							avr_spi_modern_irq_input, p);
 
+	avr_register_io_write(avr, p->r_ctrlb, avr_spi_modern_ctrlb_write, p);
+	avr_register_io_write(avr, p->r_intctrl, avr_spi_modern_intctrl_write, p);
 	avr_register_io_write(avr, p->r_data, avr_spi_modern_data_write, p);
 	avr_register_io_read(avr, p->r_data, avr_spi_modern_data_read, p);
 	avr_register_io_write(avr, p->r_intflags, avr_spi_modern_intflags_write, p);

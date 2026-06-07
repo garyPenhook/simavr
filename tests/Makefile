@@ -26,17 +26,20 @@ IPATH 		+= ${simavr}/include
 IPATH 		+= ${simavr}/simavr/sim
 
 tests_src	:= ${wildcard test_*.c}
-
-# The ATtiny3217 modern-AVR blink demo (attiny3217_blink.c + its host harness)
-# needs a modern avr-gcc with ATtiny3217 support, which stock packaged/CI
-# toolchains lack. Keep it out of the default build & run so everything else
-# still passes; build and run it explicitly with:  make attiny3217-demo
-sources		:= $(filter-out attiny3217_%,$(sources))
 tests_src	:= $(filter-out test_attiny3217_%,$(tests_src))
 
 all: obj axf hex tst
 
 include ../Makefile.common
+
+HAVE_ATTINY3217_AVR_GCC := $(shell ${AVR}gcc -mmcu=attiny3217 -E - < /dev/null >/dev/null 2>&1 && echo 1 || echo 0)
+
+# The firmware-backed ATtiny3217 tests can run when avr-gcc supports
+# -mmcu=attiny3217. Keep them enabled automatically on capable toolchains,
+# but still build on older environments by filtering them out there.
+ifeq ($(HAVE_ATTINY3217_AVR_GCC),0)
+sources		:= $(filter-out attiny3217_%,$(sources))
+endif
 
 tst: ${patsubst %.c, ${OBJ}/%.tst, ${tests_src}}
 
@@ -61,6 +64,15 @@ run_tests: all
 			num_failed=$$(($$num_failed+1)) ;\
 	    fi ;\
 	done ;\
+	if [ "$(HAVE_ATTINY3217_AVR_GCC)" = "1" ]; then \
+	    for target in attiny3217-demo attiny3217-selftest; do \
+	        num_run=$$(($$num_run+1)) ;\
+	        if ! $(MAKE) $$target >/dev/null; then \
+				echo "$$target returned with exit value $$?." ;\
+				num_failed=$$(($$num_failed+1)) ;\
+	        fi ;\
+	    done ;\
+	fi ;\
 	echo "Tests run: $$num_run  Successes: $$(($$num_run-$$num_failed))  Failures: $$num_failed" ;\
 	exit $$num_failed
 

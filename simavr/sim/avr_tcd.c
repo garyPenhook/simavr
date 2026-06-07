@@ -1,14 +1,19 @@
 /*
 	avr_tcd.c
 
-	"Modern" AVR (AVRxt) 12-bit Timer/Counter type D — periodic overflow.
+	"Modern" AVR (AVRxt) 12-bit Timer/Counter type D.
 	See avr_tcd.h.
 
-	A simavr cycle timer is scheduled (CMPBCLR+1)*prescale CPU cycles ahead; on
-	each expiry the OVF flag is set (TCD0_OVF raised if enabled) and it reschedules
-	— a clean periodic source. STATUS reads ENRDY|CMDRDY so the double-buffered
-	enable/sync polling protocol passes. The TCD clock source is approximated as
-	CLK_PER, then divided by SYNCPRES and CNTPRES.
+	A simavr cycle timer steps between compare boundaries and ramp ends. The
+	model covers the four waveform-generation modes:
+	- One Ramp
+	- Two Ramp
+	- Four Ramp
+	- Dual Slope
+
+	STATUS reads ENRDY|CMDRDY so the double-buffered enable/sync polling protocol
+	passes. The TCD clock source is approximated as CLK_PER, then divided by
+	SYNCPRES and CNTPRES.
 
 	Copyright 2026 simavr authors
 
@@ -43,6 +48,9 @@
 /* CTRLB */
 #define WGMODE_gm	0x03
 #define WGMODE_ONERAMP	0
+#define WGMODE_TWORAMP	1
+#define WGMODE_FOURRAMP	2
+#define WGMODE_DUALSLOPE 3
 
 /* FAULTCTRL */
 #define CMPAEN_bm	0x10
@@ -73,60 +81,146 @@ static uint32_t tcd_top(avr_tcd_t *p)
 	return reg12(p, p->r_cmpbclr);
 }
 
-/* One Ramp mode with at least one output enabled in FAULTCTRL. */
-static int tcd_oneramp(avr_tcd_t *p)
+static uint8_t tcd_mode(avr_tcd_t *p)
 {
-	avr_t *avr = p->io.avr;
-	return (rd(avr, p->r_ctrlb) & WGMODE_gm) == WGMODE_ONERAMP &&
-		   (rd(avr, p->r_faultctrl) & (CMPAEN_bm | CMPBEN_bm));
+	return rd(p->io.avr, p->r_ctrlb) & WGMODE_gm;
 }
 
-/* Publish the One Ramp waveform-output levels for the given count, raising the
- * WOA/WOB IRQ on a change. Only the FAULTCTRL-enabled outputs are driven. */
-static void tcd_emit(avr_tcd_t *p, uint32_t count)
+static void tcd_publish(avr_tcd_t *p, uint8_t mask, uint8_t *cur, uint8_t next)
 {
-	avr_t *avr = p->io.avr;
-	uint8_t fc = rd(avr, p->r_faultctrl);
-
-	if (fc & CMPAEN_bm) {
-		uint32_t set = reg12(p, p->r_cmpaset), clr = reg12(p, p->r_cmpaclr);
-		uint8_t woa = (count >= set && count < clr);
-		if (woa != p->woa) {
-			p->woa = woa;
-			avr_raise_irq(p->io.irq + AVR_TCD_IRQ_WOA, woa);
-		}
-	}
-	if (fc & CMPBEN_bm) {
-		uint32_t set = reg12(p, p->r_cmpbset), clr = reg12(p, p->r_cmpbclr);
-		uint8_t wob = (count >= set && count < clr);
-		if (wob != p->wob) {
-			p->wob = wob;
-			avr_raise_irq(p->io.irq + AVR_TCD_IRQ_WOB, wob);
-		}
+	if (!(rd(p->io.avr, p->r_faultctrl) & mask))
+		return;
+	if (*cur != next) {
+		*cur = next;
+		avr_raise_irq(p->io.irq + (mask == CMPAEN_bm ? AVR_TCD_IRQ_WOA : AVR_TCD_IRQ_WOB), next);
 	}
 }
 
-/* The next count (> count) at which something happens: an output toggles, or the
- * cycle wraps. The terminal boundary is top+1 (the TCD cycle is top+1 counts);
- * CMPACLR/CMPBCLR(=top) are where the outputs clear. */
-static uint32_t tcd_next_boundary(avr_tcd_t *p, uint32_t count, uint32_t top)
+/* Publish the waveform-output levels for the current up-ramp state. */
+static void tcd_emit_state(avr_tcd_t *p, int32_t count)
 {
-	uint32_t next = top + 1;	/* wrap / OVF */
-	if (tcd_oneramp(p)) {
-		uint8_t fc = rd(p->io.avr, p->r_faultctrl);
-		uint32_t b[4]; int n = 0;
-		if (fc & CMPAEN_bm) {
-			b[n++] = reg12(p, p->r_cmpaset);
-			b[n++] = reg12(p, p->r_cmpaclr);
-		}
-		if (fc & CMPBEN_bm) {
-			b[n++] = reg12(p, p->r_cmpbset);
-			b[n++] = reg12(p, p->r_cmpbclr);	/* = top: WOB clears here */
-		}
-		for (int i = 0; i < n; i++)
-			if (b[i] > count && b[i] < next)
-				next = b[i];
+	uint8_t mode = tcd_mode(p);
+	uint8_t woa = 0, wob = 0;
+
+	switch (mode) {
+	case WGMODE_ONERAMP: {
+		uint32_t aset = reg12(p, p->r_cmpaset), aclr = reg12(p, p->r_cmpaclr);
+		uint32_t bset = reg12(p, p->r_cmpbset), bclr = reg12(p, p->r_cmpbclr);
+		woa = (count >= (int32_t)aset && count < (int32_t)aclr);
+		wob = (count >= (int32_t)bset && count < (int32_t)bclr);
+		break;
 	}
+	case WGMODE_TWORAMP:
+		if (p->phase == 0) {
+			uint32_t aset = reg12(p, p->r_cmpaset), aclr = reg12(p, p->r_cmpaclr);
+			woa = (count >= (int32_t)aset && count < (int32_t)aclr);
+		} else {
+			uint32_t bset = reg12(p, p->r_cmpbset), bclr = reg12(p, p->r_cmpbclr);
+			wob = (count >= (int32_t)bset && count < (int32_t)bclr);
+		}
+		break;
+	case WGMODE_FOURRAMP:
+		if (p->phase == 1)
+			woa = 1;
+		else if (p->phase == 3)
+			wob = 1;
+		break;
+	default:
+		break;
+	}
+
+	tcd_publish(p, CMPAEN_bm, &p->woa, woa);
+	tcd_publish(p, CMPBEN_bm, &p->wob, wob);
+}
+
+static void tcd_dualslope_action(avr_tcd_t *p, int32_t count)
+{
+	uint32_t aset = reg12(p, p->r_cmpaset);
+	uint32_t bset = reg12(p, p->r_cmpbset);
+
+	if (p->dir < 0) {
+		if ((uint32_t)count == bset)
+			tcd_publish(p, CMPBEN_bm, &p->wob, 1);
+		if ((uint32_t)count == aset)
+			tcd_publish(p, CMPAEN_bm, &p->woa, 0);
+	} else {
+		if ((uint32_t)count == aset)
+			tcd_publish(p, CMPAEN_bm, &p->woa, 1);
+		if ((uint32_t)count == bset)
+			tcd_publish(p, CMPBEN_bm, &p->wob, 0);
+	}
+}
+
+static uint32_t tcd_phase_limit(avr_tcd_t *p)
+{
+	switch (tcd_mode(p)) {
+	case WGMODE_ONERAMP:
+	case WGMODE_DUALSLOPE:
+		return tcd_top(p);
+	case WGMODE_TWORAMP:
+		return p->phase == 0 ? reg12(p, p->r_cmpaclr) : reg12(p, p->r_cmpbclr);
+	case WGMODE_FOURRAMP:
+		switch (p->phase) {
+		case 0: return reg12(p, p->r_cmpaset);
+		case 1: return reg12(p, p->r_cmpaclr);
+		case 2: return reg12(p, p->r_cmpbset);
+		default: return reg12(p, p->r_cmpbclr);
+		}
+	default:
+		return tcd_top(p);
+	}
+}
+
+static uint32_t tcd_next_delta(avr_tcd_t *p, int32_t count)
+{
+	uint32_t next = tcd_phase_limit(p) + 1u - (uint32_t)count;
+	uint8_t mode = tcd_mode(p);
+
+	if (mode == WGMODE_DUALSLOPE) {
+		uint32_t top = tcd_top(p);
+		if (p->dir < 0) {
+			uint32_t aset = reg12(p, p->r_cmpaset);
+			uint32_t bset = reg12(p, p->r_cmpbset);
+			next = (uint32_t)count + 1u;
+			if ((uint32_t)count > aset && (uint32_t)(count - (int32_t)aset) < next)
+				next = (uint32_t)(count - (int32_t)aset);
+			if ((uint32_t)count > bset && (uint32_t)(count - (int32_t)bset) < next)
+				next = (uint32_t)(count - (int32_t)bset);
+			return next;
+		}
+
+		next = top + 1u - (uint32_t)count;
+		{
+			uint32_t aset = reg12(p, p->r_cmpaset);
+			uint32_t bset = reg12(p, p->r_cmpbset);
+			if ((uint32_t)count < aset && aset - (uint32_t)count < next)
+				next = aset - (uint32_t)count;
+			if ((uint32_t)count < bset && bset - (uint32_t)count < next)
+				next = bset - (uint32_t)count;
+		}
+		return next;
+	}
+
+	if (mode == WGMODE_ONERAMP) {
+		uint32_t b[4] = {
+			reg12(p, p->r_cmpaset),
+			reg12(p, p->r_cmpaclr),
+			reg12(p, p->r_cmpbset),
+			reg12(p, p->r_cmpbclr),
+		};
+		for (int i = 0; i < 4; i++)
+			if ((uint32_t)count < b[i] && b[i] - (uint32_t)count < next)
+				next = b[i] - (uint32_t)count;
+		return next;
+	}
+
+	if (mode == WGMODE_TWORAMP) {
+		uint32_t cmp = p->phase == 0 ? reg12(p, p->r_cmpaset) : reg12(p, p->r_cmpbset);
+		if ((uint32_t)count < cmp && cmp - (uint32_t)count < next)
+			next = cmp - (uint32_t)count;
+		return next;
+	}
+
 	return next;
 }
 
@@ -144,30 +238,67 @@ static avr_cycle_count_t
 avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
 	avr_tcd_t *p = (avr_tcd_t *)param;
+	uint8_t mode = tcd_mode(p);
+	uint32_t top = tcd_top(p);
+	int32_t count;
 
 	if (!tcd_enabled(p))
 		return 0;
 
-	/* Which count this event lands on (events are scheduled on boundaries). */
-	uint32_t count = p->prescale ?
-			(uint32_t)((when - p->start_cycle) / p->prescale) : p->top + 1;
-	uint32_t next;
+	count = p->prescale ?
+		p->start_count + (int32_t)(((when - p->start_cycle) / p->prescale) * p->dir) :
+		(mode == WGMODE_DUALSLOPE ? -1 : (int32_t)tcd_phase_limit(p) + 1);
 
-	if (count > p->top) {
-		/* End of the TCD cycle: overflow and restart from 0. */
-		avr_raise_interrupt(avr, &p->ovf);	/* sets OVF, raises if enabled */
+	if (mode == WGMODE_DUALSLOPE) {
+		if (p->dir < 0 && count < 0) {
+			p->start_cycle = when;
+			p->start_count = 0;
+			p->dir = 1;
+			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
+		}
+		if (p->dir > 0 && (uint32_t)count > top) {
+			avr_raise_interrupt(avr, &p->ovf);
+			p->start_cycle = when;
+			p->start_count = (int32_t)top;
+			p->dir = -1;
+			p->top = top;
+			p->prescale = tcd_prescale(p);
+			return when + (avr_cycle_count_t)tcd_next_delta(p, p->start_count) * p->prescale;
+		}
+
+		tcd_dualslope_action(p, count);
 		p->start_cycle = when;
-		p->top = tcd_top(p);
-		p->prescale = tcd_prescale(p);
-		tcd_emit(p, 0);
-		next = tcd_next_boundary(p, 0, p->top);
-		return when + (avr_cycle_count_t)next * p->prescale;
+		p->start_count = count;
+		return when + (avr_cycle_count_t)tcd_next_delta(p, count) * p->prescale;
 	}
 
-	/* A mid-ramp compare boundary: update the outputs, schedule the next one. */
-	tcd_emit(p, count);
-	next = tcd_next_boundary(p, count, p->top);
-	return when + (avr_cycle_count_t)(next - count) * p->prescale;
+	if ((uint32_t)count > tcd_phase_limit(p)) {
+		p->start_cycle = when;
+		p->start_count = 0;
+
+		if (mode == WGMODE_TWORAMP && p->phase == 0) {
+			p->phase = 1;
+			tcd_emit_state(p, 0);
+			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
+		}
+		if (mode == WGMODE_FOURRAMP && p->phase < 3) {
+			p->phase++;
+			tcd_emit_state(p, 0);
+			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
+		}
+
+		avr_raise_interrupt(avr, &p->ovf);
+		p->phase = 0;
+		p->top = top;
+		p->prescale = tcd_prescale(p);
+		tcd_emit_state(p, 0);
+		return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
+	}
+
+	tcd_emit_state(p, count);
+	p->start_cycle = when;
+	p->start_count = count;
+	return when + (avr_cycle_count_t)tcd_next_delta(p, count) * p->prescale;
 }
 
 static void
@@ -182,10 +313,23 @@ avr_tcd_reschedule(avr_tcd_t *p)
 	p->start_cycle = avr->cycle;
 	p->top = tcd_top(p);
 	p->prescale = tcd_prescale(p);
-	tcd_emit(p, 0);		/* outputs at count 0 (start of ramp) */
-	uint32_t next = tcd_next_boundary(p, 0, p->top);
+	p->phase = 0;
+	if (tcd_mode(p) == WGMODE_DUALSLOPE) {
+		p->dir = -1;
+		p->start_count = (int32_t)p->top;
+		tcd_publish(p, CMPAEN_bm, &p->woa, 0);
+		tcd_publish(p, CMPBEN_bm, &p->wob, 0);
+		avr_cycle_timer_register(avr,
+			(avr_cycle_count_t)tcd_next_delta(p, p->start_count) * p->prescale,
+			avr_tcd_tick, p);
+		return;
+	}
+
+	p->dir = 1;
+	p->start_count = 0;
+	tcd_emit_state(p, 0);		/* outputs at count 0 (start of ramp) */
 	avr_cycle_timer_register(avr,
-			(avr_cycle_count_t)next * p->prescale, avr_tcd_tick, p);
+			(avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale, avr_tcd_tick, p);
 }
 
 static void
@@ -231,8 +375,11 @@ avr_tcd_reset(avr_io_t *io)
 	avr_tcd_t *p = (avr_tcd_t *)io;
 	avr_cycle_timer_cancel(p->io.avr, avr_tcd_tick, p);
 	p->start_cycle = 0;
+	p->start_count = 0;
 	p->prescale = 1;
 	p->top = 0;
+	p->phase = 0;
+	p->dir = 1;
 	p->woa = p->wob = 0;
 	p->io.avr->data[p->r_status] = ENRDY_bm | CMDRDY_bm;
 }

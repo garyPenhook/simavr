@@ -18,10 +18,11 @@
 	set). The CTRLA.NMIEN lock (once the NMI is armed the peripheral cannot be
 	disabled until reset) and the CTRLA.RESET strobe are modelled.
 
-	Not modelled: the boot-time fuse-driven scan (FUSE.SYSCFG0.CRCSRC) that hangs
-	the CPU on failure before code starts — only the software-enabled scan and its
-	NMI path are modelled. The CRC initial value follows CRC-16/CCITT-FALSE; a
-	toolchain using a different convention can be matched by adjusting it.
+	The software-enabled scan and the boot-time fuse-driven scan
+	(FUSE.SYSCFG0.CRCSRC) are modelled. A startup CRC failure stops the core
+	before code execution begins; the software-enabled path keeps its NMI option.
+	The CRC initial value follows CRC-16/CCITT-FALSE; a toolchain using a
+	different convention can be matched by adjusting it.
 
 	Copyright 2026 simavr authors
 
@@ -65,6 +66,7 @@ typedef struct avr_crcscan_t {
 	avr_io_addr_t	r_ctrla, r_ctrlb, r_status;
 
 	uint32_t	flash_size;	/* bytes of flash to scan over (full-flash end) */
+	uint8_t		syscfg0_idx;	/* FUSE.SYSCFG0 index (CRCSRC boot source) */
 	uint8_t		append_idx;	/* FUSE.APPEND index (boot+app section end) */
 	uint8_t		bootend_idx;	/* FUSE.BOOTEND index (boot section end) */
 
@@ -82,9 +84,11 @@ avr_crcscan_crc16(const uint8_t * data, uint32_t len);
 
 /*
  * Initialise a CRCSCAN block at data address 'base'. 'flash_size' is the flash
- * size (full-flash section end); 'append_fuse_index'/'bootend_fuse_index' locate
- * the APPEND/BOOTEND fuses that bound the application/boot sections (0xff to
- * skip). 'nmi_vector' is the CRC-failure NMI vector. 'name' is a debug tag.
+ * size (full-flash section end); 'syscfg0_fuse_index' locates FUSE.SYSCFG0 so
+ * boot-time CRCSRC can be honoured (0xff to skip); 'append_fuse_index' and
+ * 'bootend_fuse_index' locate the APPEND/BOOTEND fuses that bound the
+ * application/boot sections (0xff to skip). 'nmi_vector' is the CRC-failure NMI
+ * vector. 'name' is a debug tag.
  */
 void
 avr_crcscan_init(
@@ -92,6 +96,7 @@ avr_crcscan_init(
 		avr_crcscan_t * p,
 		avr_io_addr_t base,
 		uint32_t flash_size,
+		uint8_t syscfg0_fuse_index,
 		uint8_t append_fuse_index,
 		uint8_t bootend_fuse_index,
 		uint8_t nmi_vector,

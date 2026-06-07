@@ -3,13 +3,16 @@
 
 	"Modern" AVR (AVRxt) USART. See avr_usart_modern.h.
 
-	Model: standard asynchronous TX/RX. Transmitting a byte (write TXDATAL)
-	immediately emits it on UART_IRQ_OUTPUT and arms a cycle timer for the frame
-	duration after which TXCIF is raised; the data register is treated as always
-	empty (DREIF stays set). Receiving (UART_IRQ_INPUT) queues the byte in a
-	fifo and raises RXCIF; reading RXDATAL pops it. Frame duration is derived
-	from BAUD so cycle-accurate-ish timing and TXC ordering hold; 9-bit, parity,
-	sync and one-wire modes are not modelled.
+	Model: asynchronous TX/RX plus synchronous timing and one-wire loopback.
+	Transmitting a byte (write TXDATAL) immediately emits it on UART_IRQ_OUTPUT
+	and arms a cycle timer for the frame duration after which TXCIF is raised;
+	the data register is treated as always empty (DREIF stays set). Receiving
+	(UART_IRQ_INPUT) queues the byte in a fifo and raises RXCIF; reading RXDATAL
+	pops it. Frame duration is derived from BAUD so cycle-accurate-ish timing and
+	TXC ordering hold. In synchronous mode, the BAUD divisor uses the synchronous
+	clock relationship; in one-wire loopback mode (CTRLA.LBME), transmitted bytes
+	also re-enter the receiver through the shared TxD/RxD path. 9-bit and parity
+	are still not modelled.
 
 	Copyright 2026 simavr authors
 
@@ -42,20 +45,53 @@ DEFINE_FIFO(uint8_t, usart_rx_fifo);
 #define DREIF_bm	0x20
 
 /* CTRLA (interrupt enables, same bit positions as STATUS flags) */
+#define LBME_bm		0x08
 #define RXCIE_bm	0x80
 #define TXCIE_bm	0x40
 #define DREIE_bm	0x20
 
 /* CTRLB */
+#define RXMODE_gm	0x06
+#define RXMODE_CLK2X	0x02
+#define ODME_bm		0x08
 #define RXEN_bm		0x80
 #define TXEN_bm		0x40
+
+/* CTRLC */
+#define CMODE_gm	0xc0
+#define CMODE_ASYNC	0x00
+#define CMODE_SYNC	0x40
+
+static void usart_push_rx(avr_usart_modern_t *p, uint8_t value)
+{
+	avr_t *avr = p->io.avr;
+
+	if (!(avr->data[p->r_ctrlb] & RXEN_bm))
+		return;
+	if (usart_rx_fifo_isfull(&p->rx))
+		return;
+	usart_rx_fifo_write(&p->rx, value);
+
+	avr_core_watch_write(avr, p->r_status, avr->data[p->r_status] | RXCIF_bm);
+	if (avr->data[p->r_ctrla] & RXCIE_bm)
+		avr_raise_interrupt(avr, &p->rxc);
+}
 
 static uint32_t usart_frame_cycles(avr_usart_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
 	uint32_t baud = avr->data[p->r_baud] | (avr->data[p->r_baud + 1] << 8);
-	/* Async normal: CLK_PER cycles/bit = BAUD/4; a frame is ~10 bits. */
-	uint32_t frame = (baud * 10u) / 4u;
+	uint8_t ctrlc = avr->data[p->r_ctrlc];
+	uint8_t ctrlb = avr->data[p->r_ctrlb];
+	uint32_t frame;
+
+	if ((ctrlc & CMODE_gm) == CMODE_SYNC) {
+		/* Sync host/client timing uses the /2 baud relationship. */
+		frame = (baud * 10u) / 2u;
+	} else {
+		uint32_t denom = (ctrlb & RXMODE_gm) == RXMODE_CLK2X ? 2u : 4u;
+		frame = (baud * 10u) / denom;
+	}
 	return frame ? frame : 80;
 }
 
@@ -65,6 +101,11 @@ static avr_cycle_count_t
 usart_tx_done(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
 	avr_usart_modern_t *p = (avr_usart_modern_t *)param;
+
+	if (p->tx_loopback) {
+		usart_push_rx(p, p->tx_data);
+		p->tx_loopback = 0;
+	}
 	avr_core_watch_write(avr, p->r_status, avr->data[p->r_status] | TXCIF_bm);
 	if (avr->data[p->r_ctrla] & TXCIE_bm)
 		avr_raise_interrupt(avr, &p->txc);
@@ -82,6 +123,9 @@ avr_usart_modern_txdata_write(struct avr_t *avr, avr_io_addr_t addr,
 		return;
 
 	/* Emit on the wire immediately. */
+	p->tx_data = v;
+	p->tx_loopback = !!((avr->data[p->r_ctrla] & LBME_bm) &&
+					  (avr->data[p->r_ctrlb] & RXEN_bm));
 	avr_raise_irq(p->io.irq + UART_IRQ_OUTPUT, v);
 
 	/* New transmission in flight: TXC will assert after the frame; the data
@@ -101,17 +145,7 @@ static void
 avr_usart_modern_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 {
 	avr_usart_modern_t *p = (avr_usart_modern_t *)param;
-	avr_t *avr = p->io.avr;
-
-	if (!(avr->data[p->r_ctrlb] & RXEN_bm))
-		return;
-	if (usart_rx_fifo_isfull(&p->rx))
-		return;
-	usart_rx_fifo_write(&p->rx, value & 0xff);
-
-	avr_core_watch_write(avr, p->r_status, avr->data[p->r_status] | RXCIF_bm);
-	if (avr->data[p->r_ctrla] & RXCIE_bm)
-		avr_raise_interrupt(avr, &p->rxc);
+	usart_push_rx(p, value & 0xff);
 }
 
 static uint8_t
@@ -218,6 +252,7 @@ avr_usart_modern_init(
 	p->r_status = base + USARTR_STATUS;
 	p->r_ctrla = base + USARTR_CTRLA;
 	p->r_ctrlb = base + USARTR_CTRLB;
+	p->r_ctrlc = base + USARTR_CTRLC;
 	p->r_baud = base + USARTR_BAUDL;
 
 	/* RXC: flag in STATUS.RXCIF, enabled by CTRLA.RXCIE (cleared by reading

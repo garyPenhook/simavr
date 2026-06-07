@@ -62,6 +62,9 @@ typedef struct avr_wdt_modern_t {
 		uint8_t		pending;	/* a watchdog reset is being performed */
 		avr_run_t	avr_run;	/* saved run callback, restored on reset */
 	} reset_context;
+
+	void (*reset_cb)(avr_t * avr, void * param);
+	void *reset_param;
 } avr_wdt_modern_t;
 
 /*
@@ -74,6 +77,12 @@ avr_wdt_modern_init(
 		avr_wdt_modern_t * p,
 		avr_io_addr_t base,
 		char name);
+
+void
+avr_wdt_modern_set_reset_handler(
+		avr_wdt_modern_t * p,
+		void (*cb)(avr_t * avr, void * param),
+		void * param);
 
 #ifdef __cplusplus
 };

@@ -1713,13 +1713,15 @@ int main(void)
 	}
 
 	printf("== modern CCL (sim_tiny3217) ==\n");
-	{
-		const avr_io_addr_t L = 0x1c0;
-		enum { CTRLA = 0x00, L0CTRLA = 0x05, L0CTRLB = 0x06, L0CTRLC = 0x07,
-			   TRUTH0 = 0x08, L1CTRLA = 0x09, L1CTRLB = 0x0a, L1CTRLC = 0x0b,
-			   TRUTH1 = 0x0c };
-		enum { CCL_EN = 0x01, LUT_EN = 0x01 };
-		/* INSEL: MASK=0, LINK=2, IO=5. */
+		{
+			const avr_io_addr_t L = 0x1c0;
+			enum { CTRLA = 0x00, SEQCTRL0 = 0x01,
+				   L0CTRLA = 0x05, L0CTRLB = 0x06, L0CTRLC = 0x07,
+				   TRUTH0 = 0x08, L1CTRLA = 0x09, L1CTRLB = 0x0a, L1CTRLC = 0x0b,
+				   TRUTH1 = 0x0c };
+			enum { CCL_EN = 0x01, LUT_EN = 0x01, FILT_SYNCH = 0x10, EDGEDET = 0x80,
+				   CLKSRC_IN2 = 0x40 };
+			/* INSEL: MASK=0, LINK=2, IO=5. */
 
 		avr_t *m = avr_make_mcu_by_name("attiny3217");
 		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
@@ -1765,11 +1767,69 @@ int main(void)
 		check("LUT0 AND(1,1) = 1", l0, 1);
 		check("LUT1 = NOT(LUT0=1) = 0", l1, 0);
 
-		/* Disabling the CCL forces all LUT outputs to 0. */
-		cpu_write(m, L + CTRLA, 0x00);
-		check("LUT0 forced 0 when CCL disabled", l0, 0);
-		check("LUT1 forced 0 when CCL disabled", l1, 0);
-	}
+			/* Disabling the CCL forces all LUT outputs to 0. */
+			cpu_write(m, L + CTRLA, 0x00);
+			check("LUT0 forced 0 when CCL disabled", l0, 0);
+			check("LUT1 forced 0 when CCL disabled", l1, 0);
+
+			/* Synchronizer path clocked from IN2: two rising edges of IN2 are
+			 * required before the visible output follows IN0. */
+			avr_irq_t *clk0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN2);
+			cpu_write(m, L + L0CTRLB, 0x05);		/* IN0=IO, IN1=MASK */
+			cpu_write(m, L + L0CTRLC, 0x05);		/* IN2=IO (clock source) */
+			cpu_write(m, L + TRUTH0, 0x0a);		/* OUT = IN0 (IN2 masked in truth) */
+			cpu_write(m, L + L0CTRLA, LUT_EN | FILT_SYNCH | CLKSRC_IN2);
+			cpu_write(m, L + CTRLA, CCL_EN);
+			avr_raise_irq(in0, 1);
+			check("SYNC holds old state before clock", l0, 0);
+			avr_raise_irq(clk0, 1);
+			check("SYNC still delayed after 1st edge", l0, 0);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(clk0, 1);
+			check("SYNC updates after 2nd edge", l0, 1);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(in0, 0);
+			avr_raise_irq(clk0, 1);
+			check("SYNC holds previous high after 1st falling edge", l0, 1);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(clk0, 1);
+			check("SYNC updates low after 2nd falling edge", l0, 0);
+			avr_raise_irq(clk0, 0);
+
+			/* Edge detector emits a one-clock pulse on the synchronized rising edge. */
+			cpu_write(m, L + L0CTRLA, LUT_EN | FILT_SYNCH | EDGEDET | CLKSRC_IN2);
+			avr_raise_irq(in0, 1);
+			avr_raise_irq(clk0, 1);
+			check("EDGEDET pulse not yet emitted after 1st edge", l0, 0);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(clk0, 1);
+			check("EDGEDET emits pulse on rising synchronized edge", l0, 1);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(clk0, 1);
+			check("EDGEDET pulse clears on next clock", l0, 0);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(in0, 0);
+
+			/* FEEDBACK is the pair sequencer output. Use a DFF whose D input is
+			 * NOT(FEEDBACK), clocked by IN2, so each clock edge toggles the state. */
+			cpu_write(m, L + L0CTRLB, 0x01);		/* IN0=FEEDBACK */
+			cpu_write(m, L + L0CTRLC, 0x05);		/* IN2=IO clock */
+			cpu_write(m, L + TRUTH0, 0x55);		/* OUT = NOT(IN0) */
+			cpu_write(m, L + L0CTRLA, LUT_EN | CLKSRC_IN2);
+			cpu_write(m, L + L1CTRLB, 0x00);
+			cpu_write(m, L + L1CTRLC, 0x00);
+			cpu_write(m, L + TRUTH1, 0xff);		/* odd LUT gate = 1 */
+			cpu_write(m, L + L1CTRLA, LUT_EN);
+			cpu_write(m, L + SEQCTRL0, 0x01);		/* DFF */
+			cpu_write(m, L + CTRLA, CCL_EN);
+			avr_raise_irq(clk0, 0);			/* start from a known low clock level */
+			check("FEEDBACK starts from cleared sequencer state", l0, 1);
+			avr_raise_irq(clk0, 1);
+			check("FEEDBACK toggles low after 1st clock", l0, 0);
+			avr_raise_irq(clk0, 0);
+			avr_raise_irq(clk0, 1);
+			check("FEEDBACK toggles high after 2nd clock", l0, 1);
+		}
 
 	printf("== modern EVSYS (sim_tiny3217) ==\n");
 	{
@@ -2410,7 +2470,7 @@ int main(void)
 
 	printf("== modern BOD brown-out reset (sim_tiny3217) ==\n");
 	{
-		const avr_io_addr_t Bd = 0x80, R = 0x40;
+		const avr_io_addr_t R = 0x40;
 		enum { BODR_VDD = 0 };
 		enum { RSTFR = 0x00 };
 		enum { PORF = 0x01, BORF = 0x02 };
@@ -2442,6 +2502,119 @@ int main(void)
 		check("brown-out zeroed the cycle counter", (long)m->cycle < before, 1);
 		check("RSTFR.BORF set after brown-out", !!(m->data[R + RSTFR] & BORF), 1);
 		check("PORF not set by brown-out", !!(m->data[R + RSTFR] & PORF), 0);
+	}
+
+	printf("== megaAVR-0 core descriptor + optional instances ==\n");
+	{
+		avr_t *m8 = avr_make_mcu_by_name("atmega808");
+		avr_t *m9 = avr_make_mcu_by_name("atmega4809");
+		if (!m8 || !m9) { printf("cannot make megaAVR-0 core\n"); return 2; }
+		m8->log = LOG_ERROR;
+		m9->log = LOG_ERROR;
+		avr_init(m8);
+		avr_init(m9);
+
+		check("atmega808 is MODERN", !!(m8->arch.flags & AVR_ARCH_F_MODERN), 1);
+		check("atmega808 vector_size 4", m8->vector_size, 4);
+		check("atmega808 flashmap 0x4000", m8->arch.flashmap_start, 0x4000);
+		check("atmega808 TWI0 base hooked at 0x8A0",
+			  !!m8->io[AVR_DATA_TO_IO(0x08a0 + TWIM_MADDR)].w.c, 1);
+		check("atmega808 has no USART3 TXDATAL hook",
+			  !!m8->io[AVR_DATA_TO_IO(0x0860 + USARTR_TXDATAL)].w.c, 0);
+		check("atmega4809 USART3 TXDATAL hooked",
+			  !!m9->io[AVR_DATA_TO_IO(0x0860 + USARTR_TXDATAL)].w.c, 1);
+		check("atmega4809 TCB3 CNTL hooked",
+			  !!m9->io[AVR_DATA_TO_IO(0x0ab0 + TCBR_CNTL)].r.c, 1);
+	}
+
+	printf("== megaAVR-0 CCL (sim_mega4809) ==\n");
+	{
+		const avr_io_addr_t L = 0x1c0;
+		enum { CTRLA = 0x00, L0CTRLA = 0x08, L0CTRLB = 0x09, L0CTRLC = 0x0a,
+			   TRUTH0 = 0x0b, L3CTRLA = 0x14, L3CTRLB = 0x15, L3CTRLC = 0x16,
+			   TRUTH3 = 0x17 };
+		enum { CCL_EN = 0x01, LUT_EN = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("atmega4809");
+		if (!m) { printf("cannot make atmega4809 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		uint8_t l0 = 0, l3 = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), 12), rec_irq, &l0);
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), 15), rec_irq, &l3);
+		avr_irq_t *in0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), 0);
+		avr_irq_t *in1 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), 1);
+
+		cpu_write(m, L + L0CTRLB, (5 << 4) | 5);
+		cpu_write(m, L + L0CTRLC, 0x00);
+		cpu_write(m, L + TRUTH0, 0x08);
+		cpu_write(m, L + L0CTRLA, LUT_EN);
+		cpu_write(m, L + CTRLA, CCL_EN);
+		avr_raise_irq(in0, 1); avr_raise_irq(in1, 1);
+		check("mega CCL LUT0 AND(1,1) = 1", l0, 1);
+
+		/* On the 4-LUT megaAVR-0 CCL, LINK on LUT3 wraps to LUT0. */
+		cpu_write(m, L + L3CTRLB, 0x02);
+		cpu_write(m, L + L3CTRLC, 0x00);
+		cpu_write(m, L + TRUTH3, 0x55);
+		cpu_write(m, L + L3CTRLA, LUT_EN);
+		check("mega CCL LUT3 = NOT(LUT0=1) = 0", l3, 0);
+		avr_raise_irq(in0, 0);
+		check("mega CCL LUT0 AND(0,1) = 0", l0, 0);
+		check("mega CCL LUT3 = NOT(LUT0=0) = 1", l3, 1);
+	}
+
+	printf("== megaAVR-0 EVSYS + ADC event start (sim_mega4809) ==\n");
+	{
+		const avr_io_addr_t E = 0x180, C = 0x680, A = 0x600;
+		enum { STROBE = 0x00, CHANNEL0 = 0x10, USERADC0 = 0x28 };
+		enum { AC_ENABLE = 0x01, MUXNEG_VREF = 0x02 };
+		enum { GEN_AC0_OUT = 0x20, SEL_CH0 = 1 };
+		enum { ADC_ENABLE = 0x01, STARTEI = 0x01 };
+		enum { F_RESRDY = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("atmega4809");
+		if (!m) { printf("cannot make atmega4809 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		uint8_t uadc = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_USER0 + 8),
+			rec_irq, &uadc);
+
+		avr_irq_t *ainp0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0);
+		avr_raise_irq(ainp0, 500);
+		cpu_write(m, C + ACR_MUXCTRLA, MUXNEG_VREF);
+		cpu_write(m, C + ACR_CTRLA, AC_ENABLE);
+
+		cpu_write(m, E + CHANNEL0, GEN_AC0_OUT);
+		cpu_write(m, E + USERADC0, SEL_CH0);
+
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), 0), 1650);
+		cpu_write(m, A + ADCMR_MUXPOS, 0);
+		cpu_write(m, A + ADCMR_EVCTRL, STARTEI);
+		cpu_write(m, A + ADCMR_CTRLA, ADC_ENABLE);
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);
+
+		avr_raise_irq(ainp0, 2000);
+		for (int i = 0; i < 400 && !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++)
+			avr_run(m);
+		check("mega EVSYS USERADC0 saw AC0 event", uadc, 1);
+		check("mega EVSYS started ADC conversion",
+			  !!(m->data[A + ADCMR_INTFLAGS] & F_RESRDY), 1);
+		check("mega event-triggered result = 512",
+			  (cpu_read(m, A + ADCMR_RESL) | (cpu_read(m, A + ADCMR_RESH) << 8)), 512);
+
+		g_evsys_pulses = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_USER0 + 8),
+			evsys_count_hook, NULL);
+		cpu_write(m, E + STROBE, 0x01);
+		check("mega EVSYS strobe pulses channel 0 user once", g_evsys_pulses, 1);
 	}
 
 	printf("== modern SYSCFG / SIGROW device identity (sim_tiny3217) ==\n");

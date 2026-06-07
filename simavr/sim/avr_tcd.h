@@ -3,7 +3,8 @@
 
 	"Modern" AVR (AVRxt) 12-bit Timer/Counter type D (TCD0 at 0x0A80 on the
 	tinyAVR 1-series, also AVR Dx). TCD is an asynchronous timer aimed at
-	high-resolution PWM; this models its periodic-overflow use.
+	high-resolution PWM; this models its periodic-overflow use together with the
+	four waveform-generation modes.
 
 	The counter runs from a prescaled clock (CLKSEL -> SYNCPRES -> CNTPRES) and,
 	in one-ramp operation, completes a cycle every (CMPBCLR + 1) counts, at which
@@ -12,15 +13,14 @@
 	CMDRDY always ready, so the usual `while (!(TCD0.STATUS & ENRDY))` polling
 	passes.
 
-	In One Ramp mode (CTRLB.WGMODE = 0) the compare values also drive the two
-	waveform outputs: WOA is high while CMPASET <= count < CMPACLR and WOB while
-	CMPBSET <= count < CMPBCLR (= TOP). Each output is published on its WOA/WOB
-	IRQ as it toggles, but only when enabled in FAULTCTRL (CMPAEN/CMPBEN) — so a
-	board/test can observe the generated PWM.
+	In One Ramp, Two Ramp, Four Ramp, and Dual Slope modes, the compare values
+	drive the two waveform outputs using the datasheet ramp ordering. Each output
+	is published on its WOA/WOB IRQ as it toggles, but only when enabled in
+	FAULTCTRL (CMPAEN/CMPBEN) — so a board/test can observe the generated PWM.
 
-	Not modelled: the other waveform-generation modes (two/four ramp, dual slope),
-	TRIGA/TRIGB compare events, dithering, fault input, input capture, and the
-	exact TCD clock source (approximated as CLK_PER); those registers still store.
+	Not modelled: TRIGA/TRIGB compare events, dithering, fault input, input
+	capture, and the exact TCD clock source (approximated as CLK_PER); those
+	registers still store.
 
 	Copyright 2026 simavr authors
 
@@ -83,8 +83,11 @@ typedef struct avr_tcd_t {
 	avr_int_vector_t	ovf;	/* TCDn_OVF */
 
 	avr_cycle_count_t	start_cycle;
+	int32_t			start_count;
 	uint32_t		prescale;	/* CPU cycles per TCD count */
 	uint32_t		top;		/* CMPBCLR captured at start */
+	uint8_t			phase;
+	int8_t			dir;
 
 	int			base_irq;
 	uint8_t		woa, wob;	/* last published output levels */

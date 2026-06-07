@@ -203,6 +203,44 @@ tinyx1_evsys_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
 		avr_adc_modern_event_start(&mcu->adc0);
 }
 
+static void
+tinyx1_tcb0_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0x01 /* SYNCCHx.TCB0 */, value & 1);
+}
+
+#ifdef TCB1_INT_vect_num
+static void
+tinyx1_tcb1_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, 0x15 /* SYNCCHx.TCB1 */, value & 1);
+}
+#endif
+
+static void
+tinyx1_evsys_to_tcb0(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('0'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+
+#ifdef TCB1_INT_vect_num
+static void
+tinyx1_evsys_to_tcb1(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('1'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+#endif
+
 /*
  * On-chip routing: a BOD brown-out (VDD below the configured BOD level) resets
  * the device through RSTCTRL, which records the cause in RSTFR.BORF.
@@ -213,6 +251,14 @@ tinyx1_bod_brownout(struct avr_t * avr, void * param)
 	struct mcu_t * mcu = (struct mcu_t *)param;
 	(void)avr;
 	avr_rstctrl_request_reset(&mcu->rstctrl, AVR_RSTCTRL_BORF);
+}
+
+static void
+tinyx1_wdt_reset(struct avr_t * avr, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)avr;
+	avr_rstctrl_request_reset(&mcu->rstctrl, AVR_RSTCTRL_WDRF);
 }
 
 static void
@@ -309,6 +355,22 @@ tinyx1_init(struct avr_t * avr)
 			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
 						  AVR_EVSYS_IRQ_USER0 + AVR_EVSYS_USER_ADC0),
 			tinyx1_evsys_to_adc, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('0'), AVR_TCB_IRQ_CAPT_OUT),
+			tinyx1_tcb0_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVR_EVSYS_USER_TCB0),
+			tinyx1_evsys_to_tcb0, mcu);
+#ifdef TCB1_INT_vect_num
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('1'), AVR_TCB_IRQ_CAPT_OUT),
+			tinyx1_tcb1_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 11 /* ASYNCUSER11 = TCB1 */),
+			tinyx1_evsys_to_tcb1, mcu);
+#endif
 
 	/* PORTMUX (peripheral pin routing) config store at 0x0200. */
 	avr_portmux_init(avr, &mcu->portmux, 0x0200, '0');
@@ -327,10 +389,11 @@ tinyx1_init(struct avr_t * avr)
 
 	/* WDT (modern reset-only watchdog) at 0x0100. */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
+	avr_wdt_modern_set_reset_handler(&mcu->wdt, tinyx1_wdt_reset, mcu);
 
 	/* CRCSCAN (flash CRC memory scan) at 0x0120; APPEND/BOOTEND fuses (indices
 	 * 7/8) bound the sections, CRC failure raises the NMI. */
-	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, FLASHEND + 1, 7, 8,
+	avr_crcscan_init(avr, &mcu->crcscan, 0x0120, FLASHEND + 1, 5, 7, 8,
 					 CRCSCAN_NMI_vect_num, '0');
 
 	/* SLPCTRL (sleep controller) at 0x0050. */

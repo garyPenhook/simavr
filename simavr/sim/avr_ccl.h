@@ -4,18 +4,14 @@
 	"Modern" AVR (AVRxt) Configurable Custom Logic (CCL at 0x01C0 on the tinyAVR
 	1-series, also megaAVR-0 and AVR Dx families).
 
-	Models the combinational core of the look-up tables: each LUT computes a
-	3-input truth table (TRUTHn) whose inputs are routed by LUTnCTRLB/C.INSEL.
-	The routed sources that are modelled are MASK (constant 0), IO (an external
-	level presented on the LUTn-INm IRQ), LINK (the next LUT's output) and
-	FEEDBACK (the LUT's own output); other sources (events, peripherals) read as
-	0. Each LUT output is published on its OUT IRQ when it changes; combinational
-	LINK/FEEDBACK loops are settled to a fixed point.
-
-	Not modelled: the synchronizer/filter (LUTnCTRLA.FILTSEL), edge detector
-	(EDGEDET), clock source (CLKSRC) and the sequencer (SEQCTRL0) — those
-	registers still store, so configuring firmware behaves; only the timing/
-	stateful behaviour is absent.
+	Models the LUT truth table plus the stateful post-processing stages:
+	synchronizer/filter (FILTSEL), rising-edge detector (EDGEDET), alternate
+	clocking from IN2 (CLKSRC=IN2), and the per-pair sequencer (SEQCTRLn: DFF,
+	JK, gated latch, RS latch). LINK uses the next LUT's direct output; FEEDBACK
+	uses the pair sequencer output; other routed sources (events, peripherals)
+	read as 0. Each LUT output is published on its OUT IRQ when it changes, and
+	combinational LINK/FEEDBACK loops are settled to a fixed point before the
+	clocked stages run.
 
 	Copyright 2026 simavr authors
 
@@ -69,6 +65,7 @@ enum {
 	AVR_CCL_IRQ_LUT0_OUT,
 	AVR_CCL_IRQ_LUT1_OUT,
 	AVR_CCL_IRQ_COUNT_2LUT,
+	AVR_CCL_IRQ_COUNT_4LUT = 16,
 };
 
 typedef struct avr_ccl_t {
@@ -77,12 +74,29 @@ typedef struct avr_ccl_t {
 
 	avr_io_addr_t	base;
 	avr_io_addr_t	r_ctrla;
+	avr_io_addr_t	r_seqctrl[2];
 	uint8_t		nluts;
+	uint8_t		nseq;
+	uint8_t		lut_offset;
+	uint8_t		lut_stride;
+	uint8_t		clksrc_mask;
+	uint8_t		clksrc_shift;
 
-	uint8_t		out[AVR_CCL_MAX_LUTS];	/* current logic output of each LUT */
-	uint8_t		pub[AVR_CCL_MAX_LUTS];	/* last value published on OUT IRQ */
+	uint8_t		direct[AVR_CCL_MAX_LUTS];	/* direct LUT truth output */
+	uint8_t		filtered[AVR_CCL_MAX_LUTS];	/* synchronizer/filter output */
+	uint8_t		edge[AVR_CCL_MAX_LUTS];		/* one-clock rising-edge pulse */
+	uint8_t		pub[AVR_CCL_MAX_LUTS];		/* last value published on OUT IRQ */
+	uint8_t		seq[AVR_CCL_MAX_LUTS / 2];	/* sequencer state per LUT pair */
 	uint8_t		io_in[AVR_CCL_MAX_LUTS][AVR_CCL_LUT_INPUTS];	/* IO-source levels */
+	uint8_t		hist[AVR_CCL_MAX_LUTS][4];	/* clocked filter history */
+	uint8_t		prev_filtered[AVR_CCL_MAX_LUTS];
+	uint8_t		clock_level[AVR_CCL_MAX_LUTS];
+	uint8_t		timer_running[AVR_CCL_MAX_LUTS];
 	int			base_irq;
+	struct {
+		void * ccl;
+		uint8_t lut;
+	} tick_ctx[AVR_CCL_MAX_LUTS];
 } avr_ccl_t;
 
 /*
@@ -91,6 +105,14 @@ typedef struct avr_ccl_t {
  */
 void
 avr_ccl_init(
+		avr_t * avr,
+		avr_ccl_t * p,
+		avr_io_addr_t base,
+		uint8_t nluts,
+		char name);
+
+void
+avr_ccl_init_mega(
 		avr_t * avr,
 		avr_ccl_t * p,
 		avr_io_addr_t base,
