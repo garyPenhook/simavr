@@ -33,13 +33,13 @@
 #endif
 
 #ifndef _AVR_IOXXX_H_
-#  define _AVR_IOXXX_H_ "iom1608.h"
+#  define _AVR_IOXXX_H_ "iom809.h"
 #else
 #  error "Attempt to include more than one <avr/ioXXX.h> file."
 #endif
 
-#ifndef _AVR_ATMEGA1608_H_INCLUDED
-#define _AVR_ATMEGA1608_H_INCLUDED
+#ifndef _AVR_ATMEGA809_H_INCLUDED
+#define _AVR_ATMEGA809_H_INCLUDED
 
 /* Ungrouped common registers */
 #define CCP  _SFR_MEM8(0x0034)  /* Configuration Change Protection */
@@ -662,7 +662,9 @@ typedef struct EVSYS_struct
     register8_t CHANNEL3;  /* Multiplexer Channel 3 */
     register8_t CHANNEL4;  /* Multiplexer Channel 4 */
     register8_t CHANNEL5;  /* Multiplexer Channel 5 */
-    register8_t reserved_2[10];
+    register8_t CHANNEL6;  /* Multiplexer Channel 6 */
+    register8_t CHANNEL7;  /* Multiplexer Channel 7 */
+    register8_t reserved_2[8];
     register8_t USERCCLLUT0A;  /* User CCL LUT0 Event A */
     register8_t USERCCLLUT0B;  /* User CCL LUT0 Event B */
     register8_t USERCCLLUT1A;  /* User CCL LUT1 Event A */
@@ -699,7 +701,9 @@ typedef enum EVSYS_CHANNEL_enum
     EVSYS_CHANNEL_CHANNEL2_gc = (0x03<<0),  /* Connect user to event channel 2 */
     EVSYS_CHANNEL_CHANNEL3_gc = (0x04<<0),  /* Connect user to event channel 3 */
     EVSYS_CHANNEL_CHANNEL4_gc = (0x05<<0),  /* Connect user to event channel 4 */
-    EVSYS_CHANNEL_CHANNEL5_gc = (0x06<<0)  /* Connect user to event channel 5 */
+    EVSYS_CHANNEL_CHANNEL5_gc = (0x06<<0),  /* Connect user to event channel 5 */
+    EVSYS_CHANNEL_CHANNEL6_gc = (0x07<<0),  /* Connect user to event channel 6 */
+    EVSYS_CHANNEL_CHANNEL7_gc = (0x08<<0)  /* Connect user to event channel 7 */
 } EVSYS_CHANNEL_t;
 
 /* Generator selector */
@@ -1010,10 +1014,17 @@ typedef enum PORTMUX_EVOUTA_enum
     PORTMUX_EVOUTA_ALT1_gc = (0x01<<0)  /* EVOUT on PA7 */
 } PORTMUX_EVOUTA_t;
 
+/* Event Output B select */
+typedef enum PORTMUX_EVOUTB_enum
+{
+    PORTMUX_EVOUTB_DEFAULT_gc = (0x00<<1)  /* EVOUT on PB2 */
+} PORTMUX_EVOUTB_t;
+
 /* Event Output C select */
 typedef enum PORTMUX_EVOUTC_enum
 {
-    PORTMUX_EVOUTC_DEFAULT_gc = (0x00<<2)  /* EVOUT on PC2 */
+    PORTMUX_EVOUTC_DEFAULT_gc = (0x00<<2),  /* EVOUT on PC2 */
+    PORTMUX_EVOUTC_ALT1_gc = (0x01<<2)  /* EVOUT on PC7 */
 } PORTMUX_EVOUTC_t;
 
 /* Event Output D select */
@@ -1022,6 +1033,12 @@ typedef enum PORTMUX_EVOUTD_enum
     PORTMUX_EVOUTD_DEFAULT_gc = (0x00<<3),  /* EVOUT on PD2 */
     PORTMUX_EVOUTD_ALT1_gc = (0x01<<3)  /* EVOUT on PD7 */
 } PORTMUX_EVOUTD_t;
+
+/* Event Output E select */
+typedef enum PORTMUX_EVOUTE_enum
+{
+    PORTMUX_EVOUTE_DEFAULT_gc = (0x00<<4)  /* EVOUT on PE2 */
+} PORTMUX_EVOUTE_t;
 
 /* Event Output F select */
 typedef enum PORTMUX_EVOUTF_enum
@@ -1066,12 +1083,14 @@ typedef enum PORTMUX_TCB1_enum
 /* Port Multiplexer TCB2 select */
 typedef enum PORTMUX_TCB2_enum
 {
-    PORTMUX_TCB2_DEFAULT_gc = (0x00<<2)  /* WO on PC0 */
+    PORTMUX_TCB2_DEFAULT_gc = (0x00<<2),  /* WO on PC0 */
+    PORTMUX_TCB2_ALT1_gc = (0x01<<2)  /* WO on PB4 */
 } PORTMUX_TCB2_t;
 
 /* Port Multiplexer TCB3 select */
 typedef enum PORTMUX_TCB3_enum
 {
+    PORTMUX_TCB3_DEFAULT_gc = (0x00<<3),  /* WO on PB5 */
     PORTMUX_TCB3_ALT1_gc = (0x01<<3)  /* WO on PC1 */
 } PORTMUX_TCB3_t;
 
@@ -1907,12 +1926,14 @@ IO Module Instances. Mapped to memory.
 #define USART0              (*(USART_t *) 0x0800) /* Universal Synchronous and Asynchronous Receiver and Transmitter */
 #define USART1              (*(USART_t *) 0x0820) /* Universal Synchronous and Asynchronous Receiver and Transmitter */
 #define USART2              (*(USART_t *) 0x0840) /* Universal Synchronous and Asynchronous Receiver and Transmitter */
+#define USART3              (*(USART_t *) 0x0860) /* Universal Synchronous and Asynchronous Receiver and Transmitter */
 #define TWI0                  (*(TWI_t *) 0x08A0) /* Two-Wire Interface */
 #define SPI0                  (*(SPI_t *) 0x08C0) /* Serial Peripheral Interface */
 #define TCA0                  (*(TCA_t *) 0x0A00) /* 16-bit Timer/Counter Type A */
 #define TCB0                  (*(TCB_t *) 0x0A80) /* 16-bit Timer Type B */
 #define TCB1                  (*(TCB_t *) 0x0A90) /* 16-bit Timer Type B */
 #define TCB2                  (*(TCB_t *) 0x0AA0) /* 16-bit Timer Type B */
+#define TCB3                  (*(TCB_t *) 0x0AB0) /* 16-bit Timer Type B */
 #define SYSCFG             (*(SYSCFG_t *) 0x0F00) /* System Configuration Registers */
 #define NVMCTRL           (*(NVMCTRL_t *) 0x1000) /* Non-volatile Memory Controller */
 #define SIGROW             (*(SIGROW_t *) 0x1100) /* Signature row */
@@ -2075,6 +2096,8 @@ IO Module Instances. Mapped to memory.
 #define EVSYS_CHANNEL3  _SFR_MEM8(0x0193)
 #define EVSYS_CHANNEL4  _SFR_MEM8(0x0194)
 #define EVSYS_CHANNEL5  _SFR_MEM8(0x0195)
+#define EVSYS_CHANNEL6  _SFR_MEM8(0x0196)
+#define EVSYS_CHANNEL7  _SFR_MEM8(0x0197)
 #define EVSYS_USERCCLLUT0A  _SFR_MEM8(0x01A0)
 #define EVSYS_USERCCLLUT0B  _SFR_MEM8(0x01A1)
 #define EVSYS_USERCCLLUT1A  _SFR_MEM8(0x01A2)
@@ -2357,6 +2380,25 @@ IO Module Instances. Mapped to memory.
 #define USART2_RXPLCTRL  _SFR_MEM8(0x084E)
 
 
+/* USART (USART3) - Universal Synchronous and Asynchronous Receiver and Transmitter */
+#define USART3_RXDATAL  _SFR_MEM8(0x0860)
+#define USART3_RXDATAH  _SFR_MEM8(0x0861)
+#define USART3_TXDATAL  _SFR_MEM8(0x0862)
+#define USART3_TXDATAH  _SFR_MEM8(0x0863)
+#define USART3_STATUS  _SFR_MEM8(0x0864)
+#define USART3_CTRLA  _SFR_MEM8(0x0865)
+#define USART3_CTRLB  _SFR_MEM8(0x0866)
+#define USART3_CTRLC  _SFR_MEM8(0x0867)
+#define USART3_BAUD  _SFR_MEM16(0x0868)
+#define USART3_BAUDL  _SFR_MEM8(0x0868)
+#define USART3_BAUDH  _SFR_MEM8(0x0869)
+#define USART3_CTRLD  _SFR_MEM8(0x086A)
+#define USART3_DBGCTRL  _SFR_MEM8(0x086B)
+#define USART3_EVCTRL  _SFR_MEM8(0x086C)
+#define USART3_TXPLCTRL  _SFR_MEM8(0x086D)
+#define USART3_RXPLCTRL  _SFR_MEM8(0x086E)
+
+
 /* TWI (TWI0) - Two-Wire Interface */
 #define TWI0_CTRLA  _SFR_MEM8(0x08A0)
 #define TWI0_DUALCTRL  _SFR_MEM8(0x08A1)
@@ -2497,6 +2539,23 @@ IO Module Instances. Mapped to memory.
 #define TCB2_CCMP  _SFR_MEM16(0x0AAC)
 #define TCB2_CCMPL  _SFR_MEM8(0x0AAC)
 #define TCB2_CCMPH  _SFR_MEM8(0x0AAD)
+
+
+/* TCB (TCB3) - 16-bit Timer Type B */
+#define TCB3_CTRLA  _SFR_MEM8(0x0AB0)
+#define TCB3_CTRLB  _SFR_MEM8(0x0AB1)
+#define TCB3_EVCTRL  _SFR_MEM8(0x0AB4)
+#define TCB3_INTCTRL  _SFR_MEM8(0x0AB5)
+#define TCB3_INTFLAGS  _SFR_MEM8(0x0AB6)
+#define TCB3_STATUS  _SFR_MEM8(0x0AB7)
+#define TCB3_DBGCTRL  _SFR_MEM8(0x0AB8)
+#define TCB3_TEMP  _SFR_MEM8(0x0AB9)
+#define TCB3_CNT  _SFR_MEM16(0x0ABA)
+#define TCB3_CNTL  _SFR_MEM8(0x0ABA)
+#define TCB3_CNTH  _SFR_MEM8(0x0ABB)
+#define TCB3_CCMP  _SFR_MEM16(0x0ABC)
+#define TCB3_CCMPL  _SFR_MEM8(0x0ABC)
+#define TCB3_CCMPH  _SFR_MEM8(0x0ABD)
 
 
 /* SYSCFG - System Configuration Registers */
@@ -3377,6 +3436,12 @@ IO Module Instances. Mapped to memory.
 /* EVSYS_GENERATOR  is already defined. */
 
 /* EVSYS.CHANNEL5  bit masks and bit positions */
+/* EVSYS_GENERATOR  is already defined. */
+
+/* EVSYS.CHANNEL6  bit masks and bit positions */
+/* EVSYS_GENERATOR  is already defined. */
+
+/* EVSYS.CHANNEL7  bit masks and bit positions */
 /* EVSYS_GENERATOR  is already defined. */
 
 /* EVSYS.USERCCLLUT0A  bit masks and bit positions */
@@ -4751,18 +4816,30 @@ IO Module Instances. Mapped to memory.
 #define PORTE_PORT_vect_num  35
 #define PORTE_PORT_vect      _VECTOR(35)  /*  */
 
+/* TCB3 interrupt vectors */
+#define TCB3_INT_vect_num  36
+#define TCB3_INT_vect      _VECTOR(36)  /*  */
+
+/* USART3 interrupt vectors */
+#define USART3_RXC_vect_num  37
+#define USART3_RXC_vect      _VECTOR(37)  /*  */
+#define USART3_DRE_vect_num  38
+#define USART3_DRE_vect      _VECTOR(38)  /*  */
+#define USART3_TXC_vect_num  39
+#define USART3_TXC_vect      _VECTOR(39)  /*  */
+
 #define _VECTOR_SIZE 4 /* Size of individual vector. */
-#define _VECTORS_SIZE (36 * _VECTOR_SIZE)
+#define _VECTORS_SIZE (40 * _VECTOR_SIZE)
 
 
 /* ========== Constants ========== */
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define DATAMEM_START     (0x0000)
-#  define DATAMEM_SIZE      (16384)
+#  define DATAMEM_SIZE      (8192)
 #else
 #  define DATAMEM_START     (0x0000U)
-#  define DATAMEM_SIZE      (16384U)
+#  define DATAMEM_SIZE      (8192U)
 #endif
 #define DATAMEM_END       (DATAMEM_START + DATAMEM_SIZE - 1)
 
@@ -4850,34 +4927,34 @@ IO Module Instances. Mapped to memory.
 #define MAPPED_EEPROM_END       (MAPPED_EEPROM_START + MAPPED_EEPROM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
-#  define INTERNAL_SRAM_START     (0x3800)
-#  define INTERNAL_SRAM_SIZE      (2048)
+#  define INTERNAL_SRAM_START     (0x3C00)
+#  define INTERNAL_SRAM_SIZE      (1024)
 #  define INTERNAL_SRAM_PAGE_SIZE (0)
 #else
-#  define INTERNAL_SRAM_START     (0x3800U)
-#  define INTERNAL_SRAM_SIZE      (2048U)
+#  define INTERNAL_SRAM_START     (0x3C00U)
+#  define INTERNAL_SRAM_SIZE      (1024U)
 #  define INTERNAL_SRAM_PAGE_SIZE (0U)
 #endif
 #define INTERNAL_SRAM_END       (INTERNAL_SRAM_START + INTERNAL_SRAM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define MAPPED_PROGMEM_START     (0x4000)
-#  define MAPPED_PROGMEM_SIZE      (16384)
+#  define MAPPED_PROGMEM_SIZE      (8192)
 #  define MAPPED_PROGMEM_PAGE_SIZE (64)
 #else
 #  define MAPPED_PROGMEM_START     (0x4000U)
-#  define MAPPED_PROGMEM_SIZE      (16384U)
+#  define MAPPED_PROGMEM_SIZE      (8192U)
 #  define MAPPED_PROGMEM_PAGE_SIZE (64U)
 #endif
 #define MAPPED_PROGMEM_END       (MAPPED_PROGMEM_START + MAPPED_PROGMEM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define PROGMEM_START     (0x0000)
-#  define PROGMEM_SIZE      (16384)
+#  define PROGMEM_SIZE      (8192)
 #  define PROGMEM_PAGE_SIZE (64)
 #else
 #  define PROGMEM_START     (0x0000U)
-#  define PROGMEM_SIZE      (16384U)
+#  define PROGMEM_SIZE      (8192U)
 #  define PROGMEM_PAGE_SIZE (64U)
 #endif
 #define PROGMEM_END       (PROGMEM_START + PROGMEM_SIZE - 1)
@@ -4960,8 +5037,8 @@ IO Module Instances. Mapped to memory.
 
 /* ========== Signature ========== */
 #define SIGNATURE_0 0x1E
-#define SIGNATURE_1 0x94
-#define SIGNATURE_2 0x27
+#define SIGNATURE_1 0x93
+#define SIGNATURE_2 0x2A
 
-#endif /* #ifdef _AVR_ATMEGA1608_H_INCLUDED */
+#endif /* #ifdef _AVR_ATMEGA809_H_INCLUDED */
 
