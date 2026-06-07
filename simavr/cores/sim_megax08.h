@@ -51,12 +51,15 @@
 #error "include the device header and define SIM_MMCU/SIM_CORENAME first"
 #endif
 
-/* >8 KB flash uses 4-byte JMP vectors, smaller parts 2-byte RJMP vectors. */
-#if FLASHEND > 0x1FFF
+/*
+ * The megaAVR 0-series toolchain emits 4-byte JMP-based interrupt vectors on
+ * EVERY part, including the 8 KB ATmega808/809 (unlike the tinyAVR parts, where
+ * <=8 KB devices use 2-byte RJMP vectors). Verified by avr-objdump of the linked
+ * vector table: spacing is 4 bytes for 808/809/1608/.../4809. Using 2 here would
+ * send the CPUINT dispatch (pc = vector * vector_size) to the wrong entries and
+ * interrupts would never reach their handlers.
+ */
 #define SIM_VECTOR_SIZE	4
-#else
-#define SIM_VECTOR_SIZE	2
-#endif
 
 #define SIM_EE_SIZE	(E2END - EEPROM_START + 1)
 
