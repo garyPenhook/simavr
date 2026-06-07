@@ -33,13 +33,13 @@
 #endif
 
 #ifndef _AVR_IOXXX_H_
-#  define _AVR_IOXXX_H_ "iotn3217.h"
+#  define _AVR_IOXXX_H_ "iotn3216.h"
 #else
 #  error "Attempt to include more than one <avr/ioXXX.h> file."
 #endif
 
-#ifndef _AVR_ATTINY3217_H_INCLUDED
-#define _AVR_ATTINY3217_H_INCLUDED
+#ifndef _AVR_ATTINY3216_H_INCLUDED
+#define _AVR_ATTINY3216_H_INCLUDED
 
 /* Ungrouped common registers */
 #define CCP  _SFR_MEM8(0x0034)  /* Configuration Change Protection */
@@ -5672,7 +5672,7 @@ IO Module Instances. Mapped to memory.
 /* ========== Signature ========== */
 #define SIGNATURE_0 0x1E
 #define SIGNATURE_1 0x95
-#define SIGNATURE_2 0x22
+#define SIGNATURE_2 0x21
 
-#endif /* #ifdef _AVR_ATTINY3217_H_INCLUDED */
+#endif /* #ifdef _AVR_ATTINY3216_H_INCLUDED */
 

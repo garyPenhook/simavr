@@ -33,13 +33,13 @@
 #endif
 
 #ifndef _AVR_IOXXX_H_
-#  define _AVR_IOXXX_H_ "iotn3217.h"
+#  define _AVR_IOXXX_H_ "iotn212.h"
 #else
 #  error "Attempt to include more than one <avr/ioXXX.h> file."
 #endif
 
-#ifndef _AVR_ATTINY3217_H_INCLUDED
-#define _AVR_ATTINY3217_H_INCLUDED
+#ifndef _AVR_ATTINY212_H_INCLUDED
+#define _AVR_ATTINY212_H_INCLUDED
 
 /* Ungrouped common registers */
 #define CCP  _SFR_MEM8(0x0034)  /* Configuration Change Protection */
@@ -150,7 +150,6 @@ typedef enum AC_LPMODE_enum
 typedef enum AC_MUXNEG_enum
 {
     AC_MUXNEG_PIN0_gc = (0x00<<0),  /* Negative Pin 0 */
-    AC_MUXNEG_PIN1_gc = (0x01<<0),  /* Negative Pin 1 */
     AC_MUXNEG_VREF_gc = (0x02<<0),  /* Voltage Reference */
     AC_MUXNEG_DAC_gc = (0x03<<0)  /* DAC output */
 } AC_MUXNEG_t;
@@ -158,10 +157,7 @@ typedef enum AC_MUXNEG_enum
 /* Positive Input MUX Selection */
 typedef enum AC_MUXPOS_enum
 {
-    AC_MUXPOS_PIN0_gc = (0x00<<3),  /* Positive Pin 0 */
-    AC_MUXPOS_PIN1_gc = (0x01<<3),  /* Positive Pin 1 */
-    AC_MUXPOS_PIN2_gc = (0x02<<3),  /* Positive Pin 2 */
-    AC_MUXPOS_PIN3_gc = (0x03<<3)  /* Positive Pin 3 */
+    AC_MUXPOS_PIN0_gc = (0x00<<3)  /* Positive Pin 0 */
 } AC_MUXPOS_t;
 
 /*
@@ -235,10 +231,9 @@ typedef enum ADC_MUXPOS_enum
     ADC_MUXPOS_AIN9_gc = (0x09<<0),  /* ADC input pin 9 */
     ADC_MUXPOS_AIN10_gc = (0x0A<<0),  /* ADC input pin 10 */
     ADC_MUXPOS_AIN11_gc = (0x0B<<0),  /* ADC input pin 11 */
-    ADC_MUXPOS_PTC_gc = (0x1B<<0),  /* PTC/DAC2 */
-    ADC_MUXPOS_DAC0_gc = (0x1C<<0),  /* DAC0/DAC0 */
+    ADC_MUXPOS_DAC0_gc = (0x1C<<0),  /* DAC0 */
     ADC_MUXPOS_INTREF_gc = (0x1D<<0),  /* Internal Ref */
-    ADC_MUXPOS_TEMPSENSE_gc = (0x1E<<0),  /* Temp sensor/DAC1 */
+    ADC_MUXPOS_TEMPSENSE_gc = (0x1E<<0),  /* Temp sensor */
     ADC_MUXPOS_GND_gc = (0x1F<<0)  /* GND */
 } ADC_MUXPOS_t;
 
@@ -259,8 +254,7 @@ typedef enum ADC_PRESC_enum
 typedef enum ADC_REFSEL_enum
 {
     ADC_REFSEL_INTREF_gc = (0x00<<4),  /* Internal reference */
-    ADC_REFSEL_VDDREF_gc = (0x01<<4),  /* VDD */
-    ADC_REFSEL_VREFA_gc = (0x02<<4)  /* External reference */
+    ADC_REFSEL_VDDREF_gc = (0x01<<4)  /* VDD */
 } ADC_REFSEL_t;
 
 /* ADC Resolution select */
@@ -317,7 +311,7 @@ typedef enum BOD_ACTIVE_enum
     BOD_ACTIVE_DIS_gc = (0x00<<2),  /* Disabled */
     BOD_ACTIVE_ENABLED_gc = (0x01<<2),  /* Enabled */
     BOD_ACTIVE_SAMPLED_gc = (0x02<<2),  /* Sampled */
-    BOD_ACTIVE_ENWAKE_gc = (0x03<<2)  /* Enabled with wake-up halted until BOD is ready */
+    BOD_ACTIVE_ENWAKE_gc = (0x03<<2)  /* Enabled with wakeup halt */
 } BOD_ACTIVE_t;
 
 /* Bod level select */
@@ -331,8 +325,8 @@ typedef enum BOD_LVL_enum
 /* Sample frequency select */
 typedef enum BOD_SAMPFREQ_enum
 {
-    BOD_SAMPFREQ_1KHZ_gc = (0x00<<4),  /* 1kHz sampling frequency */
-    BOD_SAMPFREQ_125HZ_gc = (0x01<<4)  /* 125Hz sampling frequency */
+    BOD_SAMPFREQ_1KHZ_gc = (0x00<<4),  /* 1kHz sampling */
+    BOD_SAMPFREQ_125Hz_gc = (0x01<<4)  /* 125Hz sampling */
 } BOD_SAMPFREQ_t;
 
 /* Operation in sleep mode select */
@@ -379,7 +373,7 @@ typedef struct CCL_struct
     register8_t LUT1CTRLB;  /* LUT Control 1 B */
     register8_t LUT1CTRLC;  /* LUT Control 1 C */
     register8_t TRUTH1;  /* Truth 1 */
-    register8_t reserved_2[51];
+    register8_t reserved_2[3];
 } CCL_t;
 
 /* Clock Source Selection */
@@ -418,10 +412,7 @@ typedef enum CCL_INSEL0_enum
     CCL_INSEL0_TCA0_gc = (0x08<<0),  /* TCA0 WO0 input source */
     CCL_INSEL0_TCD0_gc = (0x09<<0),  /* TCD0 WOA input source */
     CCL_INSEL0_USART0_gc = (0x0A<<0),  /* USART0 XCK input source */
-    CCL_INSEL0_SPI0_gc = (0x0B<<0),  /* SPI0 SCK source */
-    CCL_INSEL0_AC1_gc = (0x0C<<0),  /* AC1 OUT input source */
-    CCL_INSEL0_TCB1_gc = (0x0D<<0),  /* TCB1 WO input source */
-    CCL_INSEL0_AC2_gc = (0x0E<<0)  /* AC2 OUT input source */
+    CCL_INSEL0_SPI0_gc = (0x0B<<0)  /* SPI0 SCK source */
 } CCL_INSEL0_t;
 
 /* LUT Input 1 Source Selection */
@@ -438,10 +429,7 @@ typedef enum CCL_INSEL1_enum
     CCL_INSEL1_TCA0_gc = (0x08<<4),  /* TCA0 WO1 input source */
     CCL_INSEL1_TCD0_gc = (0x09<<4),  /* TCD0 WOB input source */
     CCL_INSEL1_USART0_gc = (0x0A<<4),  /* USART0 TXD input source */
-    CCL_INSEL1_SPI0_gc = (0x0B<<4),  /* SPI0 MOSI input source */
-    CCL_INSEL1_AC1_gc = (0x0C<<4),  /* AC1 OUT input source */
-    CCL_INSEL1_TCB1_gc = (0x0D<<4),  /* TCB1 WO input source */
-    CCL_INSEL1_AC2_gc = (0x0E<<4)  /* AC2 OUT input source */
+    CCL_INSEL1_SPI0_gc = (0x0B<<4)  /* SPI0 MOSI input source */
 } CCL_INSEL1_t;
 
 /* LUT Input 2 Source Selection */
@@ -457,10 +445,7 @@ typedef enum CCL_INSEL2_enum
     CCL_INSEL2_TCB0_gc = (0x07<<0),  /* TCB0 WO input source */
     CCL_INSEL2_TCA0_gc = (0x08<<0),  /* TCA0 WO2 input source */
     CCL_INSEL2_TCD0_gc = (0x09<<0),  /* TCD0 WOA input source */
-    CCL_INSEL2_SPI0_gc = (0x0B<<0),  /* SPI0 MISO source */
-    CCL_INSEL2_AC1_gc = (0x0C<<0),  /* AC1 OUT input source */
-    CCL_INSEL2_TCB1_gc = (0x0D<<0),  /* TCB1 WO input source */
-    CCL_INSEL2_AC2_gc = (0x0E<<0)  /* AC2 OUT input source */
+    CCL_INSEL2_SPI0_gc = (0x0B<<0)  /* SPI0 MISO source */
 } CCL_INSEL2_t;
 
 /* Sequential Selection */
@@ -636,11 +621,9 @@ typedef struct EVSYS_struct
     register8_t ASYNCUSER8;  /* Asynchronous User Ch 8 Input Selection - Event Out 0 */
     register8_t ASYNCUSER9;  /* Asynchronous User Ch 9 Input Selection - Event Out 1 */
     register8_t ASYNCUSER10;  /* Asynchronous User Ch 10 Input Selection - Event Out 2 */
-    register8_t ASYNCUSER11;  /* Asynchronous User Ch 11 Input Selection - TCB1 */
-    register8_t ASYNCUSER12;  /* Asynchronous User Ch 12 Input Selection - ADC1 */
-    register8_t reserved_3[3];
-    register8_t SYNCUSER0;  /* Synchronous User Ch 0 - TCA0 */
-    register8_t SYNCUSER1;  /* Synchronous User Ch 1 - USART0 */
+    register8_t reserved_3[5];
+    register8_t SYNCUSER0;  /* Synchronous User Ch 0 Input Selection - TCA0 */
+    register8_t SYNCUSER1;  /* Synchronous User Ch 1 Input Selection - USART0 */
     register8_t reserved_4[28];
 } EVSYS_t;
 
@@ -665,9 +648,7 @@ typedef enum EVSYS_ASYNCCH0_enum
     EVSYS_ASYNCCH0_PORTA_PIN5_gc = (0x0F<<0),  /* Asynchronous Event from Pin PA5 */
     EVSYS_ASYNCCH0_PORTA_PIN6_gc = (0x10<<0),  /* Asynchronous Event from Pin PA6 */
     EVSYS_ASYNCCH0_PORTA_PIN7_gc = (0x11<<0),  /* Asynchronous Event from Pin PA7 */
-    EVSYS_ASYNCCH0_UPDI_gc = (0x12<<0),  /* Unified Program and debug interface */
-    EVSYS_ASYNCCH0_AC1_OUT_gc = (0x13<<0),  /* Analog Comparator 1 out */
-    EVSYS_ASYNCCH0_AC2_OUT_gc = (0x14<<0)  /* Analog Comparator 2 out */
+    EVSYS_ASYNCCH0_UPDI_gc = (0x12<<0)  /* Unified Program and debug interface */
 } EVSYS_ASYNCCH0_t;
 
 /* Asynchronous Channel 1 Generator Selection */
@@ -690,9 +671,7 @@ typedef enum EVSYS_ASYNCCH1_enum
     EVSYS_ASYNCCH1_PORTB_PIN4_gc = (0x0E<<0),  /* Asynchronous Event from Pin PB4 */
     EVSYS_ASYNCCH1_PORTB_PIN5_gc = (0x0F<<0),  /* Asynchronous Event from Pin PB5 */
     EVSYS_ASYNCCH1_PORTB_PIN6_gc = (0x10<<0),  /* Asynchronous Event from Pin PB6 */
-    EVSYS_ASYNCCH1_PORTB_PIN7_gc = (0x11<<0),  /* Asynchronous Event from Pin PB7 */
-    EVSYS_ASYNCCH1_AC1_OUT_gc = (0x12<<0),  /* Analog Comparator 1 out */
-    EVSYS_ASYNCCH1_AC2_OUT_gc = (0x13<<0)  /* Analog Comparator 2 out */
+    EVSYS_ASYNCCH1_PORTB_PIN7_gc = (0x11<<0)  /* Asynchronous Event from Pin PB7 */
 } EVSYS_ASYNCCH1_t;
 
 /* Asynchronous Channel 2 Generator Selection */
@@ -713,9 +692,7 @@ typedef enum EVSYS_ASYNCCH2_enum
     EVSYS_ASYNCCH2_PORTC_PIN2_gc = (0x0C<<0),  /* Asynchronous Event from Pin PC2 */
     EVSYS_ASYNCCH2_PORTC_PIN3_gc = (0x0D<<0),  /* Asynchronous Event from Pin PC3 */
     EVSYS_ASYNCCH2_PORTC_PIN4_gc = (0x0E<<0),  /* Asynchronous Event from Pin PC4 */
-    EVSYS_ASYNCCH2_PORTC_PIN5_gc = (0x0F<<0),  /* Asynchronous Event from Pin PC5 */
-    EVSYS_ASYNCCH2_AC1_OUT_gc = (0x10<<0),  /* Analog Comparator 1 out */
-    EVSYS_ASYNCCH2_AC2_OUT_gc = (0x11<<0)  /* Analog Comparator 2 out */
+    EVSYS_ASYNCCH2_PORTC_PIN5_gc = (0x0F<<0)  /* Asynchronous Event from Pin PC5 */
 } EVSYS_ASYNCCH2_t;
 
 /* Asynchronous Channel 3 Generator Selection */
@@ -738,9 +715,7 @@ typedef enum EVSYS_ASYNCCH3_enum
     EVSYS_ASYNCCH3_PIT_DIV512_gc = (0x0E<<0),  /* Periodic Interrupt CLK_RTC div 512 */
     EVSYS_ASYNCCH3_PIT_DIV256_gc = (0x0F<<0),  /* Periodic Interrupt CLK_RTC div 256 */
     EVSYS_ASYNCCH3_PIT_DIV128_gc = (0x10<<0),  /* Periodic Interrupt CLK_RTC div 128 */
-    EVSYS_ASYNCCH3_PIT_DIV64_gc = (0x11<<0),  /* Periodic Interrupt CLK_RTC div 64 */
-    EVSYS_ASYNCCH3_AC1_OUT_gc = (0x12<<0),  /* Analog Comparator 1 out */
-    EVSYS_ASYNCCH3_AC2_OUT_gc = (0x13<<0)  /* Analog Comparator 2 out */
+    EVSYS_ASYNCCH3_PIT_DIV64_gc = (0x11<<0)  /* Periodic Interrupt CLK_RTC div 64 */
 } EVSYS_ASYNCCH3_t;
 
 /* Asynchronous User Ch 0 Input Selection - TCB0 */
@@ -778,30 +753,6 @@ typedef enum EVSYS_ASYNCUSER10_enum
     EVSYS_ASYNCUSER10_ASYNCCH2_gc = (0x05<<0),  /* Asynchronous Event Channel 2 */
     EVSYS_ASYNCUSER10_ASYNCCH3_gc = (0x06<<0)  /* Asynchronous Event Channel 3 */
 } EVSYS_ASYNCUSER10_t;
-
-/* Asynchronous User Ch 11 Input Selection - TCB1 */
-typedef enum EVSYS_ASYNCUSER11_enum
-{
-    EVSYS_ASYNCUSER11_OFF_gc = (0x00<<0),  /* Off */
-    EVSYS_ASYNCUSER11_SYNCCH0_gc = (0x01<<0),  /* Synchronous Event Channel 0 */
-    EVSYS_ASYNCUSER11_SYNCCH1_gc = (0x02<<0),  /* Synchronous Event Channel 1 */
-    EVSYS_ASYNCUSER11_ASYNCCH0_gc = (0x03<<0),  /* Asynchronous Event Channel 0 */
-    EVSYS_ASYNCUSER11_ASYNCCH1_gc = (0x04<<0),  /* Asynchronous Event Channel 1 */
-    EVSYS_ASYNCUSER11_ASYNCCH2_gc = (0x05<<0),  /* Asynchronous Event Channel 2 */
-    EVSYS_ASYNCUSER11_ASYNCCH3_gc = (0x06<<0)  /* Asynchronous Event Channel 3 */
-} EVSYS_ASYNCUSER11_t;
-
-/* Asynchronous User Ch 12 Input Selection - ADC0 */
-typedef enum EVSYS_ASYNCUSER12_enum
-{
-    EVSYS_ASYNCUSER12_OFF_gc = (0x00<<0),  /* Off */
-    EVSYS_ASYNCUSER12_SYNCCH0_gc = (0x01<<0),  /* Synchronous Event Channel 0 */
-    EVSYS_ASYNCUSER12_SYNCCH1_gc = (0x02<<0),  /* Synchronous Event Channel 1 */
-    EVSYS_ASYNCUSER12_ASYNCCH0_gc = (0x03<<0),  /* Asynchronous Event Channel 0 */
-    EVSYS_ASYNCUSER12_ASYNCCH1_gc = (0x04<<0),  /* Asynchronous Event Channel 1 */
-    EVSYS_ASYNCUSER12_ASYNCCH2_gc = (0x05<<0),  /* Asynchronous Event Channel 2 */
-    EVSYS_ASYNCUSER12_ASYNCCH3_gc = (0x06<<0)  /* Asynchronous Event Channel 3 */
-} EVSYS_ASYNCUSER12_t;
 
 /* Asynchronous User Ch 2 Input Selection - CCL LUT0 Event 0 */
 typedef enum EVSYS_ASYNCUSER2_enum
@@ -922,8 +873,7 @@ typedef enum EVSYS_SYNCCH0_enum
     EVSYS_SYNCCH0_PORTA_PIN4_gc = (0x11<<0),  /* Synchronous Event from Pin PA4 */
     EVSYS_SYNCCH0_PORTA_PIN5_gc = (0x12<<0),  /* Synchronous Event from Pin PA5 */
     EVSYS_SYNCCH0_PORTA_PIN6_gc = (0x13<<0),  /* Synchronous Event from Pin PA6 */
-    EVSYS_SYNCCH0_PORTA_PIN7_gc = (0x14<<0),  /* Synchronous Event from Pin PA7 */
-    EVSYS_SYNCCH0_TCB1_gc = (0x15<<0)  /* Timer/Counter B1 */
+    EVSYS_SYNCCH0_PORTA_PIN7_gc = (0x14<<0)  /* Synchronous Event from Pin PA7 */
 } EVSYS_SYNCCH0_t;
 
 /* Synchronous Channel 1 Generator Selection */
@@ -943,11 +893,10 @@ typedef enum EVSYS_SYNCCH1_enum
     EVSYS_SYNCCH1_PORTB_PIN4_gc = (0x0C<<0),  /* Synchronous Event from Pin PB4 */
     EVSYS_SYNCCH1_PORTB_PIN5_gc = (0x0D<<0),  /* Synchronous Event from Pin PB5 */
     EVSYS_SYNCCH1_PORTB_PIN6_gc = (0x0E<<0),  /* Synchronous Event from Pin PB6 */
-    EVSYS_SYNCCH1_PORTB_PIN7_gc = (0x0F<<0),  /* Synchronous Event from Pin PB7 */
-    EVSYS_SYNCCH1_TCB1_gc = (0x10<<0)  /* Timer/Counter B1 */
+    EVSYS_SYNCCH1_PORTB_PIN7_gc = (0x0F<<0)  /* Synchronous Event from Pin PB7 */
 } EVSYS_SYNCCH1_t;
 
-/* Synchronous User Ch 0 - TCA0 select */
+/* Synchronous User Ch 0 Input Selection - TCA0 */
 typedef enum EVSYS_SYNCUSER0_enum
 {
     EVSYS_SYNCUSER0_OFF_gc = (0x00<<0),  /* Off */
@@ -955,7 +904,7 @@ typedef enum EVSYS_SYNCUSER0_enum
     EVSYS_SYNCUSER0_SYNCCH1_gc = (0x02<<0)  /* Synchronous Event Channel 1 */
 } EVSYS_SYNCUSER0_t;
 
-/* Synchronous User Ch 1 - USART0 select */
+/* Synchronous User Ch 1 Input Selection - USART0 */
 typedef enum EVSYS_SYNCUSER1_enum
 {
     EVSYS_SYNCUSER1_OFF_gc = (0x00<<0),  /* Off */
@@ -1022,7 +971,7 @@ typedef enum LVL_enum
 /* Watchdog Timeout Period select */
 typedef enum PERIOD_enum
 {
-    PERIOD_OFF_gc = (0x00<<0),  /* Off */
+    PERIOD_OFF_gc = (0x00<<0),  /* Watch-Dog timer Off */
     PERIOD_8CLK_gc = (0x01<<0),  /* 8 cycles (8ms) */
     PERIOD_16CLK_gc = (0x02<<0),  /* 16 cycles (16ms) */
     PERIOD_32CLK_gc = (0x03<<0),  /* 32 cycles (32ms) */
@@ -1047,8 +996,8 @@ typedef enum RSTPINCFG_enum
 /* BOD Sample Frequency select */
 typedef enum SAMPFREQ_enum
 {
-    SAMPFREQ_1KHZ_gc = (0x00<<4),  /* 1kHz sampling frequency */
-    SAMPFREQ_125HZ_gc = (0x01<<4)  /* 125Hz sampling frequency */
+    SAMPFREQ_1KHz_gc = (0x00<<4),  /* 1kHz sampling frequency */
+    SAMPFREQ_125Hz_gc = (0x01<<4)  /* 125Hz sampling frequency */
 } SAMPFREQ_t;
 
 /* BOD Operation in Sleep Mode select */
@@ -1075,7 +1024,7 @@ typedef enum SUT_enum
 /* Watchdog Window Timeout Period select */
 typedef enum WINDOW_enum
 {
-    WINDOW_OFF_gc = (0x00<<4),  /* Off */
+    WINDOW_OFF_gc = (0x00<<4),  /* Window mode off */
     WINDOW_8CLK_gc = (0x01<<4),  /* 8 cycles (8ms) */
     WINDOW_16CLK_gc = (0x02<<4),  /* 16 cycles (16ms) */
     WINDOW_32CLK_gc = (0x03<<4),  /* 32 cycles (32ms) */
@@ -1249,40 +1198,12 @@ typedef enum PORTMUX_TCA03_enum
     PORTMUX_TCA03_ALTERNATE_gc = (0x01<<3)  /* Alternate pin */
 } PORTMUX_TCA03_t;
 
-/* Port Multiplexer TCA0 Output 4 select */
-typedef enum PORTMUX_TCA04_enum
-{
-    PORTMUX_TCA04_DEFAULT_gc = (0x00<<4),  /* Default pin */
-    PORTMUX_TCA04_ALTERNATE_gc = (0x01<<4)  /* Alternate pin */
-} PORTMUX_TCA04_t;
-
-/* Port Multiplexer TCA0 Output 5 select */
-typedef enum PORTMUX_TCA05_enum
-{
-    PORTMUX_TCA05_DEFAULT_gc = (0x00<<5),  /* Default pin */
-    PORTMUX_TCA05_ALTERNATE_gc = (0x01<<5)  /* Alternate pin */
-} PORTMUX_TCA05_t;
-
-/* Port Multiplexer TCB0 select */
+/* Port Multiplexer TCB select */
 typedef enum PORTMUX_TCB0_enum
 {
     PORTMUX_TCB0_DEFAULT_gc = (0x00<<0),  /* Default pin */
     PORTMUX_TCB0_ALTERNATE_gc = (0x01<<0)  /* Alternate pin */
 } PORTMUX_TCB0_t;
-
-/* Port Multiplexer TCB1 select */
-typedef enum PORTMUX_TCB1_enum
-{
-    PORTMUX_TCB1_DEFAULT_gc = (0x00<<1),  /* Default pin */
-    PORTMUX_TCB1_ALTERNATE_gc = (0x01<<1)  /* Alternate pin */
-} PORTMUX_TCB1_t;
-
-/* Port Multiplexer TWI0 select */
-typedef enum PORTMUX_TWI0_enum
-{
-    PORTMUX_TWI0_DEFAULT_gc = (0x00<<4),  /* Default pins */
-    PORTMUX_TWI0_ALTERNATE_gc = (0x01<<4)  /* Alternate pins */
-} PORTMUX_TWI0_t;
 
 /* Port Multiplexer USART0 select */
 typedef enum PORTMUX_USART0_enum
@@ -1290,7 +1211,6 @@ typedef enum PORTMUX_USART0_enum
     PORTMUX_USART0_DEFAULT_gc = (0x00<<0),  /* Default pins */
     PORTMUX_USART0_ALTERNATE_gc = (0x01<<0)  /* Alternate pins */
 } PORTMUX_USART0_t;
-
 
 /*
 --------------------------------------------------------------------------
@@ -1832,13 +1752,13 @@ typedef enum TCD_INPUTMODE_enum
     TCD_INPUTMODE_LVLTRIGFREQ_gc = (0x0A<<0)  /* Stop output at level, maintain frequency */
 } TCD_INPUTMODE_t;
 
-/* Synchronization prescaler select */
+/* Syncronization prescaler select */
 typedef enum TCD_SYNCPRES_enum
 {
-    TCD_SYNCPRES_DIV1_gc = (0x00<<1),  /* Selected clock source divided by 1 */
-    TCD_SYNCPRES_DIV2_gc = (0x01<<1),  /* Selected clock source divided by 2 */
-    TCD_SYNCPRES_DIV4_gc = (0x02<<1),  /* Selected clock source divided by 4 */
-    TCD_SYNCPRES_DIV8_gc = (0x03<<1)  /* Selected clock source divided by 8 */
+    TCD_SYNCPRES_DIV1_gc = (0x00<<1),  /* Selevted clock source divided by 1 */
+    TCD_SYNCPRES_DIV2_gc = (0x01<<1),  /* Selevted clock source divided by 2 */
+    TCD_SYNCPRES_DIV4_gc = (0x02<<1),  /* Selevted clock source divided by 4 */
+    TCD_SYNCPRES_DIV8_gc = (0x03<<1)  /* Selevted clock source divided by 8 */
 } TCD_SYNCPRES_t;
 
 /* Waveform generation mode select */
@@ -2061,38 +1981,6 @@ typedef struct USERROW_struct
     register8_t USERROW29;  /* User Row Byte 29 */
     register8_t USERROW30;  /* User Row Byte 30 */
     register8_t USERROW31;  /* User Row Byte 31 */
-    register8_t USERROW32;  /* User Row Byte 32 */
-    register8_t USERROW33;  /* User Row Byte 33 */
-    register8_t USERROW34;  /* User Row Byte 34 */
-    register8_t USERROW35;  /* User Row Byte 35 */
-    register8_t USERROW36;  /* User Row Byte 36 */
-    register8_t USERROW37;  /* User Row Byte 37 */
-    register8_t USERROW38;  /* User Row Byte 38 */
-    register8_t USERROW39;  /* User Row Byte 39 */
-    register8_t USERROW40;  /* User Row Byte 40 */
-    register8_t USERROW41;  /* User Row Byte 41 */
-    register8_t USERROW42;  /* User Row Byte 42 */
-    register8_t USERROW43;  /* User Row Byte 43 */
-    register8_t USERROW44;  /* User Row Byte 44 */
-    register8_t USERROW45;  /* User Row Byte 45 */
-    register8_t USERROW46;  /* User Row Byte 46 */
-    register8_t USERROW47;  /* User Row Byte 47 */
-    register8_t USERROW48;  /* User Row Byte 48 */
-    register8_t USERROW49;  /* User Row Byte 49 */
-    register8_t USERROW50;  /* User Row Byte 50 */
-    register8_t USERROW51;  /* User Row Byte 51 */
-    register8_t USERROW52;  /* User Row Byte 52 */
-    register8_t USERROW53;  /* User Row Byte 53 */
-    register8_t USERROW54;  /* User Row Byte 54 */
-    register8_t USERROW55;  /* User Row Byte 55 */
-    register8_t USERROW56;  /* User Row Byte 56 */
-    register8_t USERROW57;  /* User Row Byte 57 */
-    register8_t USERROW58;  /* User Row Byte 58 */
-    register8_t USERROW59;  /* User Row Byte 59 */
-    register8_t USERROW60;  /* User Row Byte 60 */
-    register8_t USERROW61;  /* User Row Byte 61 */
-    register8_t USERROW62;  /* User Row Byte 62 */
-    register8_t USERROW63;  /* User Row Byte 63 */
 } USERROW_t;
 
 
@@ -2123,8 +2011,6 @@ typedef struct VREF_struct
 {
     register8_t CTRLA;  /* Control A */
     register8_t CTRLB;  /* Control B */
-    register8_t CTRLC;  /* Control C */
-    register8_t CTRLD;  /* Control D */
 } VREF_t;
 
 /* ADC0 reference select */
@@ -2137,16 +2023,6 @@ typedef enum VREF_ADC0REFSEL_enum
     VREF_ADC0REFSEL_1V5_gc = (0x04<<4)  /* Voltage reference at 1.5V */
 } VREF_ADC0REFSEL_t;
 
-/* ADC1 reference select */
-typedef enum VREF_ADC1REFSEL_enum
-{
-    VREF_ADC1REFSEL_0V55_gc = (0x00<<4),  /* Voltage reference at 0.55V */
-    VREF_ADC1REFSEL_1V1_gc = (0x01<<4),  /* Voltage reference at 1.1V */
-    VREF_ADC1REFSEL_2V5_gc = (0x02<<4),  /* Voltage reference at 2.5V */
-    VREF_ADC1REFSEL_4V34_gc = (0x03<<4),  /* Voltage reference at 4.34V */
-    VREF_ADC1REFSEL_1V5_gc = (0x04<<4)  /* Voltage reference at 1.5V */
-} VREF_ADC1REFSEL_t;
-
 /* DAC0/AC0 reference select */
 typedef enum VREF_DAC0REFSEL_enum
 {
@@ -2156,26 +2032,6 @@ typedef enum VREF_DAC0REFSEL_enum
     VREF_DAC0REFSEL_4V34_gc = (0x03<<0),  /* Voltage reference at 4.34V */
     VREF_DAC0REFSEL_1V5_gc = (0x04<<0)  /* Voltage reference at 1.5V */
 } VREF_DAC0REFSEL_t;
-
-/* DAC1/AC1 reference select */
-typedef enum VREF_DAC1REFSEL_enum
-{
-    VREF_DAC1REFSEL_0V55_gc = (0x00<<0),  /* Voltage reference at 0.55V */
-    VREF_DAC1REFSEL_1V1_gc = (0x01<<0),  /* Voltage reference at 1.1V */
-    VREF_DAC1REFSEL_2V5_gc = (0x02<<0),  /* Voltage reference at 2.5V */
-    VREF_DAC1REFSEL_4V34_gc = (0x03<<0),  /* Voltage reference at 4.34V */
-    VREF_DAC1REFSEL_1V5_gc = (0x04<<0)  /* Voltage reference at 1.5V */
-} VREF_DAC1REFSEL_t;
-
-/* DAC2/AC2 reference select */
-typedef enum VREF_DAC2REFSEL_enum
-{
-    VREF_DAC2REFSEL_0V55_gc = (0x00<<0),  /* Voltage reference at 0.55V */
-    VREF_DAC2REFSEL_1V1_gc = (0x01<<0),  /* Voltage reference at 1.1V */
-    VREF_DAC2REFSEL_2V5_gc = (0x02<<0),  /* Voltage reference at 2.5V */
-    VREF_DAC2REFSEL_4V34_gc = (0x03<<0),  /* Voltage reference at 4.34V */
-    VREF_DAC2REFSEL_1V5_gc = (0x04<<0)  /* Voltage reference at 1.5V */
-} VREF_DAC2REFSEL_t;
 
 /*
 --------------------------------------------------------------------------
@@ -2193,7 +2049,7 @@ typedef struct WDT_struct
 /* Period select */
 typedef enum WDT_PERIOD_enum
 {
-    WDT_PERIOD_OFF_gc = (0x00<<0),  /* Off */
+    WDT_PERIOD_OFF_gc = (0x00<<0),  /* Watch-Dog timer Off */
     WDT_PERIOD_8CLK_gc = (0x01<<0),  /* 8 cycles (8ms) */
     WDT_PERIOD_16CLK_gc = (0x02<<0),  /* 16 cycles (16ms) */
     WDT_PERIOD_32CLK_gc = (0x03<<0),  /* 32 cycles (32ms) */
@@ -2210,7 +2066,7 @@ typedef enum WDT_PERIOD_enum
 /* Window select */
 typedef enum WDT_WINDOW_enum
 {
-    WDT_WINDOW_OFF_gc = (0x00<<4),  /* Off */
+    WDT_WINDOW_OFF_gc = (0x00<<4),  /* Window mode off */
     WDT_WINDOW_8CLK_gc = (0x01<<4),  /* 8 cycles (8ms) */
     WDT_WINDOW_16CLK_gc = (0x02<<4),  /* 16 cycles (16ms) */
     WDT_WINDOW_32CLK_gc = (0x03<<4),  /* 32 cycles (32ms) */
@@ -2245,22 +2101,14 @@ IO Module Instances. Mapped to memory.
 #define CCL                   (*(CCL_t *) 0x01C0) /* Configurable Custom Logic */
 #define PORTMUX           (*(PORTMUX_t *) 0x0200) /* Port Multiplexer */
 #define PORTA                (*(PORT_t *) 0x0400) /* I/O Ports */
-#define PORTB                (*(PORT_t *) 0x0420) /* I/O Ports */
-#define PORTC                (*(PORT_t *) 0x0440) /* I/O Ports */
 #define ADC0                  (*(ADC_t *) 0x0600) /* Analog to Digital Converter */
-#define ADC1                  (*(ADC_t *) 0x0640) /* Analog to Digital Converter */
-#define AC0                    (*(AC_t *) 0x0680) /* Analog Comparator */
-#define AC1                    (*(AC_t *) 0x0688) /* Analog Comparator */
-#define AC2                    (*(AC_t *) 0x0690) /* Analog Comparator */
-#define DAC0                  (*(DAC_t *) 0x06A0) /* Digital to Analog Converter */
-#define DAC1                  (*(DAC_t *) 0x06A8) /* Digital to Analog Converter */
-#define DAC2                  (*(DAC_t *) 0x06B0) /* Digital to Analog Converter */
+#define AC0                    (*(AC_t *) 0x0670) /* Analog Comparator */
+#define DAC0                  (*(DAC_t *) 0x0680) /* Digital to Analog Converter */
 #define USART0              (*(USART_t *) 0x0800) /* Universal Synchronous and Asynchronous Receiver and Transmitter */
 #define TWI0                  (*(TWI_t *) 0x0810) /* Two-Wire Interface */
 #define SPI0                  (*(SPI_t *) 0x0820) /* Serial Peripheral Interface */
 #define TCA0                  (*(TCA_t *) 0x0A00) /* 16-bit Timer/Counter Type A */
 #define TCB0                  (*(TCB_t *) 0x0A40) /* 16-bit Timer Type B */
-#define TCB1                  (*(TCB_t *) 0x0A50) /* 16-bit Timer Type B */
 #define TCD0                  (*(TCD_t *) 0x0A80) /* Timer Counter D */
 #define SYSCFG             (*(SYSCFG_t *) 0x0F00) /* System Configuration Registers */
 #define NVMCTRL           (*(NVMCTRL_t *) 0x1000) /* Non-volatile Memory Controller */
@@ -2350,8 +2198,6 @@ IO Module Instances. Mapped to memory.
 /* VREF - Voltage reference */
 #define VREF_CTRLA  _SFR_MEM8(0x00A0)
 #define VREF_CTRLB  _SFR_MEM8(0x00A1)
-#define VREF_CTRLC  _SFR_MEM8(0x00A2)
-#define VREF_CTRLD  _SFR_MEM8(0x00A3)
 
 
 /* WDT - Watch-Dog Timer */
@@ -2416,8 +2262,6 @@ IO Module Instances. Mapped to memory.
 #define EVSYS_ASYNCUSER8  _SFR_MEM8(0x019A)
 #define EVSYS_ASYNCUSER9  _SFR_MEM8(0x019B)
 #define EVSYS_ASYNCUSER10  _SFR_MEM8(0x019C)
-#define EVSYS_ASYNCUSER11  _SFR_MEM8(0x019D)
-#define EVSYS_ASYNCUSER12  _SFR_MEM8(0x019E)
 #define EVSYS_SYNCUSER0  _SFR_MEM8(0x01A2)
 #define EVSYS_SYNCUSER1  _SFR_MEM8(0x01A3)
 
@@ -2463,48 +2307,6 @@ IO Module Instances. Mapped to memory.
 #define PORTA_PIN7CTRL  _SFR_MEM8(0x0417)
 
 
-/* PORT (PORTB) - I/O Ports */
-#define PORTB_DIR  _SFR_MEM8(0x0420)
-#define PORTB_DIRSET  _SFR_MEM8(0x0421)
-#define PORTB_DIRCLR  _SFR_MEM8(0x0422)
-#define PORTB_DIRTGL  _SFR_MEM8(0x0423)
-#define PORTB_OUT  _SFR_MEM8(0x0424)
-#define PORTB_OUTSET  _SFR_MEM8(0x0425)
-#define PORTB_OUTCLR  _SFR_MEM8(0x0426)
-#define PORTB_OUTTGL  _SFR_MEM8(0x0427)
-#define PORTB_IN  _SFR_MEM8(0x0428)
-#define PORTB_INTFLAGS  _SFR_MEM8(0x0429)
-#define PORTB_PIN0CTRL  _SFR_MEM8(0x0430)
-#define PORTB_PIN1CTRL  _SFR_MEM8(0x0431)
-#define PORTB_PIN2CTRL  _SFR_MEM8(0x0432)
-#define PORTB_PIN3CTRL  _SFR_MEM8(0x0433)
-#define PORTB_PIN4CTRL  _SFR_MEM8(0x0434)
-#define PORTB_PIN5CTRL  _SFR_MEM8(0x0435)
-#define PORTB_PIN6CTRL  _SFR_MEM8(0x0436)
-#define PORTB_PIN7CTRL  _SFR_MEM8(0x0437)
-
-
-/* PORT (PORTC) - I/O Ports */
-#define PORTC_DIR  _SFR_MEM8(0x0440)
-#define PORTC_DIRSET  _SFR_MEM8(0x0441)
-#define PORTC_DIRCLR  _SFR_MEM8(0x0442)
-#define PORTC_DIRTGL  _SFR_MEM8(0x0443)
-#define PORTC_OUT  _SFR_MEM8(0x0444)
-#define PORTC_OUTSET  _SFR_MEM8(0x0445)
-#define PORTC_OUTCLR  _SFR_MEM8(0x0446)
-#define PORTC_OUTTGL  _SFR_MEM8(0x0447)
-#define PORTC_IN  _SFR_MEM8(0x0448)
-#define PORTC_INTFLAGS  _SFR_MEM8(0x0449)
-#define PORTC_PIN0CTRL  _SFR_MEM8(0x0450)
-#define PORTC_PIN1CTRL  _SFR_MEM8(0x0451)
-#define PORTC_PIN2CTRL  _SFR_MEM8(0x0452)
-#define PORTC_PIN3CTRL  _SFR_MEM8(0x0453)
-#define PORTC_PIN4CTRL  _SFR_MEM8(0x0454)
-#define PORTC_PIN5CTRL  _SFR_MEM8(0x0455)
-#define PORTC_PIN6CTRL  _SFR_MEM8(0x0456)
-#define PORTC_PIN7CTRL  _SFR_MEM8(0x0457)
-
-
 /* ADC (ADC0) - Analog to Digital Converter */
 #define ADC0_CTRLA  _SFR_MEM8(0x0600)
 #define ADC0_CTRLB  _SFR_MEM8(0x0601)
@@ -2531,66 +2333,16 @@ IO Module Instances. Mapped to memory.
 #define ADC0_CALIB  _SFR_MEM8(0x0616)
 
 
-/* ADC (ADC1) - Analog to Digital Converter */
-#define ADC1_CTRLA  _SFR_MEM8(0x0640)
-#define ADC1_CTRLB  _SFR_MEM8(0x0641)
-#define ADC1_CTRLC  _SFR_MEM8(0x0642)
-#define ADC1_CTRLD  _SFR_MEM8(0x0643)
-#define ADC1_CTRLE  _SFR_MEM8(0x0644)
-#define ADC1_SAMPCTRL  _SFR_MEM8(0x0645)
-#define ADC1_MUXPOS  _SFR_MEM8(0x0646)
-#define ADC1_COMMAND  _SFR_MEM8(0x0648)
-#define ADC1_EVCTRL  _SFR_MEM8(0x0649)
-#define ADC1_INTCTRL  _SFR_MEM8(0x064A)
-#define ADC1_INTFLAGS  _SFR_MEM8(0x064B)
-#define ADC1_DBGCTRL  _SFR_MEM8(0x064C)
-#define ADC1_TEMP  _SFR_MEM8(0x064D)
-#define ADC1_RES  _SFR_MEM16(0x0650)
-#define ADC1_RESL  _SFR_MEM8(0x0650)
-#define ADC1_RESH  _SFR_MEM8(0x0651)
-#define ADC1_WINLT  _SFR_MEM16(0x0652)
-#define ADC1_WINLTL  _SFR_MEM8(0x0652)
-#define ADC1_WINLTH  _SFR_MEM8(0x0653)
-#define ADC1_WINHT  _SFR_MEM16(0x0654)
-#define ADC1_WINHTL  _SFR_MEM8(0x0654)
-#define ADC1_WINHTH  _SFR_MEM8(0x0655)
-#define ADC1_CALIB  _SFR_MEM8(0x0656)
-
-
 /* AC (AC0) - Analog Comparator */
-#define AC0_CTRLA  _SFR_MEM8(0x0680)
-#define AC0_MUXCTRLA  _SFR_MEM8(0x0682)
-#define AC0_INTCTRL  _SFR_MEM8(0x0686)
-#define AC0_STATUS  _SFR_MEM8(0x0687)
-
-
-/* AC (AC1) - Analog Comparator */
-#define AC1_CTRLA  _SFR_MEM8(0x0688)
-#define AC1_MUXCTRLA  _SFR_MEM8(0x068A)
-#define AC1_INTCTRL  _SFR_MEM8(0x068E)
-#define AC1_STATUS  _SFR_MEM8(0x068F)
-
-
-/* AC (AC2) - Analog Comparator */
-#define AC2_CTRLA  _SFR_MEM8(0x0690)
-#define AC2_MUXCTRLA  _SFR_MEM8(0x0692)
-#define AC2_INTCTRL  _SFR_MEM8(0x0696)
-#define AC2_STATUS  _SFR_MEM8(0x0697)
+#define AC0_CTRLA  _SFR_MEM8(0x0670)
+#define AC0_MUXCTRLA  _SFR_MEM8(0x0672)
+#define AC0_INTCTRL  _SFR_MEM8(0x0676)
+#define AC0_STATUS  _SFR_MEM8(0x0677)
 
 
 /* DAC (DAC0) - Digital to Analog Converter */
-#define DAC0_CTRLA  _SFR_MEM8(0x06A0)
-#define DAC0_DATA  _SFR_MEM8(0x06A1)
-
-
-/* DAC (DAC1) - Digital to Analog Converter */
-#define DAC1_CTRLA  _SFR_MEM8(0x06A8)
-#define DAC1_DATA  _SFR_MEM8(0x06A9)
-
-
-/* DAC (DAC2) - Digital to Analog Converter */
-#define DAC2_CTRLA  _SFR_MEM8(0x06B0)
-#define DAC2_DATA  _SFR_MEM8(0x06B1)
+#define DAC0_CTRLA  _SFR_MEM8(0x0680)
+#define DAC0_DATA  _SFR_MEM8(0x0681)
 
 
 /* USART (USART0) - Universal Synchronous and Asynchronous Receiver and Transmitter */
@@ -2716,23 +2468,6 @@ IO Module Instances. Mapped to memory.
 #define TCB0_CCMP  _SFR_MEM16(0x0A4C)
 #define TCB0_CCMPL  _SFR_MEM8(0x0A4C)
 #define TCB0_CCMPH  _SFR_MEM8(0x0A4D)
-
-
-/* TCB (TCB1) - 16-bit Timer Type B */
-#define TCB1_CTRLA  _SFR_MEM8(0x0A50)
-#define TCB1_CTRLB  _SFR_MEM8(0x0A51)
-#define TCB1_EVCTRL  _SFR_MEM8(0x0A54)
-#define TCB1_INTCTRL  _SFR_MEM8(0x0A55)
-#define TCB1_INTFLAGS  _SFR_MEM8(0x0A56)
-#define TCB1_STATUS  _SFR_MEM8(0x0A57)
-#define TCB1_DBGCTRL  _SFR_MEM8(0x0A58)
-#define TCB1_TEMP  _SFR_MEM8(0x0A59)
-#define TCB1_CNT  _SFR_MEM16(0x0A5A)
-#define TCB1_CNTL  _SFR_MEM8(0x0A5A)
-#define TCB1_CNTH  _SFR_MEM8(0x0A5B)
-#define TCB1_CCMP  _SFR_MEM16(0x0A5C)
-#define TCB1_CCMPL  _SFR_MEM8(0x0A5C)
-#define TCB1_CCMPH  _SFR_MEM8(0x0A5D)
 
 
 /* TCD (TCD0) - Timer Counter D */
@@ -2863,38 +2598,6 @@ IO Module Instances. Mapped to memory.
 #define USERROW_USERROW29  _SFR_MEM8(0x131D)
 #define USERROW_USERROW30  _SFR_MEM8(0x131E)
 #define USERROW_USERROW31  _SFR_MEM8(0x131F)
-#define USERROW_USERROW32  _SFR_MEM8(0x1320)
-#define USERROW_USERROW33  _SFR_MEM8(0x1321)
-#define USERROW_USERROW34  _SFR_MEM8(0x1322)
-#define USERROW_USERROW35  _SFR_MEM8(0x1323)
-#define USERROW_USERROW36  _SFR_MEM8(0x1324)
-#define USERROW_USERROW37  _SFR_MEM8(0x1325)
-#define USERROW_USERROW38  _SFR_MEM8(0x1326)
-#define USERROW_USERROW39  _SFR_MEM8(0x1327)
-#define USERROW_USERROW40  _SFR_MEM8(0x1328)
-#define USERROW_USERROW41  _SFR_MEM8(0x1329)
-#define USERROW_USERROW42  _SFR_MEM8(0x132A)
-#define USERROW_USERROW43  _SFR_MEM8(0x132B)
-#define USERROW_USERROW44  _SFR_MEM8(0x132C)
-#define USERROW_USERROW45  _SFR_MEM8(0x132D)
-#define USERROW_USERROW46  _SFR_MEM8(0x132E)
-#define USERROW_USERROW47  _SFR_MEM8(0x132F)
-#define USERROW_USERROW48  _SFR_MEM8(0x1330)
-#define USERROW_USERROW49  _SFR_MEM8(0x1331)
-#define USERROW_USERROW50  _SFR_MEM8(0x1332)
-#define USERROW_USERROW51  _SFR_MEM8(0x1333)
-#define USERROW_USERROW52  _SFR_MEM8(0x1334)
-#define USERROW_USERROW53  _SFR_MEM8(0x1335)
-#define USERROW_USERROW54  _SFR_MEM8(0x1336)
-#define USERROW_USERROW55  _SFR_MEM8(0x1337)
-#define USERROW_USERROW56  _SFR_MEM8(0x1338)
-#define USERROW_USERROW57  _SFR_MEM8(0x1339)
-#define USERROW_USERROW58  _SFR_MEM8(0x133A)
-#define USERROW_USERROW59  _SFR_MEM8(0x133B)
-#define USERROW_USERROW60  _SFR_MEM8(0x133C)
-#define USERROW_USERROW61  _SFR_MEM8(0x133D)
-#define USERROW_USERROW62  _SFR_MEM8(0x133E)
-#define USERROW_USERROW63  _SFR_MEM8(0x133F)
 
 
 
@@ -3215,6 +2918,26 @@ IO Module Instances. Mapped to memory.
 #define CCL_INSEL2_3_bm  (1<<3)  /* LUT Input 2 Source Selection bit 3 mask. */
 #define CCL_INSEL2_3_bp  3  /* LUT Input 2 Source Selection bit 3 position. */
 
+/* CCL.TRUTH0  bit masks and bit positions */
+#define CCL_TRUTH_gm  0xFF  /* Truth Table group mask. */
+#define CCL_TRUTH_gp  0  /* Truth Table group position. */
+#define CCL_TRUTH_0_bm  (1<<0)  /* Truth Table bit 0 mask. */
+#define CCL_TRUTH_0_bp  0  /* Truth Table bit 0 position. */
+#define CCL_TRUTH_1_bm  (1<<1)  /* Truth Table bit 1 mask. */
+#define CCL_TRUTH_1_bp  1  /* Truth Table bit 1 position. */
+#define CCL_TRUTH_2_bm  (1<<2)  /* Truth Table bit 2 mask. */
+#define CCL_TRUTH_2_bp  2  /* Truth Table bit 2 position. */
+#define CCL_TRUTH_3_bm  (1<<3)  /* Truth Table bit 3 mask. */
+#define CCL_TRUTH_3_bp  3  /* Truth Table bit 3 position. */
+#define CCL_TRUTH_4_bm  (1<<4)  /* Truth Table bit 4 mask. */
+#define CCL_TRUTH_4_bp  4  /* Truth Table bit 4 position. */
+#define CCL_TRUTH_5_bm  (1<<5)  /* Truth Table bit 5 mask. */
+#define CCL_TRUTH_5_bp  5  /* Truth Table bit 5 position. */
+#define CCL_TRUTH_6_bm  (1<<6)  /* Truth Table bit 6 mask. */
+#define CCL_TRUTH_6_bp  6  /* Truth Table bit 6 position. */
+#define CCL_TRUTH_7_bm  (1<<7)  /* Truth Table bit 7 mask. */
+#define CCL_TRUTH_7_bp  7  /* Truth Table bit 7 position. */
+
 /* CCL.LUT1CTRLA  bit masks and bit positions */
 /* CCL_ENABLE  is already defined. */
 /* CCL_OUTEN  is already defined. */
@@ -3228,6 +2951,9 @@ IO Module Instances. Mapped to memory.
 
 /* CCL.LUT1CTRLC  bit masks and bit positions */
 /* CCL_INSEL2  is already defined. */
+
+/* CCL.TRUTH1  bit masks and bit positions */
+/* CCL_TRUTH  is already defined. */
 
 
 /* CLKCTRL - Clock controller */
@@ -3801,85 +3527,45 @@ IO Module Instances. Mapped to memory.
 #define EVSYS_ASYNCUSER10_7_bm  (1<<7)  /* Asynchronous User Ch 10 Input Selection - Event Out 2 bit 7 mask. */
 #define EVSYS_ASYNCUSER10_7_bp  7  /* Asynchronous User Ch 10 Input Selection - Event Out 2 bit 7 position. */
 
-/* EVSYS.ASYNCUSER11  bit masks and bit positions */
-#define EVSYS_ASYNCUSER11_gm  0xFF  /* Asynchronous User Ch 11 Input Selection - TCB1 group mask. */
-#define EVSYS_ASYNCUSER11_gp  0  /* Asynchronous User Ch 11 Input Selection - TCB1 group position. */
-#define EVSYS_ASYNCUSER11_0_bm  (1<<0)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 0 mask. */
-#define EVSYS_ASYNCUSER11_0_bp  0  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 0 position. */
-#define EVSYS_ASYNCUSER11_1_bm  (1<<1)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 1 mask. */
-#define EVSYS_ASYNCUSER11_1_bp  1  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 1 position. */
-#define EVSYS_ASYNCUSER11_2_bm  (1<<2)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 2 mask. */
-#define EVSYS_ASYNCUSER11_2_bp  2  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 2 position. */
-#define EVSYS_ASYNCUSER11_3_bm  (1<<3)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 3 mask. */
-#define EVSYS_ASYNCUSER11_3_bp  3  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 3 position. */
-#define EVSYS_ASYNCUSER11_4_bm  (1<<4)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 4 mask. */
-#define EVSYS_ASYNCUSER11_4_bp  4  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 4 position. */
-#define EVSYS_ASYNCUSER11_5_bm  (1<<5)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 5 mask. */
-#define EVSYS_ASYNCUSER11_5_bp  5  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 5 position. */
-#define EVSYS_ASYNCUSER11_6_bm  (1<<6)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 6 mask. */
-#define EVSYS_ASYNCUSER11_6_bp  6  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 6 position. */
-#define EVSYS_ASYNCUSER11_7_bm  (1<<7)  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 7 mask. */
-#define EVSYS_ASYNCUSER11_7_bp  7  /* Asynchronous User Ch 11 Input Selection - TCB1 bit 7 position. */
-
-/* EVSYS.ASYNCUSER12  bit masks and bit positions */
-#define EVSYS_ASYNCUSER12_gm  0xFF  /* Asynchronous User Ch 12 Input Selection - ADC0 group mask. */
-#define EVSYS_ASYNCUSER12_gp  0  /* Asynchronous User Ch 12 Input Selection - ADC0 group position. */
-#define EVSYS_ASYNCUSER12_0_bm  (1<<0)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 0 mask. */
-#define EVSYS_ASYNCUSER12_0_bp  0  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 0 position. */
-#define EVSYS_ASYNCUSER12_1_bm  (1<<1)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 1 mask. */
-#define EVSYS_ASYNCUSER12_1_bp  1  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 1 position. */
-#define EVSYS_ASYNCUSER12_2_bm  (1<<2)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 2 mask. */
-#define EVSYS_ASYNCUSER12_2_bp  2  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 2 position. */
-#define EVSYS_ASYNCUSER12_3_bm  (1<<3)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 3 mask. */
-#define EVSYS_ASYNCUSER12_3_bp  3  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 3 position. */
-#define EVSYS_ASYNCUSER12_4_bm  (1<<4)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 4 mask. */
-#define EVSYS_ASYNCUSER12_4_bp  4  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 4 position. */
-#define EVSYS_ASYNCUSER12_5_bm  (1<<5)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 5 mask. */
-#define EVSYS_ASYNCUSER12_5_bp  5  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 5 position. */
-#define EVSYS_ASYNCUSER12_6_bm  (1<<6)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 6 mask. */
-#define EVSYS_ASYNCUSER12_6_bp  6  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 6 position. */
-#define EVSYS_ASYNCUSER12_7_bm  (1<<7)  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 7 mask. */
-#define EVSYS_ASYNCUSER12_7_bp  7  /* Asynchronous User Ch 12 Input Selection - ADC0 bit 7 position. */
-
 /* EVSYS.SYNCUSER0  bit masks and bit positions */
-#define EVSYS_SYNCUSER0_gm  0xFF  /* Synchronous User Ch 0 - TCA0 group mask. */
-#define EVSYS_SYNCUSER0_gp  0  /* Synchronous User Ch 0 - TCA0 group position. */
-#define EVSYS_SYNCUSER0_0_bm  (1<<0)  /* Synchronous User Ch 0 - TCA0 bit 0 mask. */
-#define EVSYS_SYNCUSER0_0_bp  0  /* Synchronous User Ch 0 - TCA0 bit 0 position. */
-#define EVSYS_SYNCUSER0_1_bm  (1<<1)  /* Synchronous User Ch 0 - TCA0 bit 1 mask. */
-#define EVSYS_SYNCUSER0_1_bp  1  /* Synchronous User Ch 0 - TCA0 bit 1 position. */
-#define EVSYS_SYNCUSER0_2_bm  (1<<2)  /* Synchronous User Ch 0 - TCA0 bit 2 mask. */
-#define EVSYS_SYNCUSER0_2_bp  2  /* Synchronous User Ch 0 - TCA0 bit 2 position. */
-#define EVSYS_SYNCUSER0_3_bm  (1<<3)  /* Synchronous User Ch 0 - TCA0 bit 3 mask. */
-#define EVSYS_SYNCUSER0_3_bp  3  /* Synchronous User Ch 0 - TCA0 bit 3 position. */
-#define EVSYS_SYNCUSER0_4_bm  (1<<4)  /* Synchronous User Ch 0 - TCA0 bit 4 mask. */
-#define EVSYS_SYNCUSER0_4_bp  4  /* Synchronous User Ch 0 - TCA0 bit 4 position. */
-#define EVSYS_SYNCUSER0_5_bm  (1<<5)  /* Synchronous User Ch 0 - TCA0 bit 5 mask. */
-#define EVSYS_SYNCUSER0_5_bp  5  /* Synchronous User Ch 0 - TCA0 bit 5 position. */
-#define EVSYS_SYNCUSER0_6_bm  (1<<6)  /* Synchronous User Ch 0 - TCA0 bit 6 mask. */
-#define EVSYS_SYNCUSER0_6_bp  6  /* Synchronous User Ch 0 - TCA0 bit 6 position. */
-#define EVSYS_SYNCUSER0_7_bm  (1<<7)  /* Synchronous User Ch 0 - TCA0 bit 7 mask. */
-#define EVSYS_SYNCUSER0_7_bp  7  /* Synchronous User Ch 0 - TCA0 bit 7 position. */
+#define EVSYS_SYNCUSER0_gm  0xFF  /* Synchronous User Ch 0 Input Selection - TCA0 group mask. */
+#define EVSYS_SYNCUSER0_gp  0  /* Synchronous User Ch 0 Input Selection - TCA0 group position. */
+#define EVSYS_SYNCUSER0_0_bm  (1<<0)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 0 mask. */
+#define EVSYS_SYNCUSER0_0_bp  0  /* Synchronous User Ch 0 Input Selection - TCA0 bit 0 position. */
+#define EVSYS_SYNCUSER0_1_bm  (1<<1)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 1 mask. */
+#define EVSYS_SYNCUSER0_1_bp  1  /* Synchronous User Ch 0 Input Selection - TCA0 bit 1 position. */
+#define EVSYS_SYNCUSER0_2_bm  (1<<2)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 2 mask. */
+#define EVSYS_SYNCUSER0_2_bp  2  /* Synchronous User Ch 0 Input Selection - TCA0 bit 2 position. */
+#define EVSYS_SYNCUSER0_3_bm  (1<<3)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 3 mask. */
+#define EVSYS_SYNCUSER0_3_bp  3  /* Synchronous User Ch 0 Input Selection - TCA0 bit 3 position. */
+#define EVSYS_SYNCUSER0_4_bm  (1<<4)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 4 mask. */
+#define EVSYS_SYNCUSER0_4_bp  4  /* Synchronous User Ch 0 Input Selection - TCA0 bit 4 position. */
+#define EVSYS_SYNCUSER0_5_bm  (1<<5)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 5 mask. */
+#define EVSYS_SYNCUSER0_5_bp  5  /* Synchronous User Ch 0 Input Selection - TCA0 bit 5 position. */
+#define EVSYS_SYNCUSER0_6_bm  (1<<6)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 6 mask. */
+#define EVSYS_SYNCUSER0_6_bp  6  /* Synchronous User Ch 0 Input Selection - TCA0 bit 6 position. */
+#define EVSYS_SYNCUSER0_7_bm  (1<<7)  /* Synchronous User Ch 0 Input Selection - TCA0 bit 7 mask. */
+#define EVSYS_SYNCUSER0_7_bp  7  /* Synchronous User Ch 0 Input Selection - TCA0 bit 7 position. */
 
 /* EVSYS.SYNCUSER1  bit masks and bit positions */
-#define EVSYS_SYNCUSER1_gm  0xFF  /* Synchronous User Ch 1 - USART0 group mask. */
-#define EVSYS_SYNCUSER1_gp  0  /* Synchronous User Ch 1 - USART0 group position. */
-#define EVSYS_SYNCUSER1_0_bm  (1<<0)  /* Synchronous User Ch 1 - USART0 bit 0 mask. */
-#define EVSYS_SYNCUSER1_0_bp  0  /* Synchronous User Ch 1 - USART0 bit 0 position. */
-#define EVSYS_SYNCUSER1_1_bm  (1<<1)  /* Synchronous User Ch 1 - USART0 bit 1 mask. */
-#define EVSYS_SYNCUSER1_1_bp  1  /* Synchronous User Ch 1 - USART0 bit 1 position. */
-#define EVSYS_SYNCUSER1_2_bm  (1<<2)  /* Synchronous User Ch 1 - USART0 bit 2 mask. */
-#define EVSYS_SYNCUSER1_2_bp  2  /* Synchronous User Ch 1 - USART0 bit 2 position. */
-#define EVSYS_SYNCUSER1_3_bm  (1<<3)  /* Synchronous User Ch 1 - USART0 bit 3 mask. */
-#define EVSYS_SYNCUSER1_3_bp  3  /* Synchronous User Ch 1 - USART0 bit 3 position. */
-#define EVSYS_SYNCUSER1_4_bm  (1<<4)  /* Synchronous User Ch 1 - USART0 bit 4 mask. */
-#define EVSYS_SYNCUSER1_4_bp  4  /* Synchronous User Ch 1 - USART0 bit 4 position. */
-#define EVSYS_SYNCUSER1_5_bm  (1<<5)  /* Synchronous User Ch 1 - USART0 bit 5 mask. */
-#define EVSYS_SYNCUSER1_5_bp  5  /* Synchronous User Ch 1 - USART0 bit 5 position. */
-#define EVSYS_SYNCUSER1_6_bm  (1<<6)  /* Synchronous User Ch 1 - USART0 bit 6 mask. */
-#define EVSYS_SYNCUSER1_6_bp  6  /* Synchronous User Ch 1 - USART0 bit 6 position. */
-#define EVSYS_SYNCUSER1_7_bm  (1<<7)  /* Synchronous User Ch 1 - USART0 bit 7 mask. */
-#define EVSYS_SYNCUSER1_7_bp  7  /* Synchronous User Ch 1 - USART0 bit 7 position. */
+#define EVSYS_SYNCUSER1_gm  0xFF  /* Synchronous User Ch 1 Input Selection - USART0 group mask. */
+#define EVSYS_SYNCUSER1_gp  0  /* Synchronous User Ch 1 Input Selection - USART0 group position. */
+#define EVSYS_SYNCUSER1_0_bm  (1<<0)  /* Synchronous User Ch 1 Input Selection - USART0 bit 0 mask. */
+#define EVSYS_SYNCUSER1_0_bp  0  /* Synchronous User Ch 1 Input Selection - USART0 bit 0 position. */
+#define EVSYS_SYNCUSER1_1_bm  (1<<1)  /* Synchronous User Ch 1 Input Selection - USART0 bit 1 mask. */
+#define EVSYS_SYNCUSER1_1_bp  1  /* Synchronous User Ch 1 Input Selection - USART0 bit 1 position. */
+#define EVSYS_SYNCUSER1_2_bm  (1<<2)  /* Synchronous User Ch 1 Input Selection - USART0 bit 2 mask. */
+#define EVSYS_SYNCUSER1_2_bp  2  /* Synchronous User Ch 1 Input Selection - USART0 bit 2 position. */
+#define EVSYS_SYNCUSER1_3_bm  (1<<3)  /* Synchronous User Ch 1 Input Selection - USART0 bit 3 mask. */
+#define EVSYS_SYNCUSER1_3_bp  3  /* Synchronous User Ch 1 Input Selection - USART0 bit 3 position. */
+#define EVSYS_SYNCUSER1_4_bm  (1<<4)  /* Synchronous User Ch 1 Input Selection - USART0 bit 4 mask. */
+#define EVSYS_SYNCUSER1_4_bp  4  /* Synchronous User Ch 1 Input Selection - USART0 bit 4 position. */
+#define EVSYS_SYNCUSER1_5_bm  (1<<5)  /* Synchronous User Ch 1 Input Selection - USART0 bit 5 mask. */
+#define EVSYS_SYNCUSER1_5_bp  5  /* Synchronous User Ch 1 Input Selection - USART0 bit 5 position. */
+#define EVSYS_SYNCUSER1_6_bm  (1<<6)  /* Synchronous User Ch 1 Input Selection - USART0 bit 6 mask. */
+#define EVSYS_SYNCUSER1_6_bp  6  /* Synchronous User Ch 1 Input Selection - USART0 bit 6 position. */
+#define EVSYS_SYNCUSER1_7_bm  (1<<7)  /* Synchronous User Ch 1 Input Selection - USART0 bit 7 mask. */
+#define EVSYS_SYNCUSER1_7_bp  7  /* Synchronous User Ch 1 Input Selection - USART0 bit 7 position. */
 
 
 /* FUSE - Fuses */
@@ -4145,8 +3831,6 @@ IO Module Instances. Mapped to memory.
 #define PORTMUX_USART0_bp  0  /* Port Multiplexer USART0 bit position. */
 #define PORTMUX_SPI0_bm  0x04  /* Port Multiplexer SPI0 bit mask. */
 #define PORTMUX_SPI0_bp  2  /* Port Multiplexer SPI0 bit position. */
-#define PORTMUX_TWI0_bm  0x10  /* Port Multiplexer TWI0 bit mask. */
-#define PORTMUX_TWI0_bp  4  /* Port Multiplexer TWI0 bit position. */
 
 /* PORTMUX.CTRLC  bit masks and bit positions */
 #define PORTMUX_TCA00_bm  0x01  /* Port Multiplexer TCA0 Output 0 bit mask. */
@@ -4157,16 +3841,10 @@ IO Module Instances. Mapped to memory.
 #define PORTMUX_TCA02_bp  2  /* Port Multiplexer TCA0 Output 2 bit position. */
 #define PORTMUX_TCA03_bm  0x08  /* Port Multiplexer TCA0 Output 3 bit mask. */
 #define PORTMUX_TCA03_bp  3  /* Port Multiplexer TCA0 Output 3 bit position. */
-#define PORTMUX_TCA04_bm  0x10  /* Port Multiplexer TCA0 Output 4 bit mask. */
-#define PORTMUX_TCA04_bp  4  /* Port Multiplexer TCA0 Output 4 bit position. */
-#define PORTMUX_TCA05_bm  0x20  /* Port Multiplexer TCA0 Output 5 bit mask. */
-#define PORTMUX_TCA05_bp  5  /* Port Multiplexer TCA0 Output 5 bit position. */
 
 /* PORTMUX.CTRLD  bit masks and bit positions */
-#define PORTMUX_TCB0_bm  0x01  /* Port Multiplexer TCB0 bit mask. */
-#define PORTMUX_TCB0_bp  0  /* Port Multiplexer TCB0 bit position. */
-#define PORTMUX_TCB1_bm  0x02  /* Port Multiplexer TCB1 bit mask. */
-#define PORTMUX_TCB1_bp  1  /* Port Multiplexer TCB1 bit position. */
+#define PORTMUX_TCB0_bm  0x01  /* Port Multiplexer TCB bit mask. */
+#define PORTMUX_TCB0_bp  0  /* Port Multiplexer TCB bit position. */
 
 
 /* RSTCTRL - Reset controller */
@@ -4590,12 +4268,12 @@ IO Module Instances. Mapped to memory.
 /* TCD.CTRLA  bit masks and bit positions */
 #define TCD_ENABLE_bm  0x01  /* Enable bit mask. */
 #define TCD_ENABLE_bp  0  /* Enable bit position. */
-#define TCD_SYNCPRES_gm  0x06  /* Synchronization prescaler group mask. */
-#define TCD_SYNCPRES_gp  1  /* Synchronization prescaler group position. */
-#define TCD_SYNCPRES_0_bm  (1<<1)  /* Synchronization prescaler bit 0 mask. */
-#define TCD_SYNCPRES_0_bp  1  /* Synchronization prescaler bit 0 position. */
-#define TCD_SYNCPRES_1_bm  (1<<2)  /* Synchronization prescaler bit 1 mask. */
-#define TCD_SYNCPRES_1_bp  2  /* Synchronization prescaler bit 1 position. */
+#define TCD_SYNCPRES_gm  0x06  /* Syncronization prescaler group mask. */
+#define TCD_SYNCPRES_gp  1  /* Syncronization prescaler group position. */
+#define TCD_SYNCPRES_0_bm  (1<<1)  /* Syncronization prescaler bit 0 mask. */
+#define TCD_SYNCPRES_0_bp  1  /* Syncronization prescaler bit 0 position. */
+#define TCD_SYNCPRES_1_bm  (1<<2)  /* Syncronization prescaler bit 1 mask. */
+#define TCD_SYNCPRES_1_bp  2  /* Syncronization prescaler bit 1 position. */
 #define TCD_CNTPRES_gm  0x18  /* counter prescaler group mask. */
 #define TCD_CNTPRES_gp  3  /* counter prescaler group position. */
 #define TCD_CNTPRES_0_bm  (1<<3)  /* counter prescaler bit 0 mask. */
@@ -5258,40 +4936,6 @@ IO Module Instances. Mapped to memory.
 #define VREF_DAC0REFEN_bp  0  /* DAC0/AC0 reference enable bit position. */
 #define VREF_ADC0REFEN_bm  0x02  /* ADC0 reference enable bit mask. */
 #define VREF_ADC0REFEN_bp  1  /* ADC0 reference enable bit position. */
-#define VREF_DAC1REFEN_bm  0x08  /* DAC1/AC1 reference enable bit mask. */
-#define VREF_DAC1REFEN_bp  3  /* DAC1/AC1 reference enable bit position. */
-#define VREF_ADC1REFEN_bm  0x10  /* ADC1 reference enable bit mask. */
-#define VREF_ADC1REFEN_bp  4  /* ADC1 reference enable bit position. */
-#define VREF_DAC2REFEN_bm  0x20  /* DAC2/AC2 reference enable bit mask. */
-#define VREF_DAC2REFEN_bp  5  /* DAC2/AC2 reference enable bit position. */
-
-/* VREF.CTRLC  bit masks and bit positions */
-#define VREF_DAC1REFSEL_gm  0x07  /* DAC1/AC1 reference select group mask. */
-#define VREF_DAC1REFSEL_gp  0  /* DAC1/AC1 reference select group position. */
-#define VREF_DAC1REFSEL_0_bm  (1<<0)  /* DAC1/AC1 reference select bit 0 mask. */
-#define VREF_DAC1REFSEL_0_bp  0  /* DAC1/AC1 reference select bit 0 position. */
-#define VREF_DAC1REFSEL_1_bm  (1<<1)  /* DAC1/AC1 reference select bit 1 mask. */
-#define VREF_DAC1REFSEL_1_bp  1  /* DAC1/AC1 reference select bit 1 position. */
-#define VREF_DAC1REFSEL_2_bm  (1<<2)  /* DAC1/AC1 reference select bit 2 mask. */
-#define VREF_DAC1REFSEL_2_bp  2  /* DAC1/AC1 reference select bit 2 position. */
-#define VREF_ADC1REFSEL_gm  0x70  /* ADC1 reference select group mask. */
-#define VREF_ADC1REFSEL_gp  4  /* ADC1 reference select group position. */
-#define VREF_ADC1REFSEL_0_bm  (1<<4)  /* ADC1 reference select bit 0 mask. */
-#define VREF_ADC1REFSEL_0_bp  4  /* ADC1 reference select bit 0 position. */
-#define VREF_ADC1REFSEL_1_bm  (1<<5)  /* ADC1 reference select bit 1 mask. */
-#define VREF_ADC1REFSEL_1_bp  5  /* ADC1 reference select bit 1 position. */
-#define VREF_ADC1REFSEL_2_bm  (1<<6)  /* ADC1 reference select bit 2 mask. */
-#define VREF_ADC1REFSEL_2_bp  6  /* ADC1 reference select bit 2 position. */
-
-/* VREF.CTRLD  bit masks and bit positions */
-#define VREF_DAC2REFSEL_gm  0x07  /* DAC2/AC2 reference select group mask. */
-#define VREF_DAC2REFSEL_gp  0  /* DAC2/AC2 reference select group position. */
-#define VREF_DAC2REFSEL_0_bm  (1<<0)  /* DAC2/AC2 reference select bit 0 mask. */
-#define VREF_DAC2REFSEL_0_bp  0  /* DAC2/AC2 reference select bit 0 position. */
-#define VREF_DAC2REFSEL_1_bm  (1<<1)  /* DAC2/AC2 reference select bit 1 mask. */
-#define VREF_DAC2REFSEL_1_bp  1  /* DAC2/AC2 reference select bit 1 position. */
-#define VREF_DAC2REFSEL_2_bm  (1<<2)  /* DAC2/AC2 reference select bit 2 mask. */
-#define VREF_DAC2REFSEL_2_bp  2  /* DAC2/AC2 reference select bit 2 position. */
 
 
 /* WDT - Watch-Dog Timer */
@@ -5357,14 +5001,6 @@ IO Module Instances. Mapped to memory.
 #define PORTA_PORT_vect_num  3
 #define PORTA_PORT_vect      _VECTOR(3)  /*  */
 
-/* PORTB interrupt vectors */
-#define PORTB_PORT_vect_num  4
-#define PORTB_PORT_vect      _VECTOR(4)  /*  */
-
-/* PORTC interrupt vectors */
-#define PORTC_PORT_vect_num  5
-#define PORTC_PORT_vect      _VECTOR(5)  /*  */
-
 /* RTC interrupt vectors */
 #define RTC_CNT_vect_num  6
 #define RTC_CNT_vect      _VECTOR(6)  /*  */
@@ -5395,74 +5031,56 @@ IO Module Instances. Mapped to memory.
 #define TCB0_INT_vect_num  13
 #define TCB0_INT_vect      _VECTOR(13)  /*  */
 
-/* TCB1 interrupt vectors */
-#define TCB1_INT_vect_num  14
-#define TCB1_INT_vect      _VECTOR(14)  /*  */
-
 /* TCD0 interrupt vectors */
-#define TCD0_OVF_vect_num  15
-#define TCD0_OVF_vect      _VECTOR(15)  /*  */
-#define TCD0_TRIG_vect_num  16
-#define TCD0_TRIG_vect      _VECTOR(16)  /*  */
+#define TCD0_OVF_vect_num  14
+#define TCD0_OVF_vect      _VECTOR(14)  /*  */
+#define TCD0_TRIG_vect_num  15
+#define TCD0_TRIG_vect      _VECTOR(15)  /*  */
 
 /* AC0 interrupt vectors */
-#define AC0_AC_vect_num  17
-#define AC0_AC_vect      _VECTOR(17)  /*  */
-
-/* AC1 interrupt vectors */
-#define AC1_AC_vect_num  18
-#define AC1_AC_vect      _VECTOR(18)  /*  */
-
-/* AC2 interrupt vectors */
-#define AC2_AC_vect_num  19
-#define AC2_AC_vect      _VECTOR(19)  /*  */
+#define AC0_AC_vect_num  16
+#define AC0_AC_vect      _VECTOR(16)  /*  */
 
 /* ADC0 interrupt vectors */
-#define ADC0_RESRDY_vect_num  20
-#define ADC0_RESRDY_vect      _VECTOR(20)  /*  */
-#define ADC0_WCOMP_vect_num  21
-#define ADC0_WCOMP_vect      _VECTOR(21)  /*  */
-
-/* ADC1 interrupt vectors */
-#define ADC1_RESRDY_vect_num  22
-#define ADC1_RESRDY_vect      _VECTOR(22)  /*  */
-#define ADC1_WCOMP_vect_num  23
-#define ADC1_WCOMP_vect      _VECTOR(23)  /*  */
+#define ADC0_RESRDY_vect_num  17
+#define ADC0_RESRDY_vect      _VECTOR(17)  /*  */
+#define ADC0_WCOMP_vect_num  18
+#define ADC0_WCOMP_vect      _VECTOR(18)  /*  */
 
 /* TWI0 interrupt vectors */
-#define TWI0_TWIS_vect_num  24
-#define TWI0_TWIS_vect      _VECTOR(24)  /*  */
-#define TWI0_TWIM_vect_num  25
-#define TWI0_TWIM_vect      _VECTOR(25)  /*  */
+#define TWI0_TWIS_vect_num  19
+#define TWI0_TWIS_vect      _VECTOR(19)  /*  */
+#define TWI0_TWIM_vect_num  20
+#define TWI0_TWIM_vect      _VECTOR(20)  /*  */
 
 /* SPI0 interrupt vectors */
-#define SPI0_INT_vect_num  26
-#define SPI0_INT_vect      _VECTOR(26)  /*  */
+#define SPI0_INT_vect_num  21
+#define SPI0_INT_vect      _VECTOR(21)  /*  */
 
 /* USART0 interrupt vectors */
-#define USART0_RXC_vect_num  27
-#define USART0_RXC_vect      _VECTOR(27)  /*  */
-#define USART0_DRE_vect_num  28
-#define USART0_DRE_vect      _VECTOR(28)  /*  */
-#define USART0_TXC_vect_num  29
-#define USART0_TXC_vect      _VECTOR(29)  /*  */
+#define USART0_RXC_vect_num  22
+#define USART0_RXC_vect      _VECTOR(22)  /*  */
+#define USART0_DRE_vect_num  23
+#define USART0_DRE_vect      _VECTOR(23)  /*  */
+#define USART0_TXC_vect_num  24
+#define USART0_TXC_vect      _VECTOR(24)  /*  */
 
 /* NVMCTRL interrupt vectors */
-#define NVMCTRL_EE_vect_num  30
-#define NVMCTRL_EE_vect      _VECTOR(30)  /*  */
+#define NVMCTRL_EE_vect_num  25
+#define NVMCTRL_EE_vect      _VECTOR(25)  /*  */
 
-#define _VECTOR_SIZE 4 /* Size of individual vector. */
-#define _VECTORS_SIZE (31 * _VECTOR_SIZE)
+#define _VECTOR_SIZE 2 /* Size of individual vector. */
+#define _VECTORS_SIZE (26 * _VECTOR_SIZE)
 
 
 /* ========== Constants ========== */
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define DATAMEM_START     (0x0000)
-#  define DATAMEM_SIZE      (65536)
+#  define DATAMEM_SIZE      (34816)
 #else
 #  define DATAMEM_START     (0x0000U)
-#  define DATAMEM_SIZE      (65536U)
+#  define DATAMEM_SIZE      (34816U)
 #endif
 #define DATAMEM_END       (DATAMEM_START + DATAMEM_SIZE - 1)
 
@@ -5480,66 +5098,66 @@ IO Module Instances. Mapped to memory.
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define SIGNATURES_START     (0x1100)
 #  define SIGNATURES_SIZE      (3)
-#  define SIGNATURES_PAGE_SIZE (128)
+#  define SIGNATURES_PAGE_SIZE (64)
 #else
 #  define SIGNATURES_START     (0x1100U)
 #  define SIGNATURES_SIZE      (3U)
-#  define SIGNATURES_PAGE_SIZE (128U)
+#  define SIGNATURES_PAGE_SIZE (64U)
 #endif
 #define SIGNATURES_END       (SIGNATURES_START + SIGNATURES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define PROD_SIGNATURES_START     (0x1103)
 #  define PROD_SIGNATURES_SIZE      (61)
-#  define PROD_SIGNATURES_PAGE_SIZE (128)
+#  define PROD_SIGNATURES_PAGE_SIZE (64)
 #else
 #  define PROD_SIGNATURES_START     (0x1103U)
 #  define PROD_SIGNATURES_SIZE      (61U)
-#  define PROD_SIGNATURES_PAGE_SIZE (128U)
+#  define PROD_SIGNATURES_PAGE_SIZE (64U)
 #endif
 #define PROD_SIGNATURES_END       (PROD_SIGNATURES_START + PROD_SIGNATURES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define FUSES_START     (0x1280)
 #  define FUSES_SIZE      (10)
-#  define FUSES_PAGE_SIZE (64)
+#  define FUSES_PAGE_SIZE (32)
 #else
 #  define FUSES_START     (0x1280U)
 #  define FUSES_SIZE      (10U)
-#  define FUSES_PAGE_SIZE (64U)
+#  define FUSES_PAGE_SIZE (32U)
 #endif
 #define FUSES_END       (FUSES_START + FUSES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define LOCKBITS_START     (0x128A)
 #  define LOCKBITS_SIZE      (1)
-#  define LOCKBITS_PAGE_SIZE (64)
+#  define LOCKBITS_PAGE_SIZE (32)
 #else
 #  define LOCKBITS_START     (0x128AU)
 #  define LOCKBITS_SIZE      (1U)
-#  define LOCKBITS_PAGE_SIZE (64U)
+#  define LOCKBITS_PAGE_SIZE (32U)
 #endif
 #define LOCKBITS_END       (LOCKBITS_START + LOCKBITS_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define USER_SIGNATURES_START     (0x1300)
-#  define USER_SIGNATURES_SIZE      (64)
-#  define USER_SIGNATURES_PAGE_SIZE (64)
+#  define USER_SIGNATURES_SIZE      (32)
+#  define USER_SIGNATURES_PAGE_SIZE (32)
 #else
 #  define USER_SIGNATURES_START     (0x1300U)
-#  define USER_SIGNATURES_SIZE      (64U)
-#  define USER_SIGNATURES_PAGE_SIZE (64U)
+#  define USER_SIGNATURES_SIZE      (32U)
+#  define USER_SIGNATURES_PAGE_SIZE (32U)
 #endif
 #define USER_SIGNATURES_END       (USER_SIGNATURES_START + USER_SIGNATURES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define EEPROM_START     (0x1400)
-#  define EEPROM_SIZE      (256)
-#  define EEPROM_PAGE_SIZE (64)
+#  define EEPROM_SIZE      (64)
+#  define EEPROM_PAGE_SIZE (32)
 #else
 #  define EEPROM_START     (0x1400U)
-#  define EEPROM_SIZE      (256U)
-#  define EEPROM_PAGE_SIZE (64U)
+#  define EEPROM_SIZE      (64U)
+#  define EEPROM_PAGE_SIZE (32U)
 #endif
 #define EEPROM_END       (EEPROM_START + EEPROM_SIZE - 1)
 
@@ -5550,35 +5168,35 @@ IO Module Instances. Mapped to memory.
 #define MAPPED_EEPROM_END       (MAPPED_EEPROM_START + MAPPED_EEPROM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
-#  define INTERNAL_SRAM_START     (0x3800)
-#  define INTERNAL_SRAM_SIZE      (2048)
+#  define INTERNAL_SRAM_START     (0x3F80)
+#  define INTERNAL_SRAM_SIZE      (128)
 #  define INTERNAL_SRAM_PAGE_SIZE (0)
 #else
-#  define INTERNAL_SRAM_START     (0x3800U)
-#  define INTERNAL_SRAM_SIZE      (2048U)
+#  define INTERNAL_SRAM_START     (0x3F80U)
+#  define INTERNAL_SRAM_SIZE      (128U)
 #  define INTERNAL_SRAM_PAGE_SIZE (0U)
 #endif
 #define INTERNAL_SRAM_END       (INTERNAL_SRAM_START + INTERNAL_SRAM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define MAPPED_PROGMEM_START     (0x8000)
-#  define MAPPED_PROGMEM_SIZE      (32768)
-#  define MAPPED_PROGMEM_PAGE_SIZE (128)
+#  define MAPPED_PROGMEM_SIZE      (2048)
+#  define MAPPED_PROGMEM_PAGE_SIZE (64)
 #else
 #  define MAPPED_PROGMEM_START     (0x8000U)
-#  define MAPPED_PROGMEM_SIZE      (32768U)
-#  define MAPPED_PROGMEM_PAGE_SIZE (128U)
+#  define MAPPED_PROGMEM_SIZE      (2048U)
+#  define MAPPED_PROGMEM_PAGE_SIZE (64U)
 #endif
 #define MAPPED_PROGMEM_END       (MAPPED_PROGMEM_START + MAPPED_PROGMEM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define PROGMEM_START     (0x0000)
-#  define PROGMEM_SIZE      (32768)
-#  define PROGMEM_PAGE_SIZE (128)
+#  define PROGMEM_SIZE      (2048)
+#  define PROGMEM_PAGE_SIZE (64)
 #else
 #  define PROGMEM_START     (0x0000U)
-#  define PROGMEM_SIZE      (32768U)
-#  define PROGMEM_PAGE_SIZE (128U)
+#  define PROGMEM_SIZE      (2048U)
+#  define PROGMEM_PAGE_SIZE (64U)
 #endif
 #define PROGMEM_END       (PROGMEM_START + PROGMEM_SIZE - 1)
 
@@ -5671,8 +5289,8 @@ IO Module Instances. Mapped to memory.
 
 /* ========== Signature ========== */
 #define SIGNATURE_0 0x1E
-#define SIGNATURE_1 0x95
-#define SIGNATURE_2 0x22
+#define SIGNATURE_1 0x91
+#define SIGNATURE_2 0x21
 
-#endif /* #ifdef _AVR_ATTINY3217_H_INCLUDED */
+#endif /* #ifdef _AVR_ATTINY212_H_INCLUDED */
 
