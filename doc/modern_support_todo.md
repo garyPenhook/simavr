@@ -19,7 +19,7 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 |---|---|---|---|
 | AC (Analog Comparator) | [F] | hysteresis; low-power / run-standby timing; physical pin-level behavior | `avr_ac.c` |
 | DAC | [F] | output-buffer behavior; run-standby; reference behavior (only digital→mV) | `avr_dac.c` |
-| CCL | [F] | event/peripheral input sources return 0 (not modelled); filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c` |
+| CCL | [F] | event/peripheral INSEL sources now decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2229) and resolved from cached levels driven on the block's source IRQs — but the core templates do **not yet auto-wire** live peripheral outputs (AC/TCB/TCA/TCD/USART/SPI/EVSYS) into those IRQs, so firmware still sees 0 unless a board/test drives them; filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c` |
 | TCD | [F] | clock source approximated as CLK_PER (no dedicated/PLL clock or its prescale); 4 WGM modes work | `avr_tcd.c` |
 | RTC / PIT | [F] | SYNCBUSY / PITSTATUS sync bits simplified; CRYSTERR & external-clock pins not modelled; CLK_PER change not retro-applied until reconfig | `avr_rtc.c` |
 | BOD / VLM | [F] | brown-out **reset** effect not modelled (VLM voltage monitor is modelled) | `avr_bod.c` |
@@ -32,6 +32,27 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 **Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
 PORTMUX, TCA0, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
 SYSCFG/SIGROW, VREF, CPUINT (incl. LVL0/1, NMI, round-robin, LVL0PRI, CVT).
+
+## Not implemented at all
+
+**There are no entirely-unimplemented top-level register-mapped peripherals.**
+Every block declared in the device headers and fitted by the templates
+(CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT, PORTMUX, TCA0, TCB0–3, TCD0, RTC/PIT,
+USART0–3, SPI0, TWI0, ADC0/1, AC0–2, DAC0, VREF, NVMCTRL, CCL, EVSYS, WDT,
+CRCSCAN, BOD/VLM, SYSCFG, CPUINT) has a model. What remains unimplemented are
+NVM/identity **config regions** and one header-less silicon block:
+
+| Region / block | Addr | Status — what is NOT implemented | Affects |
+|---|---|---|---|
+| USERROW | 0x1300 | User signature row: RAM-backed only — no NVMCTRL write/erase semantics and **not preserved across reset** (persist range covers EEPROM only). Reads/writes hit data[] but behave like plain RAM. | all 23 |
+| FUSE read-back window | 0x1280 | Fuses live in `avr->fuse[]` and are consumed internally (BOD/CLKCTRL/CRCSCAN) and writable via NVMCTRL `FUSEWRITE`, but are **not mirrored into the data-space FUSE registers** — a direct firmware read of `FUSE.OSCCFG`/`BODCFG`/etc. returns 0. | all 23 |
+| LOCKBIT | 0x128A | Not modelled; reads 0. | all 23 |
+| SIGROW SERNUM / OSCnnERR | 0x1100+ | Only `DEVICEID[2:0]` and `TEMPSENSE0/1` are populated; the serial number (`SERNUM0..9`) and oscillator-error rows (`OSC16ERR*`, `OSC20ERR*`) read 0. | all 23 |
+| PTC (Peripheral Touch Controller) | — | Present on tinyAVR-1 silicon but **absent from the avr-libc headers**, so it has no register map and no model (cannot be header-driven). | 15 tinyAVR-1 |
+
+Note: the in-tree `iotn3217.h` over-declares `DAC1`/`DAC2` (0x06A8/0x06B0) that do
+not exist on the hardware (the tinyAVR 1-series has a single 8-bit DAC0); they are
+intentionally not wired.
 
 ## Per-micro fitted instances and applicable gaps
 
@@ -80,8 +101,12 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
 
 ## Suggested work order (highest firmware impact first)
 
-1. **CCL event/peripheral input sources** — currently return 0, so LUTs fed by
-   timers/events/pins produce no output. Affects all 23 micros. [F]
+1. **CCL event/peripheral input sources** — INSEL decode + source-level cache
+   done (per-family, datasheet-verified, host-tested for both families).
+   *Remaining:* auto-wire live peripheral output IRQs (AC/TCB/TCA/TCD/USART/SPI)
+   and EVSYS event channels into the CCL source IRQs in `sim_tinyx1.h` /
+   `sim_megax08.h`, so configured firmware drives the LUTs without a board stub.
+   Affects all 23 micros. [F]
 2. **TCD clock source** — model the dedicated TCD clock / prescale instead of
    CLK_PER, so TCD periods match firmware expectations. All 15 tinyAVR-1. [F]
 3. **AC hysteresis + run-standby** — needed for realistic comparator firmware.

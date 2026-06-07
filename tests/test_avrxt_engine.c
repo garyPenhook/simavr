@@ -1915,6 +1915,55 @@ int main(void)
 			avr_raise_irq(clk0, 0);
 			avr_raise_irq(clk0, 1);
 			check("FEEDBACK toggles high after 2nd clock", l0, 1);
+
+			/* Event/peripheral input sources (tinyAVR-1 INSEL map). A source
+			 * IRQ drives the cached level; the LUT (OUT=IN0) follows it. */
+			avr_irq_t *s_ac0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+				AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_AC0));
+			avr_irq_t *s_ev0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+				AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_EVENT0));
+			avr_irq_t *s_ac2 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+				AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_AC2));
+			avr_irq_t *s_tca1 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+				AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCA0_WO1));
+
+			cpu_write(m, L + CTRLA, 0x00);		/* clean reconfigure */
+			cpu_write(m, L + SEQCTRL0, 0x00);
+			cpu_write(m, L + L1CTRLA, 0x00);
+			cpu_write(m, L + L0CTRLC, 0x00);	/* IN2 = MASK */
+			cpu_write(m, L + TRUTH0, 0xaa);		/* OUT = IN0 */
+
+			cpu_write(m, L + L0CTRLB, 0x06);	/* IN0 = AC0 (0x6) */
+			cpu_write(m, L + L0CTRLA, LUT_EN);
+			cpu_write(m, L + CTRLA, CCL_EN);
+			avr_raise_irq(s_ac0, 1);
+			check("tiny CCL IN0=AC0 follows source high", l0, 1);
+			avr_raise_irq(s_ac0, 0);
+			check("tiny CCL IN0=AC0 follows source low", l0, 0);
+
+			cpu_write(m, L + CTRLA, 0x00);
+			cpu_write(m, L + L0CTRLB, 0x03);	/* IN0 = EVENT0 (0x3) */
+			cpu_write(m, L + CTRLA, CCL_EN);
+			avr_raise_irq(s_ev0, 1);
+			check("tiny CCL IN0=EVENT0 follows event high", l0, 1);
+			avr_raise_irq(s_ev0, 0);
+
+			cpu_write(m, L + CTRLA, 0x00);
+			cpu_write(m, L + L0CTRLB, 0x0e);	/* IN0 = AC2 (0xE, tiny-only) */
+			cpu_write(m, L + CTRLA, CCL_EN);
+			avr_raise_irq(s_ac2, 1);
+			check("tiny CCL IN0=AC2 (high value) follows source", l0, 1);
+			avr_raise_irq(s_ac2, 0);
+
+			/* Position-dependent decode: INSEL=0x8 on IN1 selects TCA0 WO1. */
+			cpu_write(m, L + CTRLA, 0x00);
+			cpu_write(m, L + L0CTRLB, (0x8 << 4) | 0x0);	/* IN1=TCA0, IN0=MASK */
+			cpu_write(m, L + TRUTH0, 0xcc);			/* OUT = IN1 */
+			cpu_write(m, L + CTRLA, CCL_EN);
+			avr_raise_irq(s_tca1, 1);
+			check("tiny CCL IN1=TCA0 selects WO1 (position decode)", l0, 1);
+			avr_raise_irq(s_tca1, 0);
+			check("tiny CCL IN1=TCA0 WO1 follows low", l0, 0);
 		}
 
 	printf("== modern EVSYS (sim_tiny3217) ==\n");
@@ -2651,6 +2700,44 @@ int main(void)
 		avr_raise_irq(in0, 0);
 		check("mega CCL LUT0 AND(0,1) = 0", l0, 0);
 		check("mega CCL LUT3 = NOT(LUT0=0) = 1", l3, 1);
+
+		/* Event/peripheral sources use the megaAVR-0 INSEL map, which differs
+		 * from tinyAVR-1: 0xA = TCA0, 0xC = TCB, 0x8 = USART TXD. */
+		avr_irq_t *s_tca0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+			AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCA0_WO0));
+		avr_irq_t *s_tcb1 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+			AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCB1));
+		avr_irq_t *s_us0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'),
+			AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_USART0_TXD));
+
+		cpu_write(m, L + L3CTRLA, 0x00);	/* drop the LINK LUT */
+		cpu_write(m, L + L0CTRLC, 0x00);
+		cpu_write(m, L + TRUTH0, 0xaa);		/* OUT = IN0 */
+
+		cpu_write(m, L + CTRLA, 0x00);
+		cpu_write(m, L + L0CTRLB, 0x0a);	/* IN0 = TCA0 WO0 (mega 0xA) */
+		cpu_write(m, L + CTRLA, CCL_EN);
+		avr_raise_irq(s_tca0, 1);
+		check("mega CCL IN0=TCA0(0xA) follows WO0", l0, 1);
+		avr_raise_irq(s_tca0, 0);
+		check("mega CCL IN0=TCA0 WO0 low", l0, 0);
+
+		cpu_write(m, L + CTRLA, 0x00);
+		cpu_write(m, L + L0CTRLB, 0x08);	/* IN0 = USART0 TXD (mega 0x8) */
+		cpu_write(m, L + CTRLA, CCL_EN);
+		avr_raise_irq(s_us0, 1);
+		check("mega CCL IN0=USART0(0x8) follows TXD", l0, 1);
+		avr_raise_irq(s_us0, 0);
+
+		/* Position decode: INSEL=0xC on IN1 selects TCB1 WO. */
+		cpu_write(m, L + CTRLA, 0x00);
+		cpu_write(m, L + L0CTRLB, (0x0c << 4) | 0x00);	/* IN1=TCB(0xC), IN0=MASK */
+		cpu_write(m, L + TRUTH0, 0xcc);			/* OUT = IN1 */
+		cpu_write(m, L + CTRLA, CCL_EN);
+		avr_raise_irq(s_tcb1, 1);
+		check("mega CCL IN1=TCB(0xC) selects TCB1 (position decode)", l0, 1);
+		avr_raise_irq(s_tcb1, 0);
+		check("mega CCL IN1=TCB1 low", l0, 0);
 	}
 
 	printf("== megaAVR-0 EVSYS + ADC event start (sim_mega4809) ==\n");
