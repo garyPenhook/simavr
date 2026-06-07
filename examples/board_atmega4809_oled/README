@@ -1,0 +1,59 @@
+board_atmega4809_oled — modern-AVR SSD1306 OLED over I2C and SPI
+===============================================================
+
+A 128x64 SSD1306 OLED driven by an ATmega4809, with an OpenGL window that
+renders the panel. It comes in two flavours from one board, to show the modern
+AVR's two serial buses carrying a real display protocol:
+
+  * I2C  — the panel on TWI0 (avr_twi_modern), address 0x3C
+  * SPI  — the panel on SPI0 (avr_spi_modern), 4-wire mode with CS/DC/RST GPIOs
+
+Both reuse simavr's existing SSD1306 model (examples/parts/ssd1306_virt) and its
+OpenGL renderer (ssd1306_glut) — the same parts the classic board_ssd1306 uses.
+
+Build & run (from this folder)
+------------------------------
+
+Open a console, change into this folder, build, then run one of the buses:
+
+    cd examples/board_atmega4809_oled    # the host loads its .axf from here
+    make                                 # builds both firmwares + the host
+    ./obj-*/oled.elf i2c                 # SSD1306 over I2C   (default)
+    ./obj-*/oled.elf spi                 # SSD1306 over SPI
+
+A window appears showing a checkerboard with a vertical bar sweeping across it.
+Press 'q' or Esc in the window to quit. The runnable program is the host binary
+under obj-<arch>/ (e.g. obj-x86_64-pc-linux-gnu/oled.elf); run it from this
+folder so it finds atmega4809_oled_<bus>.axf.
+
+No display? Verify it headlessly
+--------------------------------
+
+On a machine or CI with no graphics, append "check": the host runs the firmware
+for ~300 ms with no window and reports how many panel pixels were lit, proving
+the bus carried the image:
+
+    ./obj-*/oled.elf i2c check       # -> PASS  i2c: 4160/8192 pixels lit ...
+    ./obj-*/oled.elf spi check       # -> PASS  spi: 4160/8192 pixels lit ...
+
+How it works
+------------
+
+  * The firmware (atmega4809_oled_i2c.c / _spi.c) runs the standard SSD1306
+    power-on/init sequence, then streams an 8-page x 128-column framebuffer.
+    I2C uses the 0x00/0x40 control bytes; SPI uses CS=PC0, DC=PC1, RST=PC2.
+
+  * The host (oled.c) attaches ssd1306_virt and wires it to the bus with the
+    shared ssd1306_connect / ssd1306_connect_twi helpers. Those helpers take a
+    bus-name argument: classic cores register their SPI/TWI bus under integer
+    name 0, while modern (AVRxt) cores use the char name '0', so oled.c passes
+    '0'. The AVR runs in a thread throttled to real time so the sweep is
+    watchable, and ssd1306_glut draws the vram each frame.
+
+Requirements
+------------
+
+OpenGL + GLUT (freeglut) for the window (pulled in via ../Makefile.opengl), and
+a modern avr-gcc (12+) with the megaAVR-0 headers for the firmware. If avr-gcc
+cannot target atmega4809 the firmware step is skipped (a plain `make` across
+examples/ still succeeds) — install a modern avr-gcc and re-run `make`.

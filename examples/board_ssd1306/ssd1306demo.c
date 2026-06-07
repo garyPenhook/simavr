@@ -166,7 +166,8 @@ main (int argc, char *argv[])
 		.reset.pin = 3,
 	};
 
-	ssd1306_connect (&ssd1306, &wiring);
+	// classic ATmega32 registers its SPI bus under integer name 0
+	ssd1306_connect (&ssd1306, &wiring, 0);
 
 	printf ("SSD1306 display demo\n   Press 'q' to quit\n");
 

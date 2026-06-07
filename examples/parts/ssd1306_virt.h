@@ -195,10 +195,16 @@ ssd1306_get_flag (ssd1306_t *b, uint16_t bit)
 	return (b->flags & (1 << bit)) != 0;
 }
 
+/*
+ * Wire the part to the SPI/TWI bus registered under name 'bus_name'.
+ * Classic cores register their single bus under integer name 0; modern
+ * (AVRxt) cores register it under the char name '0' — pass whichever your
+ * core uses (see avr_io_setirqs / AVR_*_GETIRQ in the core descriptor).
+ */
 void
-ssd1306_connect (ssd1306_t * part, ssd1306_wiring_t * wiring);
+ssd1306_connect (ssd1306_t * part, ssd1306_wiring_t * wiring, char bus_name);
 
 void
-ssd1306_connect_twi (ssd1306_t * part, ssd1306_wiring_t * wiring);
+ssd1306_connect_twi (ssd1306_t * part, ssd1306_wiring_t * wiring, char bus_name);
 
 #endif

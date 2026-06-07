@@ -440,10 +440,10 @@ static const char *irq_names[IRQ_SSD1306_COUNT] = {
 };
 
 void
-ssd1306_connect (ssd1306_t * part, ssd1306_wiring_t * wiring)
+ssd1306_connect (ssd1306_t * part, ssd1306_wiring_t * wiring, char bus_name)
 {
 	avr_connect_irq (
-	                avr_io_getirq (part->avr, AVR_IOCTL_SPI_GETIRQ(0),
+	                avr_io_getirq (part->avr, AVR_IOCTL_SPI_GETIRQ(bus_name),
 	                               SPI_IRQ_OUTPUT),
 	                part->irq + IRQ_SSD1306_SPI_BYTE_IN);
 
@@ -470,15 +470,15 @@ ssd1306_connect (ssd1306_t * part, ssd1306_wiring_t * wiring)
 }
 
 void
-ssd1306_connect_twi (ssd1306_t * part, ssd1306_wiring_t * wiring)
+ssd1306_connect_twi (ssd1306_t * part, ssd1306_wiring_t * wiring, char bus_name)
 {
 	avr_connect_irq (
-            avr_io_getirq (part->avr, AVR_IOCTL_TWI_GETIRQ(0), TWI_IRQ_OUTPUT),
+            avr_io_getirq (part->avr, AVR_IOCTL_TWI_GETIRQ(bus_name), TWI_IRQ_OUTPUT),
             part->irq + IRQ_SSD1306_TWI_OUT);
 
 	avr_connect_irq (
             part->irq + IRQ_SSD1306_TWI_IN,
-            avr_io_getirq (part->avr, AVR_IOCTL_TWI_GETIRQ(0), TWI_IRQ_INPUT));
+            avr_io_getirq (part->avr, AVR_IOCTL_TWI_GETIRQ(bus_name), TWI_IRQ_INPUT));
 
 	avr_connect_irq (
 	                avr_io_getirq (part->avr,
