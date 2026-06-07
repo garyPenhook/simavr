@@ -89,9 +89,15 @@ top-level peripherals but feature depth inside existing models. The current
 follow-up work is:
 * `AC`: hysteresis, low-power / run-standby timing, and more physical pin-level behavior
 * `DAC`: output-buffer / run-standby / reference-behavior polish beyond the current digital-to-mV model
-* `CCL`: additional non-combinational details such as filter variants and sequencer corner cases
+* `CCL`: the peripheral waveform sources are auto-wired into the LUT input MUX —
+  AC0-2 OUT, TCD0 WOA/WOB, TCA0 WO0-2 (single-slope PWM) and TCB0-2 WO (8-bit PWM)
+  track the real peripherals end-to-end. Remaining: the line-level sources
+  (USART TXD/XCK, SPI SCK/MOSI/MISO — gated on the USART/SPI line-level work below),
+  EVSYS EVENT0/1, and non-combinational details such as filter variants and sequencer corner cases
 * `SPI`: any remaining pin-contention / electrical-behavior realism beyond the buffered protocol model
 * `USART`: more exact one-wire / line-level behavior; sync timing is implemented
+* `TCA0`/`TCB`: FRQ and dual-slope (TCA0) and Single-Shot (TCB) waveform outputs are
+  not yet modelled (single-slope PWM and 8-bit PWM are); they need their counter paths first
 * robustness / fidelity follow-ups:
   `TCB` first-period scheduling when enabled with non-zero `CNT`,
   `CCL` filter/edge timer callback cost when left running on static inputs,

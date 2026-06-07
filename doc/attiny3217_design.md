@@ -493,8 +493,14 @@ from 3.33 MHz to 5 MHz at run time (exercising the CCP window + CLKCTRL).
   high byte latched on low-byte read, as the hardware does via TEMP).
 - INTFLAGS is W1C; the CAPT vector uses the standard engine raised/enable
   reg-bits with `raise_sticky` (software-cleared, matching modern INTFLAGS).
-- Other count modes (input capture / single-shot / 8-bit PWM) and event inputs
-  are not modelled; their registers still store so configuring firmware is fine.
+- **8-bit PWM (CNTMODE=PWM8):** the counter runs as an 8-bit timer wrapping at
+  CCMPL+1; the WO level is published on a `>tcb.wo` IRQ (set at BOTTOM, cleared
+  when CNT reaches CCMPH; CCMPH=0 → static low, CCMPH>CCMPL → static high —
+  DS40002205A 21.3.3.1.8), gated by CCMPEN, and wired into the CCL input MUX. The
+  CAPT flag fires once per period. The input-capture modes (CAPT/FRQ/PW/FRQPW)
+  with their event inputs are also modelled. Single-Shot mode (the other
+  WO-producing mode, an event-triggered one-shot) is not modelled — its WO stays
+  low; registers still store so configuring firmware is fine.
 
 Verified in `tests/test_avrxt_engine.c` (now 110 checks): STATUS.RUN, first CAPT
 at ~101 cycles for CCMP=100, the periodic cadence after W1C, live CNT read,
@@ -518,8 +524,13 @@ TOP = PER) with the overflow and three compare-match interrupts.
 - Four interrupt vectors use the standard engine raised/enable reg-bits
   (INTCTRL/INTFLAGS bits OVF=0, CMP0=4, CMP1=5, CMP2=6) with `raise_sticky`;
   INTFLAGS is W1C.
-- Split (dual 8-bit) mode and the waveform-output pins (WO0..5 via PORTMUX) are
-  not modelled yet; their registers still store so configuring firmware is fine.
+- **Waveform output (single-slope PWM, WGMODE=SINGLESLOPE):** each enabled
+  channel (CMPnEN in CTRLB) publishes its WOn level on a `>tca.wo{0,1,2}` IRQ as
+  it toggles (set at BOTTOM, cleared on the CMPn match; CMPn=0 → static low,
+  CMPn>TOP → static high — DS40002205A 20.3.3.4.3), wired into the CCL input MUX.
+  FRQ (TOP=CMP0) and the dual-slope modes are not modelled (the engine is a
+  single-slope up-counter), so WOn stays low there; the physical WO pins (WO0..5
+  via PORTMUX) and split (dual 8-bit) mode are still not driven. Registers store.
 
 Verified in `tests/test_avrxt_engine.c` (now 118 checks): CMP1 match at CNT=50,
 overflow at TOP+1 = 201 cycles, pending interrupt, live CNT read, W1C, overflow

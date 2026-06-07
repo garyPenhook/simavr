@@ -41,6 +41,11 @@
 #define CLKSEL_gm	0x0e
 #define CLKSEL_gp	1
 
+/* CTRLB (normal-mode view): WGMODE[2:0], CMPnEN at bits 5/6/7 (DS40002205A
+ * 20.5.2). Only single-slope PWM waveform output is modelled here. */
+#define WGMODE_gm		0x07
+#define WGMODE_SINGLESLOPE	0x03
+
 /* INTCTRL / INTFLAGS */
 #define OVF_bm		0x01
 #define CMP0_bm		0x10
@@ -49,6 +54,7 @@
 
 static const uint16_t clksel_div[8] = { 1, 2, 4, 8, 16, 64, 256, 1024 };
 static const uint8_t cmp_flag[3] = { CMP0_bm, CMP1_bm, CMP2_bm };
+static const uint8_t cmpen_bm[3] = { 0x20, 0x40, 0x80 };	/* CMP0/1/2EN */
 
 static uint32_t tca_top(avr_tca_t *p)
 {
@@ -90,6 +96,48 @@ static uint32_t tca_next_target(avr_tca_t *p, uint32_t from)
 	return best;
 }
 
+/*
+ * Single-slope PWM waveform-output level for channel ch at counter value cnt.
+ * DS40002205A 20.3.3.4.3: the output is set at BOTTOM and cleared on the
+ * CNT==CMPn compare match, so WOn is high while CNT < CMPn. CMPn == BOTTOM
+ * produces a static low; CMPn > TOP a static high. The output is only driven
+ * when the channel is enabled (CMPnEN) in a waveform-generation mode; only
+ * SINGLESLOPE is modelled (see avr_tca.h), so every other WGMODE reads low.
+ */
+static uint8_t tca_wo_level(avr_tca_t *p, int ch, uint32_t cnt)
+{
+	uint8_t ctrlb = p->io.avr->data[p->r_ctrlb];
+	uint32_t cmp, top;
+
+	if (!tca_enabled(p) || !(ctrlb & cmpen_bm[ch]))
+		return 0;
+	if ((ctrlb & WGMODE_gm) != WGMODE_SINGLESLOPE)
+		return 0;
+	cmp = tca_cmp(p, ch);
+	top = tca_top(p);
+	if (cmp == 0)
+		return 0;
+	if (cmp > top)
+		return 1;
+	return cnt < cmp ? 1 : 0;
+}
+
+/* Recompute each WOn level from the live counter and publish any transition. */
+static void tca_emit_wo(avr_tca_t *p)
+{
+	avr_t *avr = p->io.avr;
+	uint32_t cnt = tca_enabled(p) ? tca_cnt_now(p)
+		: (avr->data[p->r_cnt] | (avr->data[p->r_cnt + 1] << 8));
+
+	for (int ch = 0; ch < 3; ch++) {
+		uint8_t lvl = tca_wo_level(p, ch, cnt);
+		if (lvl != p->wo_level[ch]) {
+			p->wo_level[ch] = lvl;
+			avr_raise_irq(p->io.irq + AVR_TCA_IRQ_WO0 + ch, lvl);
+		}
+	}
+}
+
 static avr_cycle_count_t
 avr_tca_event(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
@@ -124,6 +172,8 @@ avr_tca_event(struct avr_t *avr, avr_cycle_count_t when, void *param)
 				(avr_cycle_count_t)target * p->prescale;
 	if (next <= when)
 		next = when + 1;
+	/* Wrap set the output at BOTTOM; a compare match cleared its channel. */
+	tca_emit_wo(p);
 	return next;
 }
 
@@ -133,8 +183,10 @@ avr_tca_reschedule(avr_tca_t *p)
 	avr_t *avr = p->io.avr;
 
 	avr_cycle_timer_cancel(avr, avr_tca_event, p);
-	if (!tca_enabled(p))
+	if (!tca_enabled(p)) {
+		tca_emit_wo(p);	/* drives every WOn low */
 		return;
+	}
 
 	uint8_t clksel = (avr->data[p->r_ctrla] & CLKSEL_gm) >> CLKSEL_gp;
 	p->prescale = clksel_div[clksel & 7];
@@ -148,6 +200,7 @@ avr_tca_reschedule(avr_tca_t *p)
 				(avr_cycle_count_t)p->ev_target * p->prescale;
 	avr_cycle_count_t rel = (abs > avr->cycle) ? (abs - avr->cycle) : 1;
 	avr_cycle_timer_register(avr, rel, avr_tca_event, p);
+	tca_emit_wo(p);
 }
 
 static void
@@ -223,9 +276,15 @@ avr_tca_reset(avr_io_t *io)
 	p->start_cycle = 0;
 	p->prescale = 1;
 	p->ev_target = 0;
+	for (int ch = 0; ch < 3; ch++)
+		p->wo_level[ch] = 0;
 }
 
-static const char *irq_names[1] = { NULL };
+static const char *irq_names[AVR_TCA_IRQ_COUNT] = {
+	[AVR_TCA_IRQ_WO0] = ">tca.wo0",
+	[AVR_TCA_IRQ_WO1] = ">tca.wo1",
+	[AVR_TCA_IRQ_WO2] = ">tca.wo2",
+};
 
 static avr_io_t _io = {
 	.kind = "tca",
@@ -279,6 +338,8 @@ avr_tca_init(
 	tca_vector(&p->cmp[2], vec_cmp2, p->r_intctrl, 6);
 
 	avr_register_io(avr, &p->io);
+	avr_io_setirqs(&p->io, AVR_IOCTL_TCA_GETIRQ(name), AVR_TCA_IRQ_COUNT, NULL);
+	p->base_irq = p->io.irq[0].irq;
 	avr_register_vector(avr, &p->ovf);
 	avr_register_vector(avr, &p->cmp[0]);
 	avr_register_vector(avr, &p->cmp[1]);

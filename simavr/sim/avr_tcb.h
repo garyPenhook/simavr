@@ -11,10 +11,14 @@
 	  - Input Capture Frequency Measurement
 	  - Input Capture Pulse-Width Measurement
 	  - Input Capture Frequency and Pulse-Width Measurement
+	  - 8-Bit PWM (continuous waveform output on WO)
 
 	The counter is driven from CLK_PER (optionally /2) using simavr cycle timers;
 	CNT reads return a computed live value. Event-driven modes consume an event
-	input IRQ and publish a capture-event IRQ that can be routed into EVSYS.
+	input IRQ and publish a capture-event IRQ that can be routed into EVSYS. In
+	8-bit PWM mode the WO level is published on its output IRQ as it toggles, so
+	it can be routed into the CCL input MUX. Single-Shot mode (the other
+	WO-producing mode) is not modelled yet; its WO stays low.
 
 	Copyright 2026 simavr authors
 
@@ -79,12 +83,14 @@ typedef struct avr_tcb_t {
 	uint8_t			event_level;
 	uint8_t			pw_armed;
 	uint8_t			frqpw_stage;
+	uint8_t			wo_level;	// last WO level published on its IRQ (PWM8)
 	int			base_irq;
 } avr_tcb_t;
 
 enum {
 	AVR_TCB_IRQ_EVENT_IN = 0,
 	AVR_TCB_IRQ_CAPT_OUT,
+	AVR_TCB_IRQ_WO,		// 8-bit PWM waveform output level
 	AVR_TCB_IRQ_COUNT,
 };
 

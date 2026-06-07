@@ -422,6 +422,28 @@ tinyx1_init(struct avr_t * avr)
 			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
 						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCD0_WOB)));
 
+	/* TCA0 WO0/WO1/WO2 feed CCL INSEL 0x8 (DS40002205A p.413-415: WOn on
+	 * INn), so a single-slope PWM channel can drive a LUT directly. */
+	for (int wo = 0; wo < 3; wo++)
+		avr_connect_irq(
+				avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0 + wo),
+				avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+							  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCA0_WO0 + wo)));
+
+	/* TCB0 WO feeds CCL INSEL 0x7 (DS40002205A p.413: "TCB0 WO input source");
+	 * TCB1 WO feeds INSEL 0xD on the larger parts. The TCB emits its 8-bit-PWM
+	 * waveform level on this IRQ. */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('0'), AVR_TCB_IRQ_WO),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCB0)));
+#ifdef TCB1_INT_vect_num
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('1'), AVR_TCB_IRQ_WO),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCB1)));
+#endif
+
 	/* WDT (modern reset-only watchdog) at 0x0100. */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
 	avr_wdt_modern_set_reset_handler(&mcu->wdt, tinyx1_wdt_reset, mcu);

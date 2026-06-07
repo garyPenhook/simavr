@@ -53,6 +53,9 @@
 #define CNTMODE_FRQ		3
 #define CNTMODE_PW		4
 #define CNTMODE_FRQPW	5
+#define CNTMODE_SINGLE	6
+#define CNTMODE_PWM8	7
+#define CCMPEN_bm	0x10	/* Compare/Capture output enable */
 
 /* EVCTRL */
 #define CAPTEI_bm	0x01
@@ -70,6 +73,11 @@ static uint32_t tcb_top(avr_tcb_t *p)
 	avr_t *avr = p->io.avr;
 	return avr->data[p->r_ccmp] | (avr->data[p->r_ccmp + 1] << 8);
 }
+
+/* 8-bit PWM mode: CCMPL (low byte) is the period top, CCMPH (high byte) the
+ * duty compare (DS40002205A 21.3.3.1.8). */
+static uint8_t tcb_ccmpl(avr_tcb_t *p) { return p->io.avr->data[p->r_ccmp]; }
+static uint8_t tcb_ccmph(avr_tcb_t *p) { return p->io.avr->data[p->r_ccmp + 1]; }
 
 static uint16_t tcb_cnt_reg(avr_tcb_t *p)
 {
@@ -134,7 +142,59 @@ static uint16_t tcb_current_cnt(avr_tcb_t *p)
 	if (!(avr->data[p->r_status] & RUN_bm) || !p->prescale)
 		return p->freeze_count;
 	uint32_t ticks = (uint32_t)((avr->cycle - p->start_cycle) / p->prescale);
-	return (uint16_t)(p->start_count + ticks);
+	uint32_t cnt = p->start_count + ticks;
+	if (tcb_mode(p) == CNTMODE_PWM8)	/* 8-bit counter, wraps at CCMPL+1 */
+		cnt %= (uint32_t)tcb_ccmpl(p) + 1;
+	return (uint16_t)cnt;
+}
+
+/*
+ * 8-bit PWM waveform-output level at counter value cnt. DS40002205A
+ * 21.3.3.1.8: the output is set at BOTTOM and cleared when the counter reaches
+ * CCMPH, so WO is high while CNT < CCMPH. CCMPH == BOTTOM gives a static low
+ * and CCMPH > TOP (CCMPL) a static high. The output is only driven when enabled
+ * (CCMPEN, DS40002205A Table 21-2) in 8-bit PWM mode.
+ */
+static uint8_t tcb_pwm8_wo_level(avr_tcb_t *p, uint16_t cnt)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t ccmpl, ccmph;
+
+	if (!(avr->data[p->r_ctrla] & ENABLE_bm) ||
+		!(avr->data[p->r_ctrlb] & CCMPEN_bm) ||
+		tcb_mode(p) != CNTMODE_PWM8)
+		return 0;
+	ccmpl = tcb_ccmpl(p);
+	ccmph = tcb_ccmph(p);
+	if (ccmph == 0)
+		return 0;
+	if (ccmph > ccmpl)
+		return 1;
+	return cnt < ccmph ? 1 : 0;
+}
+
+/* Recompute the WO level from the live counter and publish any transition. */
+static void tcb_emit_wo(avr_tcb_t *p)
+{
+	uint8_t lvl = tcb_pwm8_wo_level(p, tcb_current_cnt(p));
+
+	if (lvl != p->wo_level) {
+		p->wo_level = lvl;
+		avr_raise_irq(p->io.irq + AVR_TCB_IRQ_WO, lvl);
+	}
+}
+
+/* Cycles until the next 8-bit PWM transition (the CCMPH clear, or the wrap back
+ * to BOTTOM at CCMPL+1) from the current count. */
+static avr_cycle_count_t tcb_pwm8_delta(avr_tcb_t *p, uint16_t cnt)
+{
+	uint8_t ccmpl = tcb_ccmpl(p), ccmph = tcb_ccmph(p);
+	uint32_t period = (uint32_t)ccmpl + 1;	/* wrap point (CNT back to 0) */
+	uint32_t next = period;
+
+	if (ccmph > 0 && ccmph <= ccmpl && ccmph > cnt)
+		next = ccmph;
+	return (avr_cycle_count_t)(next > cnt ? next - cnt : 1) * p->prescale;
 }
 
 static void tcb_set_running(avr_tcb_t *p, int running, uint16_t count)
@@ -180,6 +240,8 @@ static avr_cycle_count_t tcb_schedule_delta(avr_tcb_t *p)
 	case CNTMODE_PW:
 	case CNTMODE_FRQPW:
 		return (avr_cycle_count_t)(0x10000u - cnt) * p->prescale;
+	case CNTMODE_PWM8:
+		return tcb_pwm8_delta(p, cnt);
 	default:
 		return 0;
 	}
@@ -213,6 +275,20 @@ avr_tcb_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
 		tcb_raise_ovf(p);
 		tcb_set_running(p, 1, 0);
 		return when + (avr_cycle_count_t)0x10000u * p->prescale;
+	case CNTMODE_PWM8: {
+		/* A transition fired: either the CCMPH clear, or the wrap back to
+		 * BOTTOM. At the wrap (CNT == 0) the period completed, so raise CAPT
+		 * and re-anchor the counter; then schedule the next transition and
+		 * republish the WO level. (The datasheet sets CAPT one tick earlier at
+		 * CNT == CCMPL; here it is emitted at the period boundary alongside the
+		 * BOTTOM output-set, which is the same CLK_PER period.) */
+		if (tcb_current_cnt(p) == 0) {
+			tcb_raise_capt(p);
+			tcb_set_running(p, 1, 0);
+		}
+		tcb_emit_wo(p);
+		return when + tcb_pwm8_delta(p, tcb_current_cnt(p));
+	}
 	default:
 		tcb_set_running(p, 0, tcb_current_cnt(p));
 		return 0;
@@ -231,6 +307,7 @@ avr_tcb_reschedule(avr_tcb_t *p)
 
 	if (!(avr->data[p->r_ctrla] & ENABLE_bm)) {
 		tcb_set_running(p, 0, tcb_current_cnt(p));
+		tcb_emit_wo(p);		/* drives WO low */
 		return;
 	}
 
@@ -238,6 +315,7 @@ avr_tcb_reschedule(avr_tcb_t *p)
 	case CNTMODE_INT:
 	case CNTMODE_CAPT:
 	case CNTMODE_FRQ:
+	case CNTMODE_PWM8:	/* free-running 8-bit waveform counter */
 		tcb_set_running(p, 1, tcb_cnt_reg(p));
 		break;
 	default:
@@ -247,6 +325,7 @@ avr_tcb_reschedule(avr_tcb_t *p)
 
 	if (avr->data[p->r_status] & RUN_bm)
 		avr_cycle_timer_register(avr, tcb_schedule_delta(p), avr_tcb_tick, p);
+	tcb_emit_wo(p);
 }
 
 static void
@@ -308,6 +387,18 @@ avr_tcb_ccmp_write(struct avr_t *avr, avr_io_addr_t addr,
 	if (!(avr->data[p->r_ctrla] & ENABLE_bm) ||
 		!(avr->data[p->r_status] & RUN_bm))
 		return;
+
+	/* 8-bit PWM: CCMPL/CCMPH are the live period/duty (not double-buffered),
+	 * so re-anchor to the current phase and move the next transition. */
+	if (mode == CNTMODE_PWM8) {
+		uint16_t cnt = tcb_current_cnt(p);
+		tcb_set_running(p, 1, cnt);
+		avr_cycle_timer_cancel(avr, avr_tcb_tick, p);
+		avr_cycle_timer_register(avr, tcb_pwm8_delta(p, cnt), avr_tcb_tick, p);
+		tcb_emit_wo(p);
+		return;
+	}
+
 	if (mode != CNTMODE_INT && mode != CNTMODE_TIMEOUT)
 		return;
 
@@ -451,11 +542,13 @@ avr_tcb_reset(avr_io_t *io)
 	p->event_level = 0;
 	p->pw_armed = 0;
 	p->frqpw_stage = 0;
+	p->wo_level = 0;
 }
 
 static const char *irq_names[AVR_TCB_IRQ_COUNT] = {
-	"tcb.event",
-	">tcb.capt",
+	[AVR_TCB_IRQ_EVENT_IN] = "tcb.event",
+	[AVR_TCB_IRQ_CAPT_OUT] = ">tcb.capt",
+	[AVR_TCB_IRQ_WO] = ">tcb.wo",
 };
 
 static avr_io_t _io = {

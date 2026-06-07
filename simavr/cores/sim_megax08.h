@@ -320,6 +320,26 @@ megax08_init(struct avr_t * avr)
 			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
 						  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_AC0)));
 
+	/* TCA0 WO0/WO1/WO2 feed CCL INSEL 0xA (DS40002173C p.373: WOn on INn),
+	 * so a single-slope PWM channel can drive a LUT directly. */
+	for (int wo = 0; wo < 3; wo++)
+		avr_connect_irq(
+				avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0 + wo),
+				avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+							  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCA0_WO0 + wo)));
+
+	/* TCB0/1/2 WO feed CCL INSEL 0xC (DS40002173C p.373: WO on IN0/1/2). The
+	 * CCL reaches only TCB0-2 even on the 4-TCB parts. The TCB emits its
+	 * 8-bit-PWM waveform level on this IRQ. */
+	{
+		static const char tcb_name[3] = { '0', '1', '2' };
+		for (int i = 0; i < 3; i++)
+			avr_connect_irq(
+					avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ(tcb_name[i]), AVR_TCB_IRQ_WO),
+					avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+								  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCB0 + i)));
+	}
+
 	/* EVSYS routing fabric at 0x0180 (megaAVR-0 register layout). */
 	avr_evsys_init_mega(avr, &mcu->evsys, 0x0180, '0');
 	avr_irq_register_notify(

@@ -867,6 +867,81 @@ int main(void)
 		check("CLKDIV2 period ~202 cycles", (t2 - base) >= 200 && (t2 - base) <= 206, 1);
 	}
 
+	printf("== modern TCB0 8-bit PWM WO -> CCL (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t TB = 0xa40, L = 0x1c0;
+		enum { TCB_ENABLE = 0x01 };
+		enum { CNTMODE_PWM8 = 0x07, CCMPEN = 0x10 };
+		enum { TCB_CAPT = 0x01 };
+		enum { CCL_EN = 0x01, LUT_EN = 0x01, CTRLA = 0x00,
+			   L0CTRLB = 0x06, L0CTRLC = 0x07, TRUTH0 = 0x08 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		uint8_t wo = 0xff, ccl0 = 0xff;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_TCB_GETIRQ('0'), AVR_TCB_IRQ_WO),
+			rec_irq, &wo);
+		/* LUT0 = pass-through of TCB0 WO (tinyAVR-1 INSEL 0x7, IN0). */
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_OUT),
+			rec_irq, &ccl0);
+		cpu_write(m, L + L0CTRLB, 0x07);	/* IN0 = TCB0 WO */
+		cpu_write(m, L + L0CTRLC, 0x00);
+		cpu_write(m, L + TRUTH0, 0xaa);		/* OUT = IN0 */
+		cpu_write(m, L + 0x05, LUT_EN);		/* L0CTRLA */
+		cpu_write(m, L + CTRLA, CCL_EN);
+
+		/* 8-bit PWM: CCMPL=99 (period 100), CCMPH=30 (high for 30 cycles). */
+		cpu_write(m, TB + TCBR_CCMPL, 99);
+		cpu_write(m, TB + TCBR_CCMPH, 30);
+		cpu_write(m, TB + TCBR_CTRLB, CNTMODE_PWM8 | CCMPEN);
+		long t0 = (long)m->cycle;
+		cpu_write(m, TB + TCBR_CTRLA, TCB_ENABLE);
+
+		check("WO set at BOTTOM when enabled", wo, 1);
+		check("CCL LUT0 tracks WO high", ccl0, 1);
+
+		#define RUN_TO(n) do { while ((long)m->cycle - t0 < (n)) avr_run(m); } while (0)
+		RUN_TO(15);
+		check("WO high before CCMPH", wo, 1);
+		RUN_TO(35);
+		check("WO cleared at CCMPH (30)", wo, 0);
+		check("CCL LUT0 tracks WO low", ccl0, 0);
+		RUN_TO(105);	/* past wrap at 100 */
+		check("WO set again at next BOTTOM", wo, 1);
+
+		/* CAPT flag fires once per period (at the period boundary). */
+		cpu_write(m, TB + TCBR_INTFLAGS, TCB_CAPT);	/* clear */
+		long tcapt = -1;
+		for (int i = 0; i < 200 && tcapt < 0; i++) {
+			avr_run(m);
+			if (m->data[TB + TCBR_INTFLAGS] & TCB_CAPT) tcapt = (long)m->cycle;
+		}
+		check("PWM8 CAPT raised within a period", tcapt >= 0, 1);
+		#undef RUN_TO
+
+		/* CCMPH == BOTTOM => static low; CCMPH > TOP => static high. */
+		cpu_write(m, TB + TCBR_CCMPH, 0);
+		check("WO static low when CCMPH=BOTTOM", wo, 0);
+		cpu_write(m, TB + TCBR_CCMPH, 200);
+		check("WO static high when CCMPH>TOP", wo, 1);
+
+		/* Clearing CCMPEN stops driving the output (low). */
+		cpu_write(m, TB + TCBR_CTRLB, CNTMODE_PWM8);
+		check("WO low when CCMPEN cleared", wo, 0);
+
+		/* Disabling the timer drives WO low. */
+		cpu_write(m, TB + TCBR_CTRLB, CNTMODE_PWM8 | CCMPEN);
+		check("WO high again (CCMPH>TOP)", wo, 1);
+		cpu_write(m, TB + TCBR_CTRLA, 0x00);
+		check("WO low when TCB disabled", wo, 0);
+	}
+
 	printf("== modern TCA0 (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t TA = 0xa00;
@@ -938,6 +1013,79 @@ int main(void)
 			if (m->data[TA + TCAR_INTFLAGS] & F_OVF) { fired = 1; break; }
 		}
 		check("no OVF after disable", fired, 0);
+	}
+
+	printf("== modern TCA0 single-slope PWM WO -> CCL (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t TA = 0xa00, L = 0x1c0;
+		enum { ENABLE = 0x01 };
+		enum { WGMODE_SS = 0x03, WGMODE_FRQ = 0x01, CMP0EN = 0x20 };
+		enum { CCL_EN = 0x01, LUT_EN = 0x01, CTRLA = 0x00,
+			   L0CTRLA = 0x05, L0CTRLB = 0x06, L0CTRLC = 0x07, TRUTH0 = 0x08 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		uint8_t wo0 = 0xff, ccl0 = 0xff;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0),
+			rec_irq, &wo0);
+
+		/* LUT0 = pass-through of TCA0 WO0 (tinyAVR-1 INSEL 0x8 -> WOn on INn);
+		 * the core wires TCA0 WO0 to the CCL source, so the LUT tracks it. */
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_OUT),
+			rec_irq, &ccl0);
+		cpu_write(m, L + L0CTRLB, 0x08);	/* IN0 = TCA0 WO0 */
+		cpu_write(m, L + L0CTRLC, 0x00);	/* IN2 mask */
+		cpu_write(m, L + TRUTH0, 0xaa);		/* OUT = IN0 */
+		cpu_write(m, L + L0CTRLA, LUT_EN);
+		cpu_write(m, L + CTRLA, CCL_EN);
+
+		/* Single-slope PWM: PER=99 (period 100), CMP0=30 duty cycle. */
+		cpu_write(m, TA + TCAR_PERL, 99); cpu_write(m, TA + TCAR_PERH, 0);
+		cpu_write(m, TA + TCAR_CMP0L, 30); cpu_write(m, TA + TCAR_CMP0L + 1, 0);
+		cpu_write(m, TA + TCAR_CTRLB, WGMODE_SS | CMP0EN);
+		long t0 = (long)m->cycle;
+		cpu_write(m, TA + TCAR_CTRLA, ENABLE);
+
+		check("WO0 set at BOTTOM when enabled", wo0, 1);
+		check("CCL LUT0 tracks WO0 high", ccl0, 1);
+
+		#define RUN_TO(n) do { while ((long)m->cycle - t0 < (n)) avr_run(m); } while (0)
+		RUN_TO(15);
+		check("WO0 high before CMP0 match", wo0, 1);
+		RUN_TO(35);
+		check("WO0 cleared on CMP0 match (30)", wo0, 0);
+		check("CCL LUT0 tracks WO0 low", ccl0, 0);
+		RUN_TO(105);	/* past wrap at 100 */
+		check("WO0 set again at next BOTTOM", wo0, 1);
+		#undef RUN_TO
+
+		/* CMP0 == BOTTOM => static low; CMP0 > TOP => static high. */
+		cpu_write(m, TA + TCAR_CMP0L, 0); cpu_write(m, TA + TCAR_CMP0L + 1, 0);
+		check("WO0 static low when CMP0=BOTTOM", wo0, 0);
+		cpu_write(m, TA + TCAR_CMP0L, 200); cpu_write(m, TA + TCAR_CMP0L + 1, 0);
+		check("WO0 static high when CMP0>TOP", wo0, 1);
+
+		/* Clearing CMP0EN stops overriding the pin (low). */
+		cpu_write(m, TA + TCAR_CTRLB, WGMODE_SS);
+		check("WO0 low when CMP0EN cleared", wo0, 0);
+
+		/* FRQ / dual-slope WGMODE variants are unmodelled => WO stays low. */
+		cpu_write(m, TA + TCAR_CMP0L, 30); cpu_write(m, TA + TCAR_CMP0L + 1, 0);
+		cpu_write(m, TA + TCAR_CTRLB, WGMODE_FRQ | CMP0EN);
+		check("WO0 low in unmodelled FRQ mode", wo0, 0);
+
+		/* Disabling the timer drives every WO low. */
+		cpu_write(m, TA + TCAR_CTRLB, WGMODE_SS | CMP0EN);
+		cpu_write(m, TA + TCAR_CMP0L, 200);
+		check("WO0 high again (CMP0>TOP, single-slope)", wo0, 1);
+		cpu_write(m, TA + TCAR_CTRLA, 0x00);
+		check("WO0 low when TCA disabled", wo0, 0);
 	}
 
 	printf("== modern USART0 (sim_tiny3217) ==\n");

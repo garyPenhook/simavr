@@ -8,8 +8,15 @@
 	the overflow interrupt (OVF) and the three compare-match interrupts
 	(CMP0/1/2). The counter is advanced by a simavr cycle timer scheduled to the
 	next interesting count (a compare value or the wrap), so there is no
-	per-cycle cost. Split (dual 8-bit) mode and the waveform output pins are not
-	modelled yet (the registers still store).
+	per-cycle cost.
+
+	Single-slope PWM waveform output (WGMODE = SINGLESLOPE) is modelled: each
+	enabled channel (CMPnEN in CTRLB) publishes its WOn level on an output IRQ
+	as it toggles, so it can be routed into the CCL input MUX. FRQ and the
+	dual-slope WGMODE variants are not (the engine is a single-slope up-counter:
+	FRQ uses TOP = CMP0 and dual-slope down-counts, neither of which it tracks),
+	so WOn stays low in those modes. Split (dual 8-bit) mode is not modelled (the
+	registers still store).
 
 	Copyright 2026 simavr authors
 
@@ -70,7 +77,20 @@ typedef struct avr_tca_t {
 	avr_cycle_count_t	start_cycle;	// cycle at which CNT == 0
 	uint32_t		prescale;	// CPU cycles per timer tick
 	uint32_t		ev_target;	// CNT value of the currently-scheduled event
+
+	uint8_t			wo_level[3];	// last WO0/1/2 level published on its IRQ
+	int			base_irq;
 } avr_tca_t;
+
+/* Waveform-output level IRQs (single-slope PWM), one per compare channel. */
+enum {
+	AVR_TCA_IRQ_WO0 = 0,
+	AVR_TCA_IRQ_WO1,
+	AVR_TCA_IRQ_WO2,
+	AVR_TCA_IRQ_COUNT,
+};
+
+#define AVR_IOCTL_TCA_GETIRQ(_name) AVR_IOCTL_DEF('t','c','a',(_name))
 
 /*
  * Initialise a TCA block at data address 'base'. The OVF and CMP0..2 interrupt

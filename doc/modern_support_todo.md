@@ -19,17 +19,18 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 |---|---|---|---|
 | AC (Analog Comparator) | [P] | input hysteresis (HYSMODE ±10/±25/±50 mV) now modelled with a held-state band; *remaining:* low-power / run-standby power+timing (no power or sleep-mode-gating model), physical output-pin buffer (OUTEN) | `avr_ac.c` |
 | DAC | [P] | output buffer (OUTEN) now modelled: a separate pin output, gated by ENABLE+OUTEN, distinct from the ENABLE-only internal OUT to AC/ADC. *Remaining:* run-standby power/timing (no model hook), output-buffer start-up time; conversion stays the ideal digital→mV | `avr_dac.c` |
-| CCL | [F] | event/peripheral INSEL sources decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2287) and resolved from cached levels. Live wiring in the core templates: **AC0-2 OUT** (tinyAVR-1) and **AC0 OUT** (megaAVR-0) and **TCD0 WOA/WOB** (tinyAVR-1) now auto-connect to the CCL sources. **Not yet wired:** TCA0 WO0-2, TCB0-2 WO, USART TXD/XCK, SPI lines (need new waveform/line-level output IRQs in those models), and EVSYS EVENT0/1 (CCL not yet an EVSYS user); filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c`, `sim_tinyx1.h`, `sim_megax08.h` |
+| CCL | [P] | event/peripheral INSEL sources decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2287) and resolved from cached levels. Live wiring in the core templates: **AC0-2 OUT** (tinyAVR-1) and **AC0 OUT** (megaAVR-0), **TCD0 WOA/WOB** (tinyAVR-1), **TCA0 WO0-2 single-slope PWM** (all 23), and **TCB0-2 WO 8-bit PWM** (TCB0/1 tinyAVR-1, TCB0-2 megaAVR-0) now auto-connect to the CCL sources. **Not yet wired:** USART TXD/XCK and SPI lines (need line-level output IRQs in those models), and EVSYS EVENT0/1 (CCL not yet an EVSYS user); filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | TCD | [P] | clock source now decoded from CTRLA.CLKSEL — **OSC20M** (unprescaled internal osc, from OSCCFG fuse) and **SYSCLK** (CLK_PER) modelled, scaled by CLK_PER/f_TCD; 4 WGM modes work. *Remaining:* no EXTCLK pin and no dedicated/PLL clock; sub-CLK_PER count resolution not representable (rounded/clamped to ≥1 cycle/count) | `avr_tcd.c` |
 | RTC / PIT | [P] | STATUS (CTRLA/CNT/PER/CMP) & PITSTATUS (CTRLBUSY) sync-busy bits now asserted for the documented 2-RTC-clock-cycle latency, so busy-polls spin realistically. *Remaining:* CRYSTERR & external-clock pins not modelled; CLK_PER change not retro-applied until reconfig; write-during-busy not blocked | `avr_rtc.c` |
 | USART | [P] | exact one-wire / line-level timing (async TX/RX, sync timing, loopback all work) | `avr_usart_modern.c` |
 | SPI | [P] | pin-contention / electrical realism (buffered protocol is complete) | `avr_spi_modern.c` |
-| TCB | [P] | first-period scheduling when enabled with non-zero CNT; filter/edge callback cost on static inputs | `avr_tcb.c` |
+| TCB | [P] | 8-bit PWM (PWM8) waveform output now modelled (set at BOTTOM, cleared at CCMPH; CAPT per period) and wired to CCL. *Remaining:* Single-Shot mode (the other WO-producing mode, event-triggered one-shot pulse) is not modelled — its WO stays low; first-period scheduling when enabled with non-zero CNT; filter/edge callback cost on static inputs | `avr_tcb.c` |
+| TCA0 | [P] | single-slope PWM waveform output (WO0-2) now modelled (set at BOTTOM, cleared on the CMPn match; CMPn=0 → static low, CMPn>TOP → static high) and wired to CCL. *Remaining:* FRQ (TOP=CMP0) and the dual-slope WGMODE variants are not modelled — the counter engine is a single-slope up-counter, so both the count behaviour and WOn stay single-slope/low there; split (dual 8-bit) mode; physical WO pins via PORTMUX | `avr_tca.c` |
 | EVSYS | [P] | generator source encodings need a datasheet pass | `avr_evsys.c` |
 | ADC | [P] | conversion delay is a cycle approximation, not exact ADC-clock timing | `avr_adc_modern.c` |
 
 **Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
-PORTMUX, TCA0, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
+PORTMUX, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
 SYSCFG/SIGROW, VREF, CPUINT (incl. LVL0/1, NMI, round-robin, LVL0PRI, CVT),
 BOD/VLM (voltage-level monitor + brown-out reset → RSTFR.BORF; only the
 power/sleep-fidelity aspects shared by all peripherals are unmodelled).
@@ -105,12 +106,17 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
 
 1. **CCL event/peripheral input sources** — INSEL decode + source-level cache
    done (per-family, datasheet-verified, host-tested). Live auto-wiring done for
-   **AC** (all 23) and **TCD0** (tinyAVR-1) — these track the real peripherals
-   end-to-end. *Remaining:* TCA0 WO0-2 and TCB0-2 WO need new waveform-output
-   level IRQs in `avr_tca.c` / `avr_tcb.c` before they can be wired; USART
-   TXD/XCK and SPI SCK/MOSI/MISO need line-level output IRQs (overlaps the USART
-   [P] line-timing gap); EVSYS EVENT0/1 need the CCL added as an EVSYS user.
-   [F]
+   **AC** (all 23), **TCD0** (tinyAVR-1), **TCA0 WO0-2** (all 23), and **TCB0-2
+   WO** (tinyAVR-1 TCB0/1, megaAVR-0 TCB0-2) — these track the real peripherals
+   end-to-end. TCA0 emits single-slope PWM levels (DS40002205A 20.3.3.4.3: set
+   at BOTTOM, cleared on CMPn match); TCB emits 8-bit-PWM levels (21.3.3.1.8:
+   set at BOTTOM, cleared at CCMPH) on new WO output IRQs, both wired into the
+   CCL source MUX (host-tested). *Remaining (all [P]):* TCB Single-Shot WO and
+   TCA0 FRQ / dual-slope WO need their counter paths modelled first (TCA0 FRQ
+   uses TOP=CMP0 and dual-slope down-counts; Single-Shot is event-triggered);
+   USART TXD/XCK and SPI SCK/MOSI/MISO need line-level output IRQs (overlaps the
+   USART [P] line-timing gap); EVSYS EVENT0/1 need the CCL added as an EVSYS
+   user.
 2. **TCD clock source** — *done.* CTRLA.CLKSEL is decoded: OSC20M (unprescaled
    internal oscillator, resolved from the OSCCFG fuse) and SYSCLK (CLK_PER) are
    modelled, with the schedule scaled by CLK_PER/f_TCD so a prescaled main clock
