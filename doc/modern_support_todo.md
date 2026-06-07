@@ -22,7 +22,6 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 | CCL | [F] | event/peripheral INSEL sources decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2287) and resolved from cached levels. Live wiring in the core templates: **AC0-2 OUT** (tinyAVR-1) and **AC0 OUT** (megaAVR-0) and **TCD0 WOA/WOB** (tinyAVR-1) now auto-connect to the CCL sources. **Not yet wired:** TCA0 WO0-2, TCB0-2 WO, USART TXD/XCK, SPI lines (need new waveform/line-level output IRQs in those models), and EVSYS EVENT0/1 (CCL not yet an EVSYS user); filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | TCD | [P] | clock source now decoded from CTRLA.CLKSEL — **OSC20M** (unprescaled internal osc, from OSCCFG fuse) and **SYSCLK** (CLK_PER) modelled, scaled by CLK_PER/f_TCD; 4 WGM modes work. *Remaining:* no EXTCLK pin and no dedicated/PLL clock; sub-CLK_PER count resolution not representable (rounded/clamped to ≥1 cycle/count) | `avr_tcd.c` |
 | RTC / PIT | [P] | STATUS (CTRLA/CNT/PER/CMP) & PITSTATUS (CTRLBUSY) sync-busy bits now asserted for the documented 2-RTC-clock-cycle latency, so busy-polls spin realistically. *Remaining:* CRYSTERR & external-clock pins not modelled; CLK_PER change not retro-applied until reconfig; write-during-busy not blocked | `avr_rtc.c` |
-| BOD / VLM | ✓ | brown-out **reset** modelled: VDD below CTRLB.LVL while enabled invokes a handler the cores wire to RSTCTRL (resets, records RSTFR.BORF); VLM monitor also modelled. Host-tested. No known functional gap | `avr_bod.c` |
 | USART | [P] | exact one-wire / line-level timing (async TX/RX, sync timing, loopback all work) | `avr_usart_modern.c` |
 | SPI | [P] | pin-contention / electrical realism (buffered protocol is complete) | `avr_spi_modern.c` |
 | TCB | [P] | first-period scheduling when enabled with non-zero CNT; filter/edge callback cost on static inputs | `avr_tcb.c` |
@@ -31,7 +30,9 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 
 **Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
 PORTMUX, TCA0, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
-SYSCFG/SIGROW, VREF, CPUINT (incl. LVL0/1, NMI, round-robin, LVL0PRI, CVT).
+SYSCFG/SIGROW, VREF, CPUINT (incl. LVL0/1, NMI, round-robin, LVL0PRI, CVT),
+BOD/VLM (voltage-level monitor + brown-out reset → RSTFR.BORF; only the
+power/sleep-fidelity aspects shared by all peripherals are unmodelled).
 
 ## Not implemented at all
 
@@ -56,14 +57,15 @@ intentionally not wired.
 
 ## Per-micro fitted instances and applicable gaps
 
-Base set on **every** modern micro (so every micro carries the AC/CCL/RTC/BOD/
+Base set on **every** modern micro (so every micro carries the AC/CCL/RTC/
 USART/SPI/TCB/EVSYS/ADC gaps at least once): TCA0, TCB0, RTC+PIT, USART0, SPI0,
-TWI0, AC0, ADC0, CCL, EVSYS, plus the fully-supported blocks above.
+TWI0, AC0, ADC0, CCL, EVSYS, plus the fully-supported blocks above (incl.
+BOD/VLM, now gap-free).
 
 ### tinyAVR 1-series (15) — additionally fit **DAC0 and TCD0 on every part**
 
 So **all 15 tinyAVR-1 micros carry, at minimum, the AC + DAC + CCL + TCD + RTC +
-BOD + USART + SPI + TCB + EVSYS + ADC gaps.** Instance counts that multiply a gap:
+USART + SPI + TCB + EVSYS + ADC gaps.** Instance counts that multiply a gap:
 
 | Micro | Ports | AC | ADC | TCB | Extra gap multiplier |
 |---|---|---|---|---|---|
@@ -85,7 +87,7 @@ BOD + USART + SPI + TCB + EVSYS + ADC gaps.** Instance counts that multiply a ga
 
 ### megaAVR 0-series (8) — **no DAC, no TCD** (those gaps do not apply)
 
-So **all 8 megaAVR-0 micros carry the AC + CCL + RTC + BOD + USART + SPI + TCB +
+So **all 8 megaAVR-0 micros carry the AC + CCL + RTC + USART + SPI + TCB +
 EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
 
 | Micro | Ports | USART | TCB | Notes |
