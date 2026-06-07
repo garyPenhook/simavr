@@ -46,6 +46,17 @@
 #define WGMODE_gm		0x07
 #define WGMODE_SINGLESLOPE	0x03
 
+/* EVCTRL (DS40002205A 20.5.10): CNTEI bit 0, EVACT[1:0] bits 2:1. */
+#define CNTEI_bm	0x01
+#define EVACT_gm	0x06
+#define EVACT_gp	1
+enum {
+	EVACT_POSEDGE = 0,	/* count on positive edge event */
+	EVACT_ANYEDGE = 1,	/* count on any edge event */
+	EVACT_HIGHLVL = 2,	/* count on prescaled clock while event line is 1 */
+	EVACT_UPDOWN  = 3,	/* count on prescaled clock; event controls direction */
+};
+
 /* INTCTRL / INTFLAGS */
 #define OVF_bm		0x01
 #define CMP0_bm		0x10
@@ -81,6 +92,34 @@ static uint32_t tca_cnt_now(avr_tca_t *p)
 static int tca_enabled(avr_tca_t *p)
 {
 	return (p->io.avr->data[p->r_ctrla] & ENABLE_bm) != 0;
+}
+
+/* EVACT mode if event counting is enabled (CNTEI), else -1. */
+static int tca_evact(avr_tca_t *p)
+{
+	uint8_t ev = p->io.avr->data[p->r_evctrl];
+	if (!(ev & CNTEI_bm))
+		return -1;
+	return (ev & EVACT_gm) >> EVACT_gp;
+}
+
+/*
+ * Whether the prescaled-clock scheduler should be running. The clock never
+ * drives the counter in the edge-count modes; HIGHLVL gates it on the event
+ * line; UPDOWN runs only the up-count half (event line low) — the down-count
+ * half is not representable, so the counter freezes while the line is high.
+ */
+static int tca_clock_should_run(avr_tca_t *p)
+{
+	if (!tca_enabled(p))
+		return 0;
+	switch (tca_evact(p)) {
+	case EVACT_POSEDGE:
+	case EVACT_ANYEDGE:	return 0;
+	case EVACT_HIGHLVL:	return p->ev_input;
+	case EVACT_UPDOWN:	return !p->ev_input;
+	default:		return 1;	/* CNTEI clear: free-running clock */
+	}
 }
 
 /* Smallest event count strictly greater than 'from' (a compare, or TOP+1 wrap). */
@@ -126,7 +165,9 @@ static uint8_t tca_wo_level(avr_tca_t *p, int ch, uint32_t cnt)
 static void tca_emit_wo(avr_tca_t *p)
 {
 	avr_t *avr = p->io.avr;
-	uint32_t cnt = tca_enabled(p) ? tca_cnt_now(p)
+	/* CNT lives in cycle-time only while the clock scheduler is running; in
+	 * event-count / frozen modes it is held in the registers. */
+	uint32_t cnt = p->clock_running ? tca_cnt_now(p)
 		: (avr->data[p->r_cnt] | (avr->data[p->r_cnt + 1] << 8));
 
 	for (int ch = 0; ch < 3; ch++) {
@@ -145,8 +186,10 @@ avr_tca_event(struct avr_t *avr, avr_cycle_count_t when, void *param)
 	uint32_t top = tca_top(p);
 	uint32_t from;
 
-	if (!tca_enabled(p))
+	if (!tca_enabled(p)) {
+		p->clock_running = 0;
 		return 0;
+	}
 
 	if (p->ev_target > top) {
 		/* Overflow / wrap. */
@@ -182,9 +225,20 @@ avr_tca_reschedule(avr_tca_t *p)
 {
 	avr_t *avr = p->io.avr;
 
+	/* If the clock was driving CNT, latch its live value into the registers
+	 * before tearing the timer down, so the held value is correct whether we
+	 * stop (disable / event-count / gate-low) or re-anchor below. */
+	if (p->clock_running) {
+		uint16_t cnt = tca_cnt_now(p);
+		avr->data[p->r_cnt] = cnt & 0xff;
+		avr->data[p->r_cnt + 1] = cnt >> 8;
+	}
 	avr_cycle_timer_cancel(avr, avr_tca_event, p);
-	if (!tca_enabled(p)) {
-		tca_emit_wo(p);	/* drives every WOn low */
+	p->clock_running = 0;
+
+	if (!tca_clock_should_run(p)) {
+		/* Disabled, or counter is event-clocked / frozen: no timer. */
+		tca_emit_wo(p);
 		return;
 	}
 
@@ -200,7 +254,80 @@ avr_tca_reschedule(avr_tca_t *p)
 				(avr_cycle_count_t)p->ev_target * p->prescale;
 	avr_cycle_count_t rel = (abs > avr->cycle) ? (abs - avr->cycle) : 1;
 	avr_cycle_timer_register(avr, rel, avr_tca_event, p);
+	p->clock_running = 1;
 	tca_emit_wo(p);
+}
+
+/*
+ * Advance the (register-held) counter by one count in event-count mode, with
+ * the same compare/overflow semantics as the clock engine: OVF fires on the
+ * TOP->BOTTOM wrap, CMPn when CNT reaches CMPn (CMPn == 0 matches at the wrap).
+ */
+static void
+tca_event_tick(avr_tca_t *p)
+{
+	avr_t *avr = p->io.avr;
+	uint32_t top = tca_top(p);
+	uint32_t cnt = avr->data[p->r_cnt] | (avr->data[p->r_cnt + 1] << 8);
+
+	if (cnt >= top) {
+		cnt = 0;
+		avr_raise_interrupt(avr, &p->ovf);
+	} else {
+		cnt++;
+	}
+	for (int ch = 0; ch < 3; ch++)
+		if (tca_cmp(p, ch) == cnt)
+			avr_raise_interrupt(avr, &p->cmp[ch]);
+
+	avr->data[p->r_cnt] = cnt & 0xff;
+	avr->data[p->r_cnt + 1] = cnt >> 8;
+	tca_emit_wo(p);
+}
+
+/*
+ * Event-line input (EVSYS routes the TCA0 user here). In the edge-count modes
+ * a qualifying edge ticks the counter; in the level modes the line gates /
+ * directs the prescaled clock, so re-evaluate the schedule.
+ */
+static void
+avr_tca_ev_input(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	avr_tca_t *p = (avr_tca_t *)param;
+	uint8_t level = value & 1;
+	uint8_t prev = p->ev_input;
+
+	if (level == prev)
+		return;
+	p->ev_input = level;
+
+	if (!tca_enabled(p))
+		return;
+
+	switch (tca_evact(p)) {
+	case EVACT_POSEDGE:
+		if (!prev && level)
+			tca_event_tick(p);
+		break;
+	case EVACT_ANYEDGE:
+		tca_event_tick(p);
+		break;
+	case EVACT_HIGHLVL:
+	case EVACT_UPDOWN:
+		avr_tca_reschedule(p);	/* level gates / directs the clock */
+		break;
+	default:
+		break;			/* CNTEI clear: event is ignored */
+	}
+}
+
+static void
+avr_tca_evctrl_write(struct avr_t *avr, avr_io_addr_t addr,
+					 uint8_t v, void *param)
+{
+	avr_tca_t *p = (avr_tca_t *)param;
+	avr_core_watch_write(avr, p->r_evctrl, v);
+	avr_tca_reschedule(p);	/* may switch the CNT clock source on/off */
 }
 
 static void
@@ -237,7 +364,7 @@ static uint8_t
 avr_tca_cnt_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 {
 	avr_tca_t *p = (avr_tca_t *)param;
-	uint16_t cnt = tca_enabled(p) ? tca_cnt_now(p) :
+	uint16_t cnt = p->clock_running ? tca_cnt_now(p) :
 				   (avr->data[p->r_cnt] | (avr->data[p->r_cnt + 1] << 8));
 	avr->data[p->r_cnt] = cnt & 0xff;
 	avr->data[p->r_cnt + 1] = cnt >> 8;	/* latched high byte */
@@ -276,6 +403,8 @@ avr_tca_reset(avr_io_t *io)
 	p->start_cycle = 0;
 	p->prescale = 1;
 	p->ev_target = 0;
+	p->clock_running = 0;
+	p->ev_input = 0;
 	for (int ch = 0; ch < 3; ch++)
 		p->wo_level[ch] = 0;
 }
@@ -284,6 +413,7 @@ static const char *irq_names[AVR_TCA_IRQ_COUNT] = {
 	[AVR_TCA_IRQ_WO0] = ">tca.wo0",
 	[AVR_TCA_IRQ_WO1] = ">tca.wo1",
 	[AVR_TCA_IRQ_WO2] = ">tca.wo2",
+	[AVR_TCA_IRQ_EV_IN] = "<tca.ev_in",
 };
 
 static avr_io_t _io = {
@@ -322,6 +452,7 @@ avr_tca_init(
 	p->base = base;
 	p->r_ctrla = base + TCAR_CTRLA;
 	p->r_ctrlb = base + TCAR_CTRLB;
+	p->r_evctrl = base + TCAR_EVCTRL;
 	p->r_intctrl = base + TCAR_INTCTRL;
 	p->r_intflags = base + TCAR_INTFLAGS;
 	p->r_cnt = base + TCAR_CNTL;
@@ -347,7 +478,9 @@ avr_tca_init(
 
 	avr_register_io_write(avr, p->r_ctrla, avr_tca_ctrla_write, p);
 	avr_register_io_write(avr, p->r_ctrlb, avr_tca_ctrlb_write, p);
+	avr_register_io_write(avr, p->r_evctrl, avr_tca_evctrl_write, p);
 	avr_register_io_write(avr, p->r_intflags, avr_tca_intflags_write, p);
+	avr_irq_register_notify(p->io.irq + AVR_TCA_IRQ_EV_IN, avr_tca_ev_input, p);
 	avr_register_io_read(avr, p->r_cnt, avr_tca_cnt_read, p);
 	avr_register_io_write(avr, p->r_cnt, avr_tca_cnt_write, p);
 	avr_register_io_write(avr, p->r_cnt + 1, avr_tca_cnt_write, p);

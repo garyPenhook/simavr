@@ -358,17 +358,20 @@ megax08_init(struct avr_t * avr)
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('2'), AVR_TCB_IRQ_CAPT_OUT),
 			megax08_tcb2_capt_to_evsys, mcu);
+	/* megaAVR-0 EVSYS user order (iom4809.h EVSYS_t): CCLLUT0A..3B = 0..7,
+	 * USERADC0 = 8, EVOUTA..F = 9..14, USERUSART0..3 = 15..18,
+	 * USERTCA0 = 19, USERTCB0..3 = 20..23. */
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
-						  AVR_EVSYS_IRQ_USER0 + 0 /* USERTCB0 */),
+						  AVR_EVSYS_IRQ_USER0 + 20 /* USERTCB0 */),
 			megax08_evsys_to_tcb0, mcu);
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
-						  AVR_EVSYS_IRQ_USER0 + 1 /* USERTCB1 */),
+						  AVR_EVSYS_IRQ_USER0 + 21 /* USERTCB1 */),
 			megax08_evsys_to_tcb1, mcu);
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
-						  AVR_EVSYS_IRQ_USER0 + 2 /* USERTCB2 */),
+						  AVR_EVSYS_IRQ_USER0 + 22 /* USERTCB2 */),
 			megax08_evsys_to_tcb2, mcu);
 #ifdef TCB3_INT_vect_num
 	avr_irq_register_notify(
@@ -376,9 +379,14 @@ megax08_init(struct avr_t * avr)
 			megax08_tcb3_capt_to_evsys, mcu);
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
-						  AVR_EVSYS_IRQ_USER0 + 3 /* USERTCB3 */),
+						  AVR_EVSYS_IRQ_USER0 + 23 /* USERTCB3 */),
 			megax08_evsys_to_tcb3, mcu);
 #endif
+	/* EVSYS USERTCA0 (index 19) = TCA0 event input (EVCTRL.CNTEI). */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + 19 /* USERTCA0 */),
+			avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_EV_IN));
 
 	/* PORTMUX (peripheral pin routing) config store at 0x05E0. */
 	avr_portmux_init(avr, &mcu->portmux, 0x05e0, '0');

@@ -1088,6 +1088,94 @@ int main(void)
 		check("WO0 low when TCA disabled", wo0, 0);
 	}
 
+	printf("== modern TCA0 event counting (EVCTRL.CNTEI, sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t TA = 0xa00, E = 0x180;
+		enum { ENABLE = 0x01 };
+		enum { CNTEI = 0x01, EV_POSEDGE = (0 << 1), EV_ANYEDGE = (1 << 1),
+			   EV_HIGHLVL = (2 << 1) };
+		enum { F_OVF = 0x01, F_CMP1 = 0x20, IE_OVF = 0x01, IE_CMP1 = 0x20 };
+		enum { SYNCUSER0 = 0x22, SEL_SYNCCH0 = 1 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		/* Route EVSYS SYNCUSER0 (= TCA0) to SYNCCH0; the core wires that user's
+		 * output to TCA0's EV_IN, so driving the channel drives the event line. */
+		cpu_write(m, E + SYNCUSER0, SEL_SYNCCH0);
+		avr_irq_t *ch0 = avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+									   AVR_EVSYS_IRQ_CH0 + 0);
+
+		/* POSEDGE event count: PER=5 (wrap after 6 counts), CMP1 at 3. The
+		 * prescaled clock must not advance CNT in this mode. */
+		cpu_write(m, TA + TCAR_PERL, 5); cpu_write(m, TA + TCAR_PERH, 0);
+		cpu_write(m, TA + TCAR_CMP1L, 3); cpu_write(m, TA + TCAR_CMP1L + 1, 0);
+		cpu_write(m, TA + TCAR_INTCTRL, IE_OVF | IE_CMP1);
+		cpu_write(m, TA + TCAR_EVCTRL, CNTEI | EV_POSEDGE);
+		cpu_write(m, TA + TCAR_CTRLA, ENABLE);
+
+		long base = (long)m->cycle;
+		while ((long)m->cycle - base < 200) avr_run(m);
+		uint16_t cnt = cpu_read(m, TA + TCAR_CNTL);
+		cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("event-count: clock idle, CNT stays 0", cnt, 0);
+
+		/* Each rising edge advances CNT by one; falling edges are ignored. */
+		#define PULSE() do { avr_raise_irq(ch0, 1); avr_raise_irq(ch0, 0); } while (0)
+		PULSE();
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("POSEDGE edge 1 -> CNT=1", cnt, 1);
+		PULSE(); PULSE();		/* CNT = 3 -> CMP1 match */
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("POSEDGE edge 3 -> CNT=3", cnt, 3);
+		check("CMP1 match at CNT=3", !!(m->data[TA + TCAR_INTFLAGS] & F_CMP1), 1);
+		PULSE(); PULSE();		/* CNT = 5 (== TOP), not yet wrapped */
+		check("no OVF before wrap", !!(m->data[TA + TCAR_INTFLAGS] & F_OVF), 0);
+		PULSE();			/* 6th edge: 5 -> 0 wrap, OVF */
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("POSEDGE wrap -> CNT=0", cnt, 0);
+		check("OVF on wrap", !!(m->data[TA + TCAR_INTFLAGS] & F_OVF), 1);
+
+		/* ANYEDGE: both edges tick (CNT currently 0). */
+		cpu_write(m, TA + TCAR_INTFLAGS, F_OVF | F_CMP1);
+		cpu_write(m, TA + TCAR_EVCTRL, CNTEI | EV_ANYEDGE);
+		avr_raise_irq(ch0, 1);		/* rising  -> CNT=1 */
+		avr_raise_irq(ch0, 0);		/* falling -> CNT=2 */
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("ANYEDGE counts both edges -> CNT=2", cnt, 2);
+		#undef PULSE
+
+		/* HIGHLVL: the prescaled clock runs only while the event line is high. */
+		cpu_write(m, TA + TCAR_CTRLA, 0x00);		/* disable to reconfigure */
+		cpu_write(m, TA + TCAR_PERL, 200); cpu_write(m, TA + TCAR_PERH, 0);
+		cpu_write(m, TA + TCAR_CNTL, 0); cpu_write(m, TA + TCAR_CNTH, 0);
+		cpu_write(m, TA + TCAR_EVCTRL, CNTEI | EV_HIGHLVL);
+		avr_raise_irq(ch0, 0);				/* event line low */
+		cpu_write(m, TA + TCAR_CTRLA, ENABLE);		/* DIV1, but gated off */
+
+		base = (long)m->cycle;
+		while ((long)m->cycle - base < 100) avr_run(m);
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("HIGHLVL gated off: CNT held at 0", cnt, 0);
+
+		avr_raise_irq(ch0, 1);				/* gate opens: clock runs */
+		long t1 = (long)m->cycle;
+		while ((long)m->cycle - t1 < 50) avr_run(m);
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("HIGHLVL gate open: CNT advanced ~50", cnt >= 48 && cnt <= 52, 1);
+
+		avr_raise_irq(ch0, 0);				/* gate closes: freeze */
+		uint16_t frozen = cpu_read(m, TA + TCAR_CNTL);
+		frozen |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		long t2 = (long)m->cycle;
+		while ((long)m->cycle - t2 < 100) avr_run(m);
+		cnt = cpu_read(m, TA + TCAR_CNTL); cnt |= cpu_read(m, TA + TCAR_CNTH) << 8;
+		check("HIGHLVL gate closed: CNT frozen", cnt, frozen);
+	}
+
 	printf("== modern USART0 (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t U = 0x800;

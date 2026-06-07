@@ -394,6 +394,12 @@ tinyx1_init(struct avr_t * avr)
 						  AVR_EVSYS_IRQ_USER0 + 11 /* ASYNCUSER11 = TCB1 */),
 			tinyx1_evsys_to_tcb1, mcu);
 #endif
+	/* EVSYS SYNCUSER0 = TCA0 event input (EVCTRL.CNTEI counting / clock
+	 * gating); the routed channel level drives TCA0's EV_IN. */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVR_EVSYS_USER_TCA0),
+			avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_EV_IN));
 
 	/* PORTMUX (peripheral pin routing) config store at 0x0200. */
 	avr_portmux_init(avr, &mcu->portmux, 0x0200, '0');

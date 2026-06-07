@@ -180,7 +180,7 @@ int main(void)
 	{
 		avr_t *m = make_modern("atmega4809", 0x3000);
 		cpu_write(m, 0x0190, 0xa0);	/* sim mega EVSYS channel0 = TCB0_CAPT */
-		cpu_write(m, 0x01a1, 0x01);	/* sim mega EVSYS user1 (TCB1) = channel0 */
+		cpu_write(m, 0x01b5, 0x01);	/* mega EVSYS.USERTCB1 (0x1B5) = channel0 */
 		cpu_write(m, TBM1 + TCBR_EVCTRL, 0x01);
 		cpu_write(m, TBM1 + TCBR_CTRLB, 0x02);
 		cpu_write(m, TBM1 + TCBR_CTRLA, 0x01);

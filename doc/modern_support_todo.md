@@ -25,15 +25,22 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 | USART | [P] | exact one-wire / line-level timing (async TX/RX, sync timing, loopback all work) | `avr_usart_modern.c` |
 | SPI | [P] | pin-contention / electrical realism (buffered protocol is complete) | `avr_spi_modern.c` |
 | TCB | [P] | 8-bit PWM (PWM8) waveform output now modelled (set at BOTTOM, cleared at CCMPH; CAPT per period) and wired to CCL. *Remaining:* Single-Shot mode (the other WO-producing mode, event-triggered one-shot pulse) is not modelled — its WO stays low; first-period scheduling when enabled with non-zero CNT; filter/edge callback cost on static inputs | `avr_tcb.c` |
-| TCA0 | [P] | single-slope PWM waveform output (WO0-2) now modelled (set at BOTTOM, cleared on the CMPn match; CMPn=0 → static low, CMPn>TOP → static high) and wired to CCL. *Remaining:* FRQ (TOP=CMP0) and the dual-slope WGMODE variants are not modelled — the counter engine is a single-slope up-counter, so both the count behaviour and WOn stay single-slope/low there; split (dual 8-bit) mode; physical WO pins via PORTMUX | `avr_tca.c` |
-| EVSYS | [P] | generator source encodings need a datasheet pass | `avr_evsys.c` |
+| TCA0 | [P] | single-slope PWM waveform output (WO0-2) now modelled (set at BOTTOM, cleared on the CMPn match; CMPn=0 → static low, CMPn>TOP → static high) and wired to CCL. **Event counting (EVCTRL.CNTEI + EVACT) now modelled** and wired to EVSYS SYNCUSER0: POSEDGE/ANYEDGE clock the counter from event edges (clock scheduler suspended), HIGHLVL gates the prescaled clock on the event line, UPDOWN runs the up-count half. *Remaining:* UPDOWN down-count half (event line high) is not representable by the single-slope up-counter (counter freezes there); FRQ (TOP=CMP0) and the dual-slope WGMODE variants are not modelled — the counter engine is a single-slope up-counter, so both the count behaviour and WOn stay single-slope/low there; split (dual 8-bit) mode; physical WO pins via PORTMUX | `avr_tca.c` |
+| EVSYS | [F] | **TCA0 (SYNCUSER0 / USERTCA0) is now wired** in both templates to the new TCA EV_IN input, so event-driven TCA0 counting/gating behaves (see the TCA0 row). The megaAVR-0 user-index map was also corrected: USERTCB0-3 had been wired at indices 0-3 (which alias USERCCLLUT0A..1B); they are now at the real 20-23, and USERTCA0 at 19 (`iom4809.h` EVSYS_t). **Still not connected:** USART (SYNCUSER1 / USERUSART0) — the modern USART stops at BAUD with no EVCTRL / event-input path (`avr_usart_modern.h:42`), and its only event use is IrDA RX-via-event, which needs a bit/line-level RX decode the byte/FIFO USART model does not have (overlaps the USART [P] line-timing gap). Generator-source encodings also still need a datasheet pass. | `avr_evsys.c`, `avr_usart_modern.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | ADC | [P] | conversion delay is a cycle approximation, not exact ADC-clock timing | `avr_adc_modern.c` |
+| CPUINT | [F] | **IVSEL is read-back-only** — the bit is stored but the vector table is *not* relocated to the boot section (`avr_cpuint.h:22`). On real tinyAVR-1/megaAVR-0 silicon IVSEL relocates the vector base; a bootloader (or test) that sets IVSEL and relies on relocated vectors will read the bit back correctly and then dispatch from the wrong addresses. LVL0/1, NMI, round-robin, LVL0PRI and CVT are fully modelled. | `avr_cpuint.c` |
+| VREF | [F] | on tinyAVR-1 **16K/32K parts** the template fits ADC1 (`sim_tinyx1.h:320`) and AC1 (`:331`) and the header exposes VREF.CTRLC/CTRLD `ADC1REFSEL`/`DAC1REFSEL` (`iotn3217.h:2140`), but the model only publishes `ADC0_MV`/`DAC0_MV` IRQs (`avr_vref.h:70`) and the core wires only ADC0 + DAC0/AC0 (`sim_tinyx1.h:401`). So VREF.CTRLC/CTRLD writes are **read-back-only** for ADC1/AC1 — those blocks keep their default reference. (Comments in `avr_vref.h:11`/`avr_vref.c:64` are also wrong: they claim ADC1 "does not exist on the ATtiny3217"; ADC1 *does* exist on 16K/32K parts — only DAC1/DAC2 are non-existent.) | `avr_vref.c`, `sim_tinyx1.h` |
 
 **Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
 PORTMUX, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
-SYSCFG/SIGROW, VREF, CPUINT (incl. LVL0/1, NMI, round-robin, LVL0PRI, CVT),
-BOD/VLM (voltage-level monitor + brown-out reset → RSTFR.BORF; only the
-power/sleep-fidelity aspects shared by all peripherals are unmodelled).
+SYSCFG/SIGROW (but see the SIGROW/USERROW/FUSE config-region gaps under "Not
+implemented at all"), BOD/VLM (voltage-level monitor + brown-out reset →
+RSTFR.BORF; only the power/sleep-fidelity aspects shared by all peripherals are
+unmodelled).
+
+**Previously listed as gap-free but NOT (see the [F] rows above):** CPUINT
+(IVSEL vector relocation is read-back-only) and VREF (ADC1/AC1 reference is
+read-back-only on the 16K/32K tinyAVR-1 parts that fit those instances).
 
 ## Not implemented at all
 
@@ -140,5 +147,27 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
    levels, host-tested): VDD below the BOD level invokes a handler the cores
    wire to RSTCTRL, resetting and recording RSTFR.BORF. The stale "not modelled"
    notes have been corrected. All 23 micros. ✓
-7. Polish [P]: USART line-level timing, SPI pin contention, TCB first-period
+7. **EVSYS event users for TCA0 / USART** — **TCA0 done.** EVCTRL (CNTEI +
+   EVACT) is modelled in `avr_tca.c` and SYNCUSER0=TCA0 is wired to the new
+   TCA EV_IN in both templates: POSEDGE/ANYEDGE event-clock the counter,
+   HIGHLVL gates the prescaled clock, UPDOWN runs the up-count half
+   (DS40002205A 20.5.10); host-tested in `test_avrxt_engine.c`. The megaAVR-0
+   USERTCB0-3 indices were corrected (0-3 → 20-23) and USERTCA0 wired at 19.
+   *Remaining (re-scoped, blocked on line-level RX):* the USART event user
+   (SYNCUSER1/USERUSART0) is **not** wired — its only event use is IrDA
+   RX-via-event, which needs a bit/line-level RX decode the byte/FIFO USART
+   model lacks; this now folds into the USART [P] line-timing gap (item 11).
+   All 23 micros.
+8. **CPUINT IVSEL vector relocation** *(new [F])* — relocate the dispatch base
+   when IVSEL is set (needs a boot-section notion in the flash/vector model).
+   Affects bootloaders and any firmware relying on relocated vectors. All 23.
+9. **VREF ADC1/AC1 reference** *(new [F])* — publish ADC1/DAC1 reference IRQs and
+   wire them in `sim_tinyx1.h`; fix the stale "does not exist on the ATtiny3217"
+   comments. tinyAVR-1 16K/32K parts only.
+10. **NVM/identity config regions** *(existing [F], see "Not implemented at all")*
+   — mirror the FUSE read-back window, make USERROW reset-persistent with
+   NVMCTRL write/erase semantics, and populate SIGROW SERNUM/OSCnnERR. Firmware
+   reading oscillator calibration, serial number, or fuse bytes gets bad data.
+   All 23.
+11. Polish [P]: USART line-level timing, SPI pin contention, TCB first-period
    scheduling, EVSYS generator-source encodings, ADC exact timing.

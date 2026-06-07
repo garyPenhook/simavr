@@ -18,6 +18,19 @@
 	so WOn stays low in those modes. Split (dual 8-bit) mode is not modelled (the
 	registers still store).
 
+	Event counting (EVCTRL.CNTEI + EVACT) is modelled. The EVSYS user that
+	routes to TCA0 (SYNCUSER0) drives the AVR_TCA_IRQ_EV_IN input; the four
+	EVACT modes (DS40002205A 20.5.10) are handled as:
+	  * POSEDGE / ANYEDGE — the counter is clocked by the event, not the
+	    prescaled clock: each qualifying edge advances CNT by one count (with
+	    compare/overflow/WO handling). The prescaled-clock scheduler is
+	    suspended while in these modes.
+	  * HIGHLVL — the prescaled clock counts only while the event line is high
+	    (a clock gate); the scheduler runs/freezes with the level.
+	  * UPDOWN — the prescaled clock counts up while the event line is low; the
+	    down-count half (event high) is not representable by the single-slope
+	    up-counter, so the counter freezes there (documented gap).
+
 	Copyright 2026 simavr authors
 
  	This file is part of simavr.
@@ -51,6 +64,7 @@ enum {
 	TCAR_CTRLB = 0x01,
 	TCAR_CTRLC = 0x02,
 	TCAR_CTRLD = 0x03,
+	TCAR_EVCTRL = 0x09,
 	TCAR_INTCTRL = 0x0a,
 	TCAR_INTFLAGS = 0x0b,
 	TCAR_CNTL = 0x20,
@@ -67,7 +81,7 @@ typedef struct avr_tca_t {
 	char		name;
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_ctrla, r_ctrlb, r_intctrl, r_intflags;
+	avr_io_addr_t	r_ctrla, r_ctrlb, r_evctrl, r_intctrl, r_intflags;
 	avr_io_addr_t	r_cnt, r_per, r_cmp[3];
 
 	avr_int_vector_t	ovf;		// TCA0_OVF
@@ -77,16 +91,23 @@ typedef struct avr_tca_t {
 	avr_cycle_count_t	start_cycle;	// cycle at which CNT == 0
 	uint32_t		prescale;	// CPU cycles per timer tick
 	uint32_t		ev_target;	// CNT value of the currently-scheduled event
+	uint8_t			clock_running;	// 1 while the prescaled-clock timer drives CNT
+	uint8_t			ev_input;	// last event-line level seen on EV_IN
 
 	uint8_t			wo_level[3];	// last WO0/1/2 level published on its IRQ
 	int			base_irq;
 } avr_tca_t;
 
-/* Waveform-output level IRQs (single-slope PWM), one per compare channel. */
+/*
+ * IRQs: WO0/1/2 are single-slope PWM waveform-output levels (one per compare
+ * channel). EV_IN is the event-line input (EVSYS SYNCUSER0 routes here) that
+ * drives event counting per EVCTRL.
+ */
 enum {
 	AVR_TCA_IRQ_WO0 = 0,
 	AVR_TCA_IRQ_WO1,
 	AVR_TCA_IRQ_WO2,
+	AVR_TCA_IRQ_EV_IN,
 	AVR_TCA_IRQ_COUNT,
 };
 
