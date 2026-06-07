@@ -42,9 +42,11 @@ implementation log are in
 * the **CPUINT** interrupt controller (LVL0/LVL1/NMI, round‑robin), flash mapped
   into data space, and SLEEP gated by `SLPCTRL`
 
-**Modern peripherals modelled for the ATtiny3217:** CLKCTRL, PORT/VPORT +
-PORTMUX, TCA0, TCB0/1, TCD0, RTC + PIT, USART0, SPI0, TWI0, ADC0, AC0, DAC0,
-NVMCTRL (EEPROM), CCL, EVSYS, WDT, CRCSCAN, SLPCTRL, RSTCTRL.
+**Modern peripherals modelled for the ATtiny3217:** CLKCTRL, RSTCTRL, SLPCTRL,
+PORT/VPORT + PORTMUX, TCA0, TCB0/1, TCD0, RTC + PIT, USART0, SPI0, TWI0,
+ADC0 (incl. the temperature sensor with SIGROW calibration), AC0, DAC0, VREF,
+NVMCTRL (EEPROM **and** flash self-programming; EEPROM persists across reset),
+CCL, EVSYS, WDT, CRCSCAN, BOD/VLM, and SYSCFG/SIGROW device identity.
 
 It loads ordinary `avr-gcc -mmcu=attiny3217` ELF files. A blink, end to end:
 
@@ -123,6 +125,11 @@ Supported IOs
 
 Emulated Cores (very easy to add new ones!)
 --------------
+
+**Modern AVR (AVRxt) — *this fork*:**
++ ATtiny3217 (tinyAVR® 1-series) — see [Modern AVR (AVRxt) / ATtiny3217 support](#modern-avr-avrxt--attiny3217-support--this-fork)
+
+**Classic AVR (AVRe/AVRe+):**
 + ATMega2560
 + AT90USB162 (with USB!)
 + ATMega1281

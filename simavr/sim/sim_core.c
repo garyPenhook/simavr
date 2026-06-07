@@ -1102,7 +1102,7 @@ run_one_again:
 						_avr_set_ram(avr, v+q, avr->data[d]);
 					} else {
 						STATE("ld %s, (Y+%d[%04x])=[%02x]  \t%s\n",
-						      AVR_REGNAME(d), q, v+q, avr->data[d+q], DAS(v + q));
+						      AVR_REGNAME(d), q, v+q, avr->data[v+q], DAS(v + q));
 						_avr_set_r(avr, d, _avr_get_ram(avr, v+q));
 					}
 					// LDD: 2 cycles. STD: 2 on AVRe, 1 on AVRxt.
@@ -1339,7 +1339,8 @@ run_one_again:
 							new_pc += 2;
 							STATE("sts 0x%04x, %s[%02x]\t\t%s\n",
 							      x, AVR_REGNAME(d), vd, DAS(x));
-							cycle++;
+							cycle++; // STS: 2 cycles on AVRe and AVRxt (unlike ST,
+								 // which is 1 on AVRxt; see AVR ISM DS40002198 p.21)
 							_avr_set_ram(avr, x, vd);
 						}	break;
 						case 0x9001:

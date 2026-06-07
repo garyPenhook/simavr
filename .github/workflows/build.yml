@@ -47,7 +47,10 @@ jobs:
         with:
           msystem: MINGW32
           update: true
-          install: make mingw-w64-i686-toolchain mingw-w64-i686-libelf mingw-w64-i686-freeglut unzip
+          # NB: mingw-w64-i686-freeglut was removed from MSYS2 (32-bit packages
+          # are being retired). This job only runs `make build-simavr`, which does
+          # not build the OpenGL examples, so freeglut is not needed here.
+          install: make mingw-w64-i686-toolchain mingw-w64-i686-libelf unzip
       - name: CI-Build
         run: |
           make build-simavr V=1

@@ -105,6 +105,11 @@ avr_tca_event(struct avr_t *avr, avr_cycle_count_t when, void *param)
 		avr_raise_interrupt(avr, &p->ovf);
 		p->start_cycle = when;	/* CNT == 0 again */
 		from = 0;
+		/* A compare value of 0 matches at CNT == 0 (the wrap point); the
+		 * forward-target search only considers values >= 1, so fire it here. */
+		for (int ch = 0; ch < 3; ch++)
+			if (tca_cmp(p, ch) == 0)
+				avr_raise_interrupt(avr, &p->cmp[ch]);
 	} else {
 		/* Compare match: set every channel whose value equals this target. */
 		for (int ch = 0; ch < 3; ch++)

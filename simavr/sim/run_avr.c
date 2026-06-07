@@ -50,6 +50,7 @@ display_usage(
 	printf("Usage: %s [...] <firmware>\n", app);
 	printf(
 	 "       [--help|-h|-?]      Display this usage message and exit\n"
+	 "       [--version|-V]      Display the simavr version and exit\n"
 	 "       [--list-cores]      List all supported AVR cores and exit\n"
 	 "       [-v]                Raise verbosity level\n"
 	 "                           (can be passed more than once)\n"
@@ -75,6 +76,14 @@ display_usage(
 	 "                           preferred, and can include "
 	 "debugging syms\n");
 	exit(1);
+}
+
+static void
+display_version(
+	const char * app)
+{
+	printf("%s %s\n", app, CONFIG_SIMAVR_VERSION);
+	exit(0);
 }
 
 static void
@@ -133,6 +142,8 @@ main(
 	for (int pi = 1; pi < argc; pi++) {
 		if (!strcmp(argv[pi], "--list-cores")) {
 			list_cores();
+		} else if (!strcmp(argv[pi], "-V") || !strcmp(argv[pi], "--version")) {
+			display_version(basename(argv[0]));
 		} else if (!strcmp(argv[pi], "-h") || !strcmp(argv[pi], "--help")) {
 			display_usage(basename(argv[0]));
 		} else if (!strcmp(argv[pi], "-m") || !strcmp(argv[pi], "--mcu")) {

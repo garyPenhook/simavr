@@ -98,9 +98,11 @@ avr_spi_modern_xfer(struct avr_t *avr, avr_cycle_count_t when, void *param)
 	if (!spi_enabled(p) || !spi_master(p))
 		return 0;
 
-	spi_flag_if(p);
-	/* Emit the byte; a connected client may synchronously answer on INPUT. */
+	/* Emit the byte first; a connected client may synchronously answer on INPUT,
+	 * latching its MISO reply into DATA. Then flag completion exactly once (the
+	 * master-side INPUT handler intentionally does not raise IF itself). */
 	avr_raise_irq(p->io.irq + SPI_IRQ_OUTPUT, rd(avr, p->r_data));
+	spi_flag_if(p);
 	return 0;
 }
 
@@ -166,9 +168,10 @@ avr_spi_modern_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 		return;
 
 	if (spi_master(p)) {
-		/* MISO reply to the byte we clocked out: latch it as received. */
+		/* MISO reply to the byte we clocked out: latch it as received. IF is
+		 * raised once by avr_spi_modern_xfer() after this returns, so do not
+		 * flag it here (avoids a double interrupt per transfer). */
 		avr_core_watch_write(avr, p->r_data, value & 0xff);
-		spi_flag_if(p);
 	} else {
 		/* Client: latch the received byte and echo the current DATA back. */
 		uint8_t out = rd(avr, p->r_data);

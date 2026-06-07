@@ -237,8 +237,14 @@ avr_reset(
 
 	avr->resetting = 1;
 	avr->state = cpu_Running;
-	for(int i = 0x20; i <= avr->ioend; i++)
+	for(int i = 0x20; i <= avr->ioend; i++) {
+		// Preserve a persistent data range (e.g. modern-AVR EEPROM mapped into
+		// the data space) so it survives a reset like real hardware.
+		if (avr->arch.persist_end &&
+				i >= avr->arch.persist_start && i <= avr->arch.persist_end)
+			continue;
 		avr->data[i] = 0;
+	}
 	_avr_sp_set(avr, avr->ramend);
 	avr->pc = avr->reset_pc;	// Likely to be zero
 	for (int i = 0; i < 8; i++)
