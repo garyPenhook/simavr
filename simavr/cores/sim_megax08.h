@@ -313,6 +313,13 @@ megax08_init(struct avr_t * avr)
 	/* CCL at 0x01C0: 4 LUTs on megaAVR-0. */
 	avr_ccl_init_mega(avr, &mcu->ccl, 0x01c0, 4, '0');
 
+	/* AC0 OUT feeds the CCL input-source MUX (megaAVR-0 INSEL 0x6,
+	 * DS40002173C p.373); megaAVR-0 fits only AC0 (no TCD). */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_AC0)));
+
 	/* EVSYS routing fabric at 0x0180 (megaAVR-0 register layout). */
 	avr_evsys_init_mega(avr, &mcu->evsys, 0x0180, '0');
 	avr_irq_register_notify(

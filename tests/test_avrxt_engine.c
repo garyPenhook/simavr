@@ -1798,6 +1798,44 @@ int main(void)
 		check("AC STATE 0 (800 < DAC 1095)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
 	}
 
+	printf("== modern AC0 -> CCL input source (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t C = 0x680, D = 0x6a0, L = 0x1c0;
+		enum { AC_ENABLE = 0x01, DAC_ENABLE = 0x01, MUXNEG_DAC = 0x03 };
+		enum { CTRLA = 0x00, L0CTRLA = 0x05, L0CTRLB = 0x06, L0CTRLC = 0x07,
+			   TRUTH0 = 0x08 };
+		enum { CCL_EN = 0x01, LUT_EN = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		uint8_t l0 = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_OUT),
+			rec_irq, &l0);
+
+		/* LUT0 = pass-through of AC0 (INSEL0 = 0x6). */
+		cpu_write(m, L + L0CTRLB, 0x06);
+		cpu_write(m, L + L0CTRLC, 0x00);
+		cpu_write(m, L + TRUTH0, 0xaa);		/* OUT = IN0 */
+		cpu_write(m, L + L0CTRLA, LUT_EN);
+		cpu_write(m, L + CTRLA, CCL_EN);
+
+		/* AC0: V+ = AINP0 = 800 mV, V- = DAC. The AC OUT IRQ is wired to the
+		 * CCL AC0 source by the core, so the LUT follows the comparator. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0), 800);
+		cpu_write(m, C + ACR_MUXCTRLA, MUXNEG_DAC);
+		cpu_write(m, C + ACR_CTRLA, AC_ENABLE);
+		cpu_write(m, D + DACR_CTRLA, DAC_ENABLE);
+		cpu_write(m, D + DACR_DATA, 128);	/* 550 mV; 800 > 550 => AC OUT 1 */
+		check("CCL LUT0 follows AC0 high (real comparator)", l0, 1);
+		cpu_write(m, D + DACR_DATA, 255);	/* 1095 mV; 800 < 1095 => AC OUT 0 */
+		check("CCL LUT0 follows AC0 low (real comparator)", l0, 0);
+	}
+
 	printf("== modern CCL (sim_tiny3217) ==\n");
 		{
 			const avr_io_addr_t L = 0x1c0;
@@ -2250,6 +2288,18 @@ int main(void)
 		avr_irq_register_notify(
 			avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOB), rec_irq, &wob);
 
+		/* Route TCD0 WOA into CCL LUT0 (INSEL 0x9 on IN0, pass-through); the
+		 * core wires TCD WOA->CCL, so the LUT output tracks WOA. */
+		uint8_t ccl_woa = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_OUT),
+			rec_irq, &ccl_woa);
+		cpu_write(m, 0x1c0 + 0x06, 0x09);	/* L0CTRLB: IN0 = TCD0 (WOA) */
+		cpu_write(m, 0x1c0 + 0x07, 0x00);	/* L0CTRLC: IN2 mask */
+		cpu_write(m, 0x1c0 + 0x08, 0xaa);	/* TRUTH0: OUT = IN0 */
+		cpu_write(m, 0x1c0 + 0x05, 0x01);	/* L0CTRLA: LUT enable */
+		cpu_write(m, 0x1c0 + 0x00, 0x01);	/* CTRLA: CCL enable */
+
 		/* One Ramp, prescale 1: TOP=99 (period 100), WOA on [10,40), WOB on
 		 * [50,99). */
 		cpu_write(m, T + TCDR_CMPBCLRL, 99); cpu_write(m, T + TCDR_CMPBCLRH, 0);
@@ -2266,11 +2316,13 @@ int main(void)
 		/* count ~20: inside WOA on-time, before WOB. */
 		RUN_TO(20);
 		check("WOA high in [10,40)", woa, 1);
+		check("CCL LUT0 tracks TCD0 WOA high", ccl_woa, 1);
 		check("WOB still low before 50", wob, 0xff);	/* no edge yet */
 
 		/* count ~45: WOA cleared at 40, WOB not yet set. */
 		RUN_TO(45);
 		check("WOA low after CMPACLR=40", woa, 0);
+		check("CCL LUT0 tracks TCD0 WOA low", ccl_woa, 0);
 
 		/* count ~60: WOB set at 50. */
 		RUN_TO(60);
@@ -2738,6 +2790,19 @@ int main(void)
 		check("mega CCL IN1=TCB(0xC) selects TCB1 (position decode)", l0, 1);
 		avr_raise_irq(s_tcb1, 0);
 		check("mega CCL IN1=TCB1 low", l0, 0);
+
+		/* End-to-end: AC0 OUT is wired to the CCL AC0 source by the core. */
+		cpu_write(m, L + CTRLA, 0x00);
+		cpu_write(m, L + L0CTRLB, 0x06);	/* IN0 = AC0 (mega 0x6) */
+		cpu_write(m, L + L0CTRLC, 0x00);
+		cpu_write(m, L + TRUTH0, 0xaa);		/* OUT = IN0 */
+		cpu_write(m, L + CTRLA, CCL_EN);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0), 800);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINN0), 500);
+		cpu_write(m, 0x680 + ACR_CTRLA, 0x01);	/* AC enable; V+ 800 > V- 500 */
+		check("mega CCL LUT0 follows AC0 high (real comparator)", l0, 1);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINN0), 900);
+		check("mega CCL LUT0 follows AC0 low (real comparator)", l0, 0);
 	}
 
 	printf("== megaAVR-0 EVSYS + ADC event start (sim_mega4809) ==\n");

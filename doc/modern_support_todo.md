@@ -19,7 +19,7 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 |---|---|---|---|
 | AC (Analog Comparator) | [F] | hysteresis; low-power / run-standby timing; physical pin-level behavior | `avr_ac.c` |
 | DAC | [F] | output-buffer behavior; run-standby; reference behavior (only digital→mV) | `avr_dac.c` |
-| CCL | [F] | event/peripheral INSEL sources now decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2229) and resolved from cached levels driven on the block's source IRQs — but the core templates do **not yet auto-wire** live peripheral outputs (AC/TCB/TCA/TCD/USART/SPI/EVSYS) into those IRQs, so firmware still sees 0 unless a board/test drives them; filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c` |
+| CCL | [F] | event/peripheral INSEL sources decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2287) and resolved from cached levels. Live wiring in the core templates: **AC0-2 OUT** (tinyAVR-1) and **AC0 OUT** (megaAVR-0) and **TCD0 WOA/WOB** (tinyAVR-1) now auto-connect to the CCL sources. **Not yet wired:** TCA0 WO0-2, TCB0-2 WO, USART TXD/XCK, SPI lines (need new waveform/line-level output IRQs in those models), and EVSYS EVENT0/1 (CCL not yet an EVSYS user); filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | TCD | [F] | clock source approximated as CLK_PER (no dedicated/PLL clock or its prescale); 4 WGM modes work | `avr_tcd.c` |
 | RTC / PIT | [F] | SYNCBUSY / PITSTATUS sync bits simplified; CRYSTERR & external-clock pins not modelled; CLK_PER change not retro-applied until reconfig | `avr_rtc.c` |
 | BOD / VLM | [F] | brown-out **reset** effect not modelled (VLM voltage monitor is modelled) | `avr_bod.c` |
@@ -102,11 +102,13 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
 ## Suggested work order (highest firmware impact first)
 
 1. **CCL event/peripheral input sources** — INSEL decode + source-level cache
-   done (per-family, datasheet-verified, host-tested for both families).
-   *Remaining:* auto-wire live peripheral output IRQs (AC/TCB/TCA/TCD/USART/SPI)
-   and EVSYS event channels into the CCL source IRQs in `sim_tinyx1.h` /
-   `sim_megax08.h`, so configured firmware drives the LUTs without a board stub.
-   Affects all 23 micros. [F]
+   done (per-family, datasheet-verified, host-tested). Live auto-wiring done for
+   **AC** (all 23) and **TCD0** (tinyAVR-1) — these track the real peripherals
+   end-to-end. *Remaining:* TCA0 WO0-2 and TCB0-2 WO need new waveform-output
+   level IRQs in `avr_tca.c` / `avr_tcb.c` before they can be wired; USART
+   TXD/XCK and SPI SCK/MOSI/MISO need line-level output IRQs (overlaps the USART
+   [P] line-timing gap); EVSYS EVENT0/1 need the CCL added as an EVSYS user.
+   [F]
 2. **TCD clock source** — model the dedicated TCD clock / prescale instead of
    CLK_PER, so TCD periods match firmware expectations. All 15 tinyAVR-1. [F]
 3. **AC hysteresis + run-standby** — needed for realistic comparator firmware.

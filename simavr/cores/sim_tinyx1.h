@@ -348,6 +348,27 @@ tinyx1_init(struct avr_t * avr)
 	/* CCL (configurable custom logic) at 0x01C0; 2 LUTs on the 1-series. */
 	avr_ccl_init(avr, &mcu->ccl, 0x01c0, 2, '0');
 
+	/* Feed live peripheral outputs into the CCL input-source MUX so a LUT
+	 * selecting them via INSEL follows the real signal. AC OUT levels map to
+	 * the tinyAVR-1 INSEL values 0x6/0xC/0xE (DS40002205A p.413); fewer-AC
+	 * parts simply omit the unfitted instances. */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_AC0)));
+#ifdef AC1_AC_vect_num
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('1'), AVR_AC_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_AC1)));
+#endif
+#ifdef AC2_AC_vect_num
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('2'), AVR_AC_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_AC2)));
+#endif
+
 	/* EVSYS (event system) routing fabric at 0x0180. */
 	avr_evsys_init(avr, &mcu->evsys, 0x0180, '0');
 	avr_irq_register_notify(
@@ -388,6 +409,17 @@ tinyx1_init(struct avr_t * avr)
 
 	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector. */
 	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, '0');
+
+	/* TCD0 WOA/WOB feed CCL INSEL 0x9 (DS40002205A p.413-415: IN0/IN2->WOA,
+	 * IN1->WOB). */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOA),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCD0_WOA)));
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOB),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCD0_WOB)));
 
 	/* WDT (modern reset-only watchdog) at 0x0100. */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
