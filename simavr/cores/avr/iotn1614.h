@@ -33,13 +33,13 @@
 #endif
 
 #ifndef _AVR_IOXXX_H_
-#  define _AVR_IOXXX_H_ "iotn3217.h"
+#  define _AVR_IOXXX_H_ "iotn1614.h"
 #else
 #  error "Attempt to include more than one <avr/ioXXX.h> file."
 #endif
 
-#ifndef _AVR_ATTINY3217_H_INCLUDED
-#define _AVR_ATTINY3217_H_INCLUDED
+#ifndef _AVR_ATTINY1614_H_INCLUDED
+#define _AVR_ATTINY1614_H_INCLUDED
 
 /* Ungrouped common registers */
 #define CCP  _SFR_MEM8(0x0034)  /* Configuration Change Protection */
@@ -440,7 +440,7 @@ typedef enum CCL_INSEL1_enum
     CCL_INSEL1_USART0_gc = (0x0A<<4),  /* USART0 TXD input source */
     CCL_INSEL1_SPI0_gc = (0x0B<<4),  /* SPI0 MOSI input source */
     CCL_INSEL1_AC1_gc = (0x0C<<4),  /* AC1 OUT input source */
-    CCL_INSEL1_TCB1_gc = (0x0D<<4),  /* TCB1 WO input source */
+    CCL_INSEL1_TCB1_gc = (0x0D<<4),  /* TCB1WO input source */
     CCL_INSEL1_AC2_gc = (0x0E<<4)  /* AC2 OUT input source */
 } CCL_INSEL1_t;
 
@@ -1832,13 +1832,13 @@ typedef enum TCD_INPUTMODE_enum
     TCD_INPUTMODE_LVLTRIGFREQ_gc = (0x0A<<0)  /* Stop output at level, maintain frequency */
 } TCD_INPUTMODE_t;
 
-/* Synchronization prescaler select */
+/* Syncronization prescaler select */
 typedef enum TCD_SYNCPRES_enum
 {
-    TCD_SYNCPRES_DIV1_gc = (0x00<<1),  /* Selected clock source divided by 1 */
-    TCD_SYNCPRES_DIV2_gc = (0x01<<1),  /* Selected clock source divided by 2 */
-    TCD_SYNCPRES_DIV4_gc = (0x02<<1),  /* Selected clock source divided by 4 */
-    TCD_SYNCPRES_DIV8_gc = (0x03<<1)  /* Selected clock source divided by 8 */
+    TCD_SYNCPRES_DIV1_gc = (0x00<<1),  /* Selevted clock source divided by 1 */
+    TCD_SYNCPRES_DIV2_gc = (0x01<<1),  /* Selevted clock source divided by 2 */
+    TCD_SYNCPRES_DIV4_gc = (0x02<<1),  /* Selevted clock source divided by 4 */
+    TCD_SYNCPRES_DIV8_gc = (0x03<<1)  /* Selevted clock source divided by 8 */
 } TCD_SYNCPRES_t;
 
 /* Waveform generation mode select */
@@ -2061,38 +2061,6 @@ typedef struct USERROW_struct
     register8_t USERROW29;  /* User Row Byte 29 */
     register8_t USERROW30;  /* User Row Byte 30 */
     register8_t USERROW31;  /* User Row Byte 31 */
-    register8_t USERROW32;  /* User Row Byte 32 */
-    register8_t USERROW33;  /* User Row Byte 33 */
-    register8_t USERROW34;  /* User Row Byte 34 */
-    register8_t USERROW35;  /* User Row Byte 35 */
-    register8_t USERROW36;  /* User Row Byte 36 */
-    register8_t USERROW37;  /* User Row Byte 37 */
-    register8_t USERROW38;  /* User Row Byte 38 */
-    register8_t USERROW39;  /* User Row Byte 39 */
-    register8_t USERROW40;  /* User Row Byte 40 */
-    register8_t USERROW41;  /* User Row Byte 41 */
-    register8_t USERROW42;  /* User Row Byte 42 */
-    register8_t USERROW43;  /* User Row Byte 43 */
-    register8_t USERROW44;  /* User Row Byte 44 */
-    register8_t USERROW45;  /* User Row Byte 45 */
-    register8_t USERROW46;  /* User Row Byte 46 */
-    register8_t USERROW47;  /* User Row Byte 47 */
-    register8_t USERROW48;  /* User Row Byte 48 */
-    register8_t USERROW49;  /* User Row Byte 49 */
-    register8_t USERROW50;  /* User Row Byte 50 */
-    register8_t USERROW51;  /* User Row Byte 51 */
-    register8_t USERROW52;  /* User Row Byte 52 */
-    register8_t USERROW53;  /* User Row Byte 53 */
-    register8_t USERROW54;  /* User Row Byte 54 */
-    register8_t USERROW55;  /* User Row Byte 55 */
-    register8_t USERROW56;  /* User Row Byte 56 */
-    register8_t USERROW57;  /* User Row Byte 57 */
-    register8_t USERROW58;  /* User Row Byte 58 */
-    register8_t USERROW59;  /* User Row Byte 59 */
-    register8_t USERROW60;  /* User Row Byte 60 */
-    register8_t USERROW61;  /* User Row Byte 61 */
-    register8_t USERROW62;  /* User Row Byte 62 */
-    register8_t USERROW63;  /* User Row Byte 63 */
 } USERROW_t;
 
 
@@ -2246,7 +2214,6 @@ IO Module Instances. Mapped to memory.
 #define PORTMUX           (*(PORTMUX_t *) 0x0200) /* Port Multiplexer */
 #define PORTA                (*(PORT_t *) 0x0400) /* I/O Ports */
 #define PORTB                (*(PORT_t *) 0x0420) /* I/O Ports */
-#define PORTC                (*(PORT_t *) 0x0440) /* I/O Ports */
 #define ADC0                  (*(ADC_t *) 0x0600) /* Analog to Digital Converter */
 #define ADC1                  (*(ADC_t *) 0x0640) /* Analog to Digital Converter */
 #define AC0                    (*(AC_t *) 0x0680) /* Analog Comparator */
@@ -2482,27 +2449,6 @@ IO Module Instances. Mapped to memory.
 #define PORTB_PIN5CTRL  _SFR_MEM8(0x0435)
 #define PORTB_PIN6CTRL  _SFR_MEM8(0x0436)
 #define PORTB_PIN7CTRL  _SFR_MEM8(0x0437)
-
-
-/* PORT (PORTC) - I/O Ports */
-#define PORTC_DIR  _SFR_MEM8(0x0440)
-#define PORTC_DIRSET  _SFR_MEM8(0x0441)
-#define PORTC_DIRCLR  _SFR_MEM8(0x0442)
-#define PORTC_DIRTGL  _SFR_MEM8(0x0443)
-#define PORTC_OUT  _SFR_MEM8(0x0444)
-#define PORTC_OUTSET  _SFR_MEM8(0x0445)
-#define PORTC_OUTCLR  _SFR_MEM8(0x0446)
-#define PORTC_OUTTGL  _SFR_MEM8(0x0447)
-#define PORTC_IN  _SFR_MEM8(0x0448)
-#define PORTC_INTFLAGS  _SFR_MEM8(0x0449)
-#define PORTC_PIN0CTRL  _SFR_MEM8(0x0450)
-#define PORTC_PIN1CTRL  _SFR_MEM8(0x0451)
-#define PORTC_PIN2CTRL  _SFR_MEM8(0x0452)
-#define PORTC_PIN3CTRL  _SFR_MEM8(0x0453)
-#define PORTC_PIN4CTRL  _SFR_MEM8(0x0454)
-#define PORTC_PIN5CTRL  _SFR_MEM8(0x0455)
-#define PORTC_PIN6CTRL  _SFR_MEM8(0x0456)
-#define PORTC_PIN7CTRL  _SFR_MEM8(0x0457)
 
 
 /* ADC (ADC0) - Analog to Digital Converter */
@@ -2863,38 +2809,6 @@ IO Module Instances. Mapped to memory.
 #define USERROW_USERROW29  _SFR_MEM8(0x131D)
 #define USERROW_USERROW30  _SFR_MEM8(0x131E)
 #define USERROW_USERROW31  _SFR_MEM8(0x131F)
-#define USERROW_USERROW32  _SFR_MEM8(0x1320)
-#define USERROW_USERROW33  _SFR_MEM8(0x1321)
-#define USERROW_USERROW34  _SFR_MEM8(0x1322)
-#define USERROW_USERROW35  _SFR_MEM8(0x1323)
-#define USERROW_USERROW36  _SFR_MEM8(0x1324)
-#define USERROW_USERROW37  _SFR_MEM8(0x1325)
-#define USERROW_USERROW38  _SFR_MEM8(0x1326)
-#define USERROW_USERROW39  _SFR_MEM8(0x1327)
-#define USERROW_USERROW40  _SFR_MEM8(0x1328)
-#define USERROW_USERROW41  _SFR_MEM8(0x1329)
-#define USERROW_USERROW42  _SFR_MEM8(0x132A)
-#define USERROW_USERROW43  _SFR_MEM8(0x132B)
-#define USERROW_USERROW44  _SFR_MEM8(0x132C)
-#define USERROW_USERROW45  _SFR_MEM8(0x132D)
-#define USERROW_USERROW46  _SFR_MEM8(0x132E)
-#define USERROW_USERROW47  _SFR_MEM8(0x132F)
-#define USERROW_USERROW48  _SFR_MEM8(0x1330)
-#define USERROW_USERROW49  _SFR_MEM8(0x1331)
-#define USERROW_USERROW50  _SFR_MEM8(0x1332)
-#define USERROW_USERROW51  _SFR_MEM8(0x1333)
-#define USERROW_USERROW52  _SFR_MEM8(0x1334)
-#define USERROW_USERROW53  _SFR_MEM8(0x1335)
-#define USERROW_USERROW54  _SFR_MEM8(0x1336)
-#define USERROW_USERROW55  _SFR_MEM8(0x1337)
-#define USERROW_USERROW56  _SFR_MEM8(0x1338)
-#define USERROW_USERROW57  _SFR_MEM8(0x1339)
-#define USERROW_USERROW58  _SFR_MEM8(0x133A)
-#define USERROW_USERROW59  _SFR_MEM8(0x133B)
-#define USERROW_USERROW60  _SFR_MEM8(0x133C)
-#define USERROW_USERROW61  _SFR_MEM8(0x133D)
-#define USERROW_USERROW62  _SFR_MEM8(0x133E)
-#define USERROW_USERROW63  _SFR_MEM8(0x133F)
 
 
 
@@ -4590,12 +4504,12 @@ IO Module Instances. Mapped to memory.
 /* TCD.CTRLA  bit masks and bit positions */
 #define TCD_ENABLE_bm  0x01  /* Enable bit mask. */
 #define TCD_ENABLE_bp  0  /* Enable bit position. */
-#define TCD_SYNCPRES_gm  0x06  /* Synchronization prescaler group mask. */
-#define TCD_SYNCPRES_gp  1  /* Synchronization prescaler group position. */
-#define TCD_SYNCPRES_0_bm  (1<<1)  /* Synchronization prescaler bit 0 mask. */
-#define TCD_SYNCPRES_0_bp  1  /* Synchronization prescaler bit 0 position. */
-#define TCD_SYNCPRES_1_bm  (1<<2)  /* Synchronization prescaler bit 1 mask. */
-#define TCD_SYNCPRES_1_bp  2  /* Synchronization prescaler bit 1 position. */
+#define TCD_SYNCPRES_gm  0x06  /* Syncronization prescaler group mask. */
+#define TCD_SYNCPRES_gp  1  /* Syncronization prescaler group position. */
+#define TCD_SYNCPRES_0_bm  (1<<1)  /* Syncronization prescaler bit 0 mask. */
+#define TCD_SYNCPRES_0_bp  1  /* Syncronization prescaler bit 0 position. */
+#define TCD_SYNCPRES_1_bm  (1<<2)  /* Syncronization prescaler bit 1 mask. */
+#define TCD_SYNCPRES_1_bp  2  /* Syncronization prescaler bit 1 position. */
 #define TCD_CNTPRES_gm  0x18  /* counter prescaler group mask. */
 #define TCD_CNTPRES_gp  3  /* counter prescaler group position. */
 #define TCD_CNTPRES_0_bm  (1<<3)  /* counter prescaler bit 0 mask. */
@@ -5361,10 +5275,6 @@ IO Module Instances. Mapped to memory.
 #define PORTB_PORT_vect_num  4
 #define PORTB_PORT_vect      _VECTOR(4)  /*  */
 
-/* PORTC interrupt vectors */
-#define PORTC_PORT_vect_num  5
-#define PORTC_PORT_vect      _VECTOR(5)  /*  */
-
 /* RTC interrupt vectors */
 #define RTC_CNT_vect_num  6
 #define RTC_CNT_vect      _VECTOR(6)  /*  */
@@ -5459,10 +5369,10 @@ IO Module Instances. Mapped to memory.
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define DATAMEM_START     (0x0000)
-#  define DATAMEM_SIZE      (65536)
+#  define DATAMEM_SIZE      (49152)
 #else
 #  define DATAMEM_START     (0x0000U)
-#  define DATAMEM_SIZE      (65536U)
+#  define DATAMEM_SIZE      (49152U)
 #endif
 #define DATAMEM_END       (DATAMEM_START + DATAMEM_SIZE - 1)
 
@@ -5480,66 +5390,66 @@ IO Module Instances. Mapped to memory.
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define SIGNATURES_START     (0x1100)
 #  define SIGNATURES_SIZE      (3)
-#  define SIGNATURES_PAGE_SIZE (128)
+#  define SIGNATURES_PAGE_SIZE (64)
 #else
 #  define SIGNATURES_START     (0x1100U)
 #  define SIGNATURES_SIZE      (3U)
-#  define SIGNATURES_PAGE_SIZE (128U)
+#  define SIGNATURES_PAGE_SIZE (64U)
 #endif
 #define SIGNATURES_END       (SIGNATURES_START + SIGNATURES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define PROD_SIGNATURES_START     (0x1103)
 #  define PROD_SIGNATURES_SIZE      (61)
-#  define PROD_SIGNATURES_PAGE_SIZE (128)
+#  define PROD_SIGNATURES_PAGE_SIZE (64)
 #else
 #  define PROD_SIGNATURES_START     (0x1103U)
 #  define PROD_SIGNATURES_SIZE      (61U)
-#  define PROD_SIGNATURES_PAGE_SIZE (128U)
+#  define PROD_SIGNATURES_PAGE_SIZE (64U)
 #endif
 #define PROD_SIGNATURES_END       (PROD_SIGNATURES_START + PROD_SIGNATURES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define FUSES_START     (0x1280)
 #  define FUSES_SIZE      (10)
-#  define FUSES_PAGE_SIZE (64)
+#  define FUSES_PAGE_SIZE (32)
 #else
 #  define FUSES_START     (0x1280U)
 #  define FUSES_SIZE      (10U)
-#  define FUSES_PAGE_SIZE (64U)
+#  define FUSES_PAGE_SIZE (32U)
 #endif
 #define FUSES_END       (FUSES_START + FUSES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define LOCKBITS_START     (0x128A)
 #  define LOCKBITS_SIZE      (1)
-#  define LOCKBITS_PAGE_SIZE (64)
+#  define LOCKBITS_PAGE_SIZE (32)
 #else
 #  define LOCKBITS_START     (0x128AU)
 #  define LOCKBITS_SIZE      (1U)
-#  define LOCKBITS_PAGE_SIZE (64U)
+#  define LOCKBITS_PAGE_SIZE (32U)
 #endif
 #define LOCKBITS_END       (LOCKBITS_START + LOCKBITS_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define USER_SIGNATURES_START     (0x1300)
-#  define USER_SIGNATURES_SIZE      (64)
-#  define USER_SIGNATURES_PAGE_SIZE (64)
+#  define USER_SIGNATURES_SIZE      (32)
+#  define USER_SIGNATURES_PAGE_SIZE (32)
 #else
 #  define USER_SIGNATURES_START     (0x1300U)
-#  define USER_SIGNATURES_SIZE      (64U)
-#  define USER_SIGNATURES_PAGE_SIZE (64U)
+#  define USER_SIGNATURES_SIZE      (32U)
+#  define USER_SIGNATURES_PAGE_SIZE (32U)
 #endif
 #define USER_SIGNATURES_END       (USER_SIGNATURES_START + USER_SIGNATURES_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define EEPROM_START     (0x1400)
 #  define EEPROM_SIZE      (256)
-#  define EEPROM_PAGE_SIZE (64)
+#  define EEPROM_PAGE_SIZE (32)
 #else
 #  define EEPROM_START     (0x1400U)
 #  define EEPROM_SIZE      (256U)
-#  define EEPROM_PAGE_SIZE (64U)
+#  define EEPROM_PAGE_SIZE (32U)
 #endif
 #define EEPROM_END       (EEPROM_START + EEPROM_SIZE - 1)
 
@@ -5562,23 +5472,23 @@ IO Module Instances. Mapped to memory.
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define MAPPED_PROGMEM_START     (0x8000)
-#  define MAPPED_PROGMEM_SIZE      (32768)
-#  define MAPPED_PROGMEM_PAGE_SIZE (128)
+#  define MAPPED_PROGMEM_SIZE      (16384)
+#  define MAPPED_PROGMEM_PAGE_SIZE (64)
 #else
 #  define MAPPED_PROGMEM_START     (0x8000U)
-#  define MAPPED_PROGMEM_SIZE      (32768U)
-#  define MAPPED_PROGMEM_PAGE_SIZE (128U)
+#  define MAPPED_PROGMEM_SIZE      (16384U)
+#  define MAPPED_PROGMEM_PAGE_SIZE (64U)
 #endif
 #define MAPPED_PROGMEM_END       (MAPPED_PROGMEM_START + MAPPED_PROGMEM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define PROGMEM_START     (0x0000)
-#  define PROGMEM_SIZE      (32768)
-#  define PROGMEM_PAGE_SIZE (128)
+#  define PROGMEM_SIZE      (16384)
+#  define PROGMEM_PAGE_SIZE (64)
 #else
 #  define PROGMEM_START     (0x0000U)
-#  define PROGMEM_SIZE      (32768U)
-#  define PROGMEM_PAGE_SIZE (128U)
+#  define PROGMEM_SIZE      (16384U)
+#  define PROGMEM_PAGE_SIZE (64U)
 #endif
 #define PROGMEM_END       (PROGMEM_START + PROGMEM_SIZE - 1)
 
@@ -5671,8 +5581,8 @@ IO Module Instances. Mapped to memory.
 
 /* ========== Signature ========== */
 #define SIGNATURE_0 0x1E
-#define SIGNATURE_1 0x95
+#define SIGNATURE_1 0x94
 #define SIGNATURE_2 0x22
 
-#endif /* #ifdef _AVR_ATTINY3217_H_INCLUDED */
+#endif /* #ifdef _AVR_ATTINY1614_H_INCLUDED */
 

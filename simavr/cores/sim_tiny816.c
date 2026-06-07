@@ -1,8 +1,8 @@
 /*
-	sim_tiny3217.c
+	sim_tiny816.c
 
-	ATtiny3217 (tinyAVR(R) 1-series, AVRxt). Thin instantiation of the shared
-	1-series core template; see sim_tinyx1.h for the device model and doc/attiny3217_design.md.
+	ATtiny816 (tinyAVR(R) 1-series, AVRxt). Thin instantiation of the shared
+	1-series core template; see sim_tinyx1.h for the device model.
 
 	Copyright 2026 simavr authors
 
@@ -24,8 +24,8 @@
 
 #include "sim_avr.h"
 
-#define SIM_MMCU		"attiny3217"
-#define SIM_CORENAME	mcu_tiny3217
+#define SIM_MMCU		"attiny816"
+#define SIM_CORENAME	mcu_tiny816
 
 #define _AVR_IO_H_
 #define __ASSEMBLER__
@@ -33,11 +33,11 @@
 #define _SFR_MEM16(x)	(x)
 #define _SFR_IO8(x)		(x)
 #define _SFR_IO16(x)	(x)
-#include "avr/iotn3217.h"
+#include "avr/iotn816.h"
 
 #include "sim_tinyx1.h"
 
-avr_kind_t tiny3217 = {
-	.names = { "attiny3217" },
+avr_kind_t tiny816 = {
+	.names = { "attiny816" },
 	.make = sim_tinyx1_make,
 };

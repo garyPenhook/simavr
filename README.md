@@ -24,16 +24,32 @@ load multipart HEX files.
 - anyone checking the CV you brag about it will see this paragraph, first.
 ```
 
-Modern AVR (AVRxt) / ATtiny3217 support — *this fork*
------------------------------------------------------
+Modern AVR (AVRxt) / tinyAVR® 1-series support — *this fork*
+-----------------------------------------------------------
 
-This fork adds the first **modern AVR (AVRxt)** core to _simavr_: the
-**ATtiny3217** (tinyAVR® 1-series). Every stock _simavr_ target is a classic
-AVRe/AVRe+ part; the tinyAVR / megaAVR‑0 / AVR‑Dx families use the AVRxt core
-with a completely different, register‑block peripheral architecture, so this
-needed engine work as well as new peripheral models. The full design notes and
-implementation log are in
-[`doc/attiny3217_design.md`](doc/attiny3217_design.md).
+This fork adds **modern AVR (AVRxt)** cores to _simavr_: the **entire
+tinyAVR® 1-series**. Every stock _simavr_ target is a classic AVRe/AVRe+ part;
+the tinyAVR / megaAVR‑0 / AVR‑Dx families use the AVRxt core with a completely
+different, register‑block peripheral architecture, so this needed engine work as
+well as new peripheral models. The full design notes and implementation log are
+in [`doc/attiny3217_design.md`](doc/attiny3217_design.md).
+
+**Supported 1-series parts** (15 devices, all 8/14/20/24-pin variants):
+
+| Flash | 8-pin | 14-pin | 20-pin | 24-pin |
+|------:|:-----:|:------:|:------:|:------:|
+| 2 KB  | ATtiny212 | ATtiny214 | — | — |
+| 4 KB  | ATtiny412 | ATtiny414 | ATtiny416 | ATtiny417 |
+| 8 KB  | — | ATtiny814 | ATtiny816 | ATtiny817 |
+| 16 KB | — | ATtiny1614 | ATtiny1616 | ATtiny1617 |
+| 32 KB | — | ATtiny3214 | ATtiny3216 | ATtiny3217 |
+
+Every part is driven from one shared core template
+([`cores/sim_tinyx1.h`](simavr/cores/sim_tinyx1.h)) plus a per-device file; all
+device specifics — memory sizes, signature, interrupt vector table, and which
+peripheral instances are fitted (PORTB/PORTC by pin count; TCB1, ADC1, AC1/AC2 on
+the larger parts) — are taken straight from each device's avr-libc header, which
+is generated from the same Microchip device files as the datasheets.
 
 **Engine — a "modern AVR" mode (the classic path is left byte‑for‑byte unchanged):**
 * modern addressing model (no `0x20` I/O offset, per‑core SP/SREG, enlarged I/O map)
@@ -126,8 +142,12 @@ Supported IOs
 Emulated Cores (very easy to add new ones!)
 --------------
 
-**Modern AVR (AVRxt) — *this fork*:**
-+ ATtiny3217 (tinyAVR® 1-series) — see [Modern AVR (AVRxt) / ATtiny3217 support](#modern-avr-avrxt--attiny3217-support--this-fork)
+**Modern AVR (AVRxt) — *this fork* — the full tinyAVR® 1-series:**
++ ATtiny212 / 412 (8-pin)
++ ATtiny214 / 414 / 814 / 1614 / 3214 (14-pin)
++ ATtiny416 / 816 / 1616 / 3216 (20-pin)
++ ATtiny417 / 817 / 1617 / 3217 (24-pin)
++ see [Modern AVR (AVRxt) / tinyAVR 1-series support](#modern-avr-avrxt--tinyavr-1-series-support--this-fork)
 
 **Classic AVR (AVRe/AVRe+):**
 + ATMega2560
