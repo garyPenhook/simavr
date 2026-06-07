@@ -378,6 +378,12 @@ typedef struct avr_t {
 		// the CPU to sleep while SLPCTRL.CTRLA.SEN is set (maintained here by
 		// avr_slpctrl). Unused on classic cores (which sleep unconditionally).
 		uint8_t		sleep_enabled;
+		// Persistent data range preserved across avr_reset(). Modern AVRs map the
+		// EEPROM into the data space below ioend, so the reset clear loop would
+		// otherwise wipe it every reset; NVMCTRL marks [persist_start,persist_end]
+		// (inclusive) so EEPROM survives a reset like real hardware. 0/0 = none.
+		uint16_t	persist_start;
+		uint16_t	persist_end;
 	} arch;
 
 	/*

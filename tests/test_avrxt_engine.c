@@ -998,6 +998,20 @@ int main(void)
 		check("EEERASE wipes byte 5", cpu_read(m, EE + 5), 0xff);
 		NVM_RUN();
 
+		/* Regression: committed EEPROM is persistent across a reset, and a
+		 * committed 0x00 byte is preserved (not promoted to 0xFF). Both were
+		 * broken when the mapped EEPROM sat inside avr_reset()'s clear range. */
+		cpu_write(m, EE + 0, 0x5a);
+		cpu_write(m, EE + 1, 0x00);		/* a legitimate zero byte */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEERASEWRITE);
+		NVM_RUN();
+		check("EEPROM committed before reset", cpu_read(m, EE + 0), 0x5a);
+		avr_reset(m);
+		check("EEPROM persists across reset", cpu_read(m, EE + 0), 0x5a);
+		check("committed 0x00 byte not corrupted after reset",
+			  cpu_read(m, EE + 1), 0x00);
+
 		#undef NVM_RUN
 	}
 

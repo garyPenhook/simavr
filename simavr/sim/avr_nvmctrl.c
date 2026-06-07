@@ -261,10 +261,10 @@ avr_nvmctrl_reset(avr_io_t *io)
 		nvm_fbufclr(p);
 	p->fbuf_page = 0;
 	p->last_section = AVR_NVM_SEC_NONE;
-	/* Erased EEPROM reads as 0xFF unless something loaded it. */
-	for (uint16_t i = 0; i < p->ee_size; i++)
-		if (avr->data[p->ee_start + i] == 0)
-			avr->data[p->ee_start + i] = 0xff;
+	/* EEPROM is persistent: it is initialised to the erased state once in
+	 * avr_nvmctrl_init() and preserved across resets (see arch.persist_*), so
+	 * reset must NOT touch it here (doing so would both wipe stored data and
+	 * corrupt legitimate 0x00 bytes). */
 	avr->data[p->r_status] = 0;
 }
 
@@ -294,6 +294,14 @@ avr_nvmctrl_init(
 	p->r_intflags = base + NVMR_INTFLAGS;
 	p->ee_start = ee_start;
 	p->ee_size = ee_size > AVR_NVM_EE_MAX ? AVR_NVM_EE_MAX : ee_size;
+
+	/* The EEPROM is mapped into the data space below ioend; mark it persistent
+	 * so avr_reset() does not wipe it, and prime it to the erased state (0xFF)
+	 * once. This runs during avr_init() before any firmware/.eep is loaded, so a
+	 * later EEPROM image still overwrites it, and runtime resets preserve it. */
+	avr->arch.persist_start = ee_start;
+	avr->arch.persist_end = ee_start + p->ee_size - 1;
+	memset(&avr->data[ee_start], 0xff, p->ee_size);
 
 	p->eeready.vector = vec_eeready;
 	p->eeready.enable.reg = p->r_intctrl;  p->eeready.enable.bit = 0;

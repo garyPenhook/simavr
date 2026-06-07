@@ -72,8 +72,12 @@ static uint32_t tcb_prescale(avr_tcb_t *p)
 
 static int tcb_mode_periodic(avr_tcb_t *p)
 {
+	/* Only Periodic Interrupt mode (CNTMODE_INT) is driven as a free-running
+	 * periodic tick. TIMEOUT and the other modes are event/capture gated and
+	 * are not modelled (their registers still store), so they must not generate
+	 * spurious periodic CAPT interrupts. */
 	uint8_t mode = p->io.avr->data[p->r_ctrlb] & CNTMODE_gm;
-	return mode == CNTMODE_INT || mode == CNTMODE_TIMEOUT;
+	return mode == CNTMODE_INT;
 }
 
 /* Cycle-timer callback: one period elapsed. */

@@ -169,6 +169,10 @@ avr_rtc_cnt_event(struct avr_t *avr, avr_cycle_count_t when, void *param)
 		rtc_cnt_flag(p, OVF_bm);
 		p->cnt_start = when;	/* CNT == 0 again */
 		from = 0;
+		/* CMP == 0 matches at CNT == 0 (the wrap point); the forward-target
+		 * search only considers values >= 1, so fire it here. */
+		if (rtc_cmp(p) == 0)
+			rtc_cnt_flag(p, CMP_bm);
 	} else {
 		if (rtc_cmp(p) == p->ev_target)
 			rtc_cnt_flag(p, CMP_bm);
