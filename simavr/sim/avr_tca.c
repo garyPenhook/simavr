@@ -168,6 +168,18 @@ avr_tca_ctrlb_write(struct avr_t *avr, avr_io_addr_t addr,
 	avr_tca_reschedule(p);
 }
 
+/* PER / CMP0-2: changing the period or a compare value moves the next event,
+ * so re-evaluate the schedule if the timer is running (cf. avr_tcd_cfg_write). */
+static void
+avr_tca_cfg_write(struct avr_t *avr, avr_io_addr_t addr,
+				  uint8_t v, void *param)
+{
+	avr_tca_t *p = (avr_tca_t *)param;
+	avr_core_watch_write(avr, addr, v);	/* low or high byte */
+	if (tca_enabled(p))
+		avr_tca_reschedule(p);
+}
+
 static uint8_t
 avr_tca_cnt_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 {
@@ -278,4 +290,12 @@ avr_tca_init(
 	avr_register_io_read(avr, p->r_cnt, avr_tca_cnt_read, p);
 	avr_register_io_write(avr, p->r_cnt, avr_tca_cnt_write, p);
 	avr_register_io_write(avr, p->r_cnt + 1, avr_tca_cnt_write, p);
+
+	/* PER and the three compare registers (both bytes) move scheduled events. */
+	avr_register_io_write(avr, p->r_per, avr_tca_cfg_write, p);
+	avr_register_io_write(avr, p->r_per + 1, avr_tca_cfg_write, p);
+	for (int ch = 0; ch < 3; ch++) {
+		avr_register_io_write(avr, p->r_cmp[ch], avr_tca_cfg_write, p);
+		avr_register_io_write(avr, p->r_cmp[ch] + 1, avr_tca_cfg_write, p);
+	}
 }

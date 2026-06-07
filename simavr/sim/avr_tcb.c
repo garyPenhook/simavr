@@ -287,6 +287,46 @@ avr_tcb_cnt_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 	return cnt & 0xff;
 }
 
+/*
+ * Writing CCMP (TOP) while the timer runs in a TOP-using mode (Periodic
+ * Interrupt / Time-Out Check) moves the CAPT deadline. Per the ATtiny3217
+ * datasheet (21.3.3.1.1 / .2): CCMP is not double-buffered, the counter is not
+ * reset, and if the new TOP is below the current count the counter runs on to
+ * MAX (0xFFFF) and only then wraps to BOTTOM before counting up to TOP. In the
+ * capture modes TOP is fixed at MAX and CCMP is the hardware capture
+ * destination, so a firmware write there only stores the value.
+ */
+static void
+avr_tcb_ccmp_write(struct avr_t *avr, avr_io_addr_t addr,
+				   uint8_t v, void *param)
+{
+	avr_tcb_t *p = (avr_tcb_t *)param;
+	uint8_t mode = tcb_mode(p);
+
+	avr_core_watch_write(avr, addr, v);	/* low or high byte */
+
+	if (!(avr->data[p->r_ctrla] & ENABLE_bm) ||
+		!(avr->data[p->r_status] & RUN_bm))
+		return;
+	if (mode != CNTMODE_INT && mode != CNTMODE_TIMEOUT)
+		return;
+
+	uint16_t cnt = tcb_current_cnt(p);
+	uint32_t top = tcb_top(p);
+
+	p->prescale = tcb_prescale(p);
+	p->top = top;
+	tcb_set_running(p, 1, cnt);	/* re-anchor the phase, keep CNT */
+
+	/* Ticks until the next TOP match, with the run-to-MAX wrap when TOP < CNT. */
+	avr_cycle_count_t delta = (cnt <= top)
+		? (avr_cycle_count_t)(top + 1 - cnt)
+		: (avr_cycle_count_t)((0x10000u - cnt) + (top + 1));
+
+	avr_cycle_timer_cancel(avr, avr_tcb_tick, p);
+	avr_cycle_timer_register(avr, delta * p->prescale, avr_tcb_tick, p);
+}
+
 static uint8_t
 avr_tcb_ccmp_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 {
@@ -467,5 +507,7 @@ avr_tcb_init(
 	avr_register_io_write(avr, p->r_intflags, avr_tcb_intflags_write, p);
 	avr_register_io_read(avr, p->r_cnt, avr_tcb_cnt_read, p);
 	avr_register_io_read(avr, p->r_ccmp, avr_tcb_ccmp_read, p);
+	avr_register_io_write(avr, p->r_ccmp, avr_tcb_ccmp_write, p);
+	avr_register_io_write(avr, p->r_ccmp + 1, avr_tcb_ccmp_write, p);
 	avr_irq_register_notify(p->io.irq + AVR_TCB_IRQ_EVENT_IN, avr_tcb_event_input, p);
 }

@@ -269,6 +269,16 @@ avr_rtc_per_write(struct avr_t *avr, avr_io_addr_t addr,
 }
 
 static void
+avr_rtc_cmp_write(struct avr_t *avr, avr_io_addr_t addr,
+				  uint8_t v, void *param)
+{
+	avr_rtc_t *p = (avr_rtc_t *)param;
+	avr_core_watch_write(avr, addr, v);	/* low or high byte */
+	if (rtc_cnt_enabled(p))
+		avr_rtc_cnt_reschedule(p);	/* move the compare deadline */
+}
+
+static void
 avr_rtc_cnt_write(struct avr_t *avr, avr_io_addr_t addr,
 				  uint8_t v, void *param)
 {
@@ -426,6 +436,8 @@ avr_rtc_init(
 	avr_register_io_write(avr, p->r_intflags, avr_rtc_intflags_write, p);
 	avr_register_io_write(avr, p->r_per, avr_rtc_per_write, p);
 	avr_register_io_write(avr, p->r_per + 1, avr_rtc_per_write, p);
+	avr_register_io_write(avr, p->r_cmp, avr_rtc_cmp_write, p);
+	avr_register_io_write(avr, p->r_cmp + 1, avr_rtc_cmp_write, p);
 	avr_register_io_write(avr, p->r_cnt, avr_rtc_cnt_write, p);
 	avr_register_io_write(avr, p->r_cnt + 1, avr_rtc_cnt_write, p);
 	avr_register_io_read(avr, p->r_cnt, avr_rtc_cnt_read, p);

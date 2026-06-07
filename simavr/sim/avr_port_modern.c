@@ -224,6 +224,22 @@ avr_port_modern_intflags_write(struct avr_t *avr, avr_io_addr_t addr,
 		avr_clear_interrupt(avr, &p->port_vect);
 }
 
+/* ---- PINnCTRL ---- */
+
+/*
+ * PINnCTRL changes pull-up (PULLUPEN), inversion (INVEN) and per-pin interrupt
+ * sense (ISC); the first two affect the resolved pin state immediately, so
+ * re-derive the output IRQs now rather than waiting for the next port event.
+ */
+static void
+avr_port_modern_pinctrl_write(struct avr_t *avr, avr_io_addr_t addr,
+							  uint8_t v, void *param)
+{
+	avr_port_modern_t *p = (avr_port_modern_t *)param;
+	avr_core_watch_write(avr, addr, v);
+	avr_port_modern_update_irqs(p);
+}
+
 /*
  * Pin change / edge detection. Adapted from avr_ioport_irq_notify(): handles
  * both an external driver changing an input pin and user code forcing a pin,
@@ -434,6 +450,11 @@ avr_port_modern_init(
 	avr_register_io_read(avr, p->r_in, avr_port_modern_in_read, p);
 	avr_register_io_write(avr, p->r_in, avr_port_modern_in_write, p);
 	avr_register_io_write(avr, p->r_intflags, avr_port_modern_intflags_write, p);
+
+	/* PIN0CTRL..PIN7CTRL: pull-up / inversion / interrupt-sense per pin. */
+	for (int i = 0; i < 8; i++)
+		avr_register_io_write(avr, p->r_pinctrl + i,
+							  avr_port_modern_pinctrl_write, p);
 
 	/* Wire the VPORT alias into the engine's low-I/O redirect table. */
 	if (vport != AVR_PORT_MODERN_NO_VPORT) {
