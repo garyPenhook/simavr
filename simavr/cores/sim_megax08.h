@@ -88,6 +88,7 @@
 #include "avr_wdt.h"
 #include "avr_crcscan.h"
 #include "avr_slpctrl.h"
+#include "avr_cpuint.h"
 #include "avr_rstctrl.h"
 #include "avr_bod.h"
 #include "avr_syscfg.h"
@@ -123,6 +124,7 @@ struct mcu_t {
 	avr_wdt_modern_t	wdt;
 	avr_crcscan_t		crcscan;
 	avr_slpctrl_t		slpctrl;
+	avr_cpuint_t		cpuint;
 	avr_rstctrl_t		rstctrl;
 	avr_bod_t			bod;
 	avr_syscfg_t		syscfg;
@@ -371,6 +373,9 @@ megax08_init(struct avr_t * avr)
 
 	/* SLPCTRL / RSTCTRL. */
 	avr_slpctrl_init(avr, &mcu->slpctrl, 0x0050, '0');
+
+	/* CPUINT (interrupt controller registers) at 0x0110. */
+	avr_cpuint_init(avr, &mcu->cpuint, 0x0110, '0');
 	avr_rstctrl_init(avr, &mcu->rstctrl, 0x0040, '0');
 
 	/* BOD / VLM at 0x0080; CTRLA/B from FUSE.BODCFG (fuse index 1). */

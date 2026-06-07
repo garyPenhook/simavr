@@ -78,6 +78,7 @@ typedef struct  avr_int_table_t {
 	uint8_t			cpuint_lvl1vec;	// LVL1VEC: vector elevated to level 1 (0 = none)
 	uint8_t			cpuint_lvl0pri;	// LVL0PRI: LVL0 scheduling base / last-acked vector
 	uint8_t			cpuint_lvl0rr;	// LVL0RR: round-robin scheduling enabled
+	uint8_t			cpuint_cvt;		// CVT: compact vector table (all LVL0 share vector 3)
 	uint8_t			max_vector;		// highest registered vector number (LVL0 wrap)
 } avr_int_table_t, *avr_int_table_p;
 
@@ -139,7 +140,9 @@ avr_get_interrupt_irq(
 void avr_cpuint_set_lvl1vec(struct avr_t *avr, uint8_t vector);
 void avr_cpuint_set_lvl0pri(struct avr_t *avr, uint8_t pri);
 void avr_cpuint_set_lvl0rr(struct avr_t *avr, uint8_t enabled);
+void avr_cpuint_set_cvt(struct avr_t *avr, uint8_t enabled);
 uint8_t avr_cpuint_get_status(struct avr_t *avr);
+uint8_t avr_cpuint_get_lvl0pri(struct avr_t *avr);
 
 // Initializes the interrupt table
 void

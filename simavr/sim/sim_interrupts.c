@@ -103,10 +103,22 @@ avr_cpuint_set_lvl0rr(avr_t *avr, uint8_t enabled)
 	avr->interrupts.cpuint_lvl0rr = !!enabled;
 }
 
+void
+avr_cpuint_set_cvt(avr_t *avr, uint8_t enabled)
+{
+	avr->interrupts.cpuint_cvt = !!enabled;
+}
+
 uint8_t
 avr_cpuint_get_status(avr_t *avr)
 {
 	return avr->interrupts.cpuint_status;
+}
+
+uint8_t
+avr_cpuint_get_lvl0pri(avr_t *avr)
+{
+	return avr->interrupts.cpuint_lvl0pri;
 }
 
 int
@@ -396,7 +408,14 @@ avr_service_interrupts_modern(avr_t * avr)
 		if (table->cpuint_lvl0rr)
 			table->cpuint_lvl0pri = best->vector;
 	}
-	avr->pc = best->vector * avr->vector_size;
+	// Compact Vector Table: when CVT is enabled in CPUINT.CTRLA the table
+	// collapses to three entries — NMI at vector 1, the LVL1 vector at 2, and
+	// every LVL0 source shares vector 3 (datasheet 13.3.2.5). Selection still
+	// uses the real vector numbers; only the dispatched address is remapped.
+	uint8_t target = best->vector;
+	if (table->cpuint_cvt)
+		target = best_level == 2 ? 1 : best_level == 1 ? 2 : 3;
+	avr->pc = target * avr->vector_size;
 
 	avr_raise_irq(best->irq + AVR_INT_IRQ_RUNNING, 1);
 	avr_raise_irq(table->irq + AVR_INT_IRQ_RUNNING, best->vector);

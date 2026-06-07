@@ -167,6 +167,16 @@ behaviour is identical. This keeps the change surgical and testable.
 - Keep using the existing `avr_int_vector` reg-bit primitive for
   enable/raised bits, but point "raised" at peripheral `INTFLAGS` bits and
   honour write-1-to-clear semantics.
+- The dispatch engine lives in `sim_interrupts.c`
+  (`avr_service_interrupts_modern`) and reads its config from the
+  `avr_int_table_t.cpuint_*` fields. Those fields are driven by the
+  firmware-facing register block `avr_cpuint.c` (CPUINT at 0x0110), wired into
+  both modern core templates. Register semantics follow datasheet
+  DS40002205A §13.4-13.5: `CTRLA` (LVL0RR un-protected; CVT/IVSEL under CCP),
+  `STATUS` (read-only, mirrors the live execution-level flags), `LVL0PRI`
+  (hardware-updated under round robin, read returns the live value), `LVL1VEC`.
+  CVT (Compact Vector Table) is modelled in the dispatcher; IVSEL is stored for
+  read-back but the table is not relocated (no boot section in the flash model).
 
 ### Phase 4 — Peripherals (incremental, prioritised)
 Implement as new `avr_*` modules under `simavr/sim/` mirroring the existing

@@ -411,6 +411,32 @@ int main(void)
 		avr_service_interrupts(avr);
 		check("serviced once CCP window closes", avr->pc, 10 * vs);
 
+		// H. Compact Vector Table: all LVL0 dispatch to vector 3, the level-1
+		// vector to 2, NMI to 1 (datasheet 13.3.2.5). Selection is unchanged.
+		avr->interrupts.cpuint_cvt = 1;
+		INT_RESET();
+		avr->sreg[S_I] = 1;
+		avr->pc = 0x100;
+		avr_raise_interrupt(avr, &v10);
+		avr_service_interrupts(avr);
+		check("CVT: LVL0 dispatches to vector 3", avr->pc, 3 * vs);
+
+		INT_RESET();
+		avr->sreg[S_I] = 1;
+		avr->interrupts.cpuint_lvl1vec = 5;	// v5 is level 1
+		avr->pc = 0x100;
+		avr_raise_interrupt(avr, &v5);
+		avr_service_interrupts(avr);
+		check("CVT: LVL1 dispatches to vector 2", avr->pc, 2 * vs);
+
+		INT_RESET();
+		avr->sreg[S_I] = 0;			// NMI ignores I
+		avr->pc = 0x100;
+		avr_raise_interrupt(avr, &vnmi);
+		avr_service_interrupts(avr);
+		check("CVT: NMI dispatches to vector 1", avr->pc, 1 * vs);
+		avr->interrupts.cpuint_cvt = 0;
+
 		#undef INT_RESET
 	}
 
@@ -576,6 +602,66 @@ int main(void)
 		cpu_write(m, B + TWIM_MDATA, 0x42);	/* data */
 		cpu_write(m, B + TWIM_MCTRLB, CMD_STOP);
 		check("core: slave mem[5] written via TWI0", slave.mem[5], 0x42);
+	}
+
+	printf("== modern CPUINT register block (sim_tiny3217) ==\n");
+	{
+		/* CPUINT register map (datasheet DS40002205A §13.4): the controller
+		 * lives at 0x0110 on every modern part; the engine reads its priority
+		 * config from these registers via the avr_cpuint bridge. */
+		enum { CTRLA = 0x110, STATUS = 0x111, LVL0PRI = 0x112, LVL1VEC = 0x113 };
+		enum { LVL0RR_bm = 0x01, CVT_bm = 0x20, IVSEL_bm = 0x40 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		/* The core descriptor must have wired the CPUINT block in. */
+		check("CPUINT CTRLA write hook present",
+			  !!m->io[AVR_DATA_TO_IO(CTRLA)].w.c, 1);
+		check("CPUINT STATUS read hook present",
+			  !!m->io[AVR_DATA_TO_IO(STATUS)].r.c, 1);
+
+		/* LVL1VEC: firmware-selected level-1 vector reaches the engine. */
+		cpu_write(m, LVL1VEC, 5);
+		check("LVL1VEC write -> engine", m->interrupts.cpuint_lvl1vec, 5);
+		check("LVL1VEC reads back", cpu_read(m, LVL1VEC), 5);
+
+		/* LVL0PRI: firmware write reaches the engine; reads return the live
+		 * value (hardware updates it under round robin). */
+		cpu_write(m, LVL0PRI, 19);
+		check("LVL0PRI write -> engine", m->interrupts.cpuint_lvl0pri, 19);
+		m->interrupts.cpuint_lvl0pri = 7;	/* simulate a round-robin ack */
+		check("LVL0PRI read is live", cpu_read(m, LVL0PRI), 7);
+
+		/* CTRLA.LVL0RR is NOT CCP-protected: it takes effect immediately. */
+		cpu_write(m, CTRLA, LVL0RR_bm);
+		check("LVL0RR write -> engine (no CCP)", m->interrupts.cpuint_lvl0rr, 1);
+
+		/* CTRLA.CVT and IVSEL ARE CCP-protected: a write without an unlock is
+		 * dropped for those bits (datasheet Table 13-3). */
+		cpu_write(m, CTRLA, LVL0RR_bm | CVT_bm | IVSEL_bm);
+		check("CVT rejected without CCP", m->interrupts.cpuint_cvt, 0);
+		check("CVT bit not stored without CCP", !!(m->data[CTRLA] & CVT_bm), 0);
+		check("IVSEL bit not stored without CCP", !!(m->data[CTRLA] & IVSEL_bm), 0);
+
+		/* Unlock CCP (write the IOREG signature to CPU.CCP), then the protected
+		 * bits take effect. No instructions run between the writes here, so the
+		 * window stays open. */
+		cpu_write(m, m->arch.ccp_addr, 0xD8 /* CCP_IOREG */);
+		cpu_write(m, CTRLA, LVL0RR_bm | CVT_bm);
+		check("CVT accepted with CCP open", m->interrupts.cpuint_cvt, 1);
+		check("CVT bit stored with CCP open", !!(m->data[CTRLA] & CVT_bm), 1);
+
+		/* STATUS is read-only to firmware: it mirrors the live engine flags and
+		 * ignores writes. */
+		m->interrupts.cpuint_status = AVR_CPUINT_LVL1EX | AVR_CPUINT_LVL0EX;
+		check("STATUS read mirrors engine", cpu_read(m, STATUS),
+			  AVR_CPUINT_LVL1EX | AVR_CPUINT_LVL0EX);
+		cpu_write(m, STATUS, 0x00);
+		check("STATUS write ignored (read-only)", m->interrupts.cpuint_status,
+			  AVR_CPUINT_LVL1EX | AVR_CPUINT_LVL0EX);
 	}
 
 	printf("== modern PORT/VPORT (sim_tiny3217) ==\n");
