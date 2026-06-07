@@ -20,10 +20,16 @@
 	    (PITCTRLA.PERIOD), on its own RTC_PIT vector, independent of the RTC
 	    prescaler.
 
-	Deliberate simplifications: the synchronisation-busy STATUS/PITSTATUS bits
-	are never asserted (writes take effect immediately, so the usual busy poll
-	passes); a CLK_PER change after the RTC starts is not retro-applied until the
-	function is reconfigured; CRYSTERR / external-clock pins are not modelled.
+	Synchronisation-busy: writing CTRLA/CNT/PER/CMP (or PITCTRLA) asserts the
+	matching STATUS/PITSTATUS busy bit for the documented two-RTC-clock-cycle
+	synchronisation latency (DS40002205A 23.12.2, 23.5.1), converted to CPU
+	cycles, so a `while (RTC.STATUS & RTC_CTRLABUSY_bm)` poll actually spins
+	until sync completes. The write itself still takes effect immediately in the
+	model (write-during-busy is not blocked).
+
+	Deliberate simplifications: a CLK_PER change after the RTC starts is not
+	retro-applied until the function is reconfigured; CRYSTERR / external-clock
+	pins are not modelled.
 
 	Copyright 2026 simavr authors
 
@@ -53,6 +59,16 @@
 #define PRESCALER_gm	0x78
 #define PRESCALER_gp	3
 
+/* STATUS busy bits (index == bit position). */
+#define CTRLABUSY_bm	0x01
+#define CNTBUSY_bm	0x02
+#define PERBUSY_bm	0x04
+#define CMPBUSY_bm	0x08
+enum { BUSY_CTRLA = 0, BUSY_CNT = 1, BUSY_PER = 2, BUSY_CMP = 3 };
+
+/* PITSTATUS */
+#define PIT_CTRLBUSY_bm	0x01
+
 /* INTCTRL / INTFLAGS (RTC counter) */
 #define OVF_bm		0x01
 #define CMP_bm		0x02
@@ -78,6 +94,20 @@ static uint32_t rtc_src_hz(avr_rtc_t *p)
 	if ((rd(p->io.avr, p->r_clksel) & 0x03) == 1)
 		return 1024;
 	return 32768;
+}
+
+/* CPU cycles for the two-RTC-clock-cycle register synchronisation latency. */
+static avr_cycle_count_t rtc_sync_cpu(avr_rtc_t *p)
+{
+	avr_t *avr = p->io.avr;
+	uint64_t c = 2u * (uint64_t)avr->frequency / rtc_src_hz(p);
+	return c ? (avr_cycle_count_t)c : 1;
+}
+
+/* Mark a STATUS busy bit asserted until the synchronisation completes. */
+static void rtc_mark_busy(avr_rtc_t *p, int idx)
+{
+	p->busy_until[idx] = p->io.avr->cycle + rtc_sync_cpu(p);
 }
 
 static uint32_t rtc_prescale_div(avr_rtc_t *p)
@@ -244,6 +274,7 @@ avr_rtc_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
 	avr_core_watch_write(avr, addr, v);
+	rtc_mark_busy(p, BUSY_CTRLA);
 	avr_rtc_cnt_reschedule(p);
 }
 
@@ -264,6 +295,7 @@ avr_rtc_per_write(struct avr_t *avr, avr_io_addr_t addr,
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
 	avr_core_watch_write(avr, addr, v);	/* low or high byte */
+	rtc_mark_busy(p, BUSY_PER);
 	if (rtc_cnt_enabled(p))
 		avr_rtc_cnt_reschedule(p);
 }
@@ -274,6 +306,7 @@ avr_rtc_cmp_write(struct avr_t *avr, avr_io_addr_t addr,
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
 	avr_core_watch_write(avr, addr, v);	/* low or high byte */
+	rtc_mark_busy(p, BUSY_CMP);
 	if (rtc_cnt_enabled(p))
 		avr_rtc_cnt_reschedule(p);	/* move the compare deadline */
 }
@@ -284,8 +317,25 @@ avr_rtc_cnt_write(struct avr_t *avr, avr_io_addr_t addr,
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
 	avr_core_watch_write(avr, addr, v);	/* low or high byte */
+	rtc_mark_busy(p, BUSY_CNT);
 	if (rtc_cnt_enabled(p))
 		avr_rtc_cnt_reschedule(p);	/* re-anchor the phase */
+}
+
+/* STATUS: synchronisation-busy bits, computed live from the deadlines. */
+static uint8_t
+avr_rtc_status_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
+{
+	avr_rtc_t *p = (avr_rtc_t *)param;
+	static const uint8_t bm[4] = {
+		CTRLABUSY_bm, CNTBUSY_bm, PERBUSY_bm, CMPBUSY_bm
+	};
+	uint8_t s = 0;
+	for (int i = 0; i < 4; i++)
+		if (avr->cycle < p->busy_until[i])
+			s |= bm[i];
+	avr->data[addr] = s;
+	return s;
 }
 
 static uint8_t
@@ -328,7 +378,18 @@ avr_rtc_pitctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
 	avr_core_watch_write(avr, addr, v);
+	p->pit_busy_until = avr->cycle + rtc_sync_cpu(p);
 	avr_rtc_pit_reschedule(p);
+}
+
+/* PITSTATUS: PITCTRLA synchronisation-busy bit, computed from the deadline. */
+static uint8_t
+avr_rtc_pitstatus_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
+{
+	avr_rtc_t *p = (avr_rtc_t *)param;
+	uint8_t s = (avr->cycle < p->pit_busy_until) ? PIT_CTRLBUSY_bm : 0;
+	avr->data[addr] = s;
+	return s;
 }
 
 static void
@@ -365,6 +426,9 @@ avr_rtc_reset(avr_io_t *io)
 	p->ev_target = 0;
 	p->pit_start = 0;
 	p->pit_cpc = 0;
+	for (int i = 0; i < 4; i++)
+		p->busy_until[i] = 0;
+	p->pit_busy_until = 0;
 
 	/* PER resets to 0xFFFF (full 16-bit range); everything else to 0. */
 	avr->data[p->r_per] = 0xff;
@@ -393,6 +457,7 @@ avr_rtc_init(
 	p->name = name;
 	p->base = base;
 	p->r_ctrla = base + RTCR_CTRLA;
+	p->r_status = base + RTCR_STATUS;
 	p->r_intctrl = base + RTCR_INTCTRL;
 	p->r_intflags = base + RTCR_INTFLAGS;
 	p->r_clksel = base + RTCR_CLKSEL;
@@ -400,6 +465,7 @@ avr_rtc_init(
 	p->r_per = base + RTCR_PERL;
 	p->r_cmp = base + RTCR_CMPL;
 	p->r_pitctrla = base + RTCR_PITCTRLA;
+	p->r_pitstatus = base + RTCR_PITSTATUS;
 	p->r_pitintctrl = base + RTCR_PITINTCTRL;
 	p->r_pitintflags = base + RTCR_PITINTFLAGS;
 
@@ -441,6 +507,8 @@ avr_rtc_init(
 	avr_register_io_write(avr, p->r_cnt, avr_rtc_cnt_write, p);
 	avr_register_io_write(avr, p->r_cnt + 1, avr_rtc_cnt_write, p);
 	avr_register_io_read(avr, p->r_cnt, avr_rtc_cnt_read, p);
+	avr_register_io_read(avr, p->r_status, avr_rtc_status_read, p);
+	avr_register_io_read(avr, p->r_pitstatus, avr_rtc_pitstatus_read, p);
 	avr_register_io_write(avr, p->r_pitctrla, avr_rtc_pitctrla_write, p);
 	avr_register_io_write(avr, p->r_pitintctrl, avr_rtc_pitintctrl_write, p);
 	avr_register_io_write(avr, p->r_pitintflags, avr_rtc_pitintflags_write, p);

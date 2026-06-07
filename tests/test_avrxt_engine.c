@@ -86,6 +86,13 @@ static void dac_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
 	g_dac_out = value;
 }
 
+static uint32_t g_dac_pin;
+static void dac_pin_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq; (void)param;
+	g_dac_pin = value;
+}
+
 /* Counts the rising edges (value==1) seen on an EVSYS user output. */
 static int g_evsys_pulses;
 static void evsys_count_hook(struct avr_irq_t *irq, uint32_t value, void *param)
@@ -1238,6 +1245,60 @@ int main(void)
 		check("no RTC counter event after disable", fired, 0);
 	}
 
+	printf("== modern RTC STATUS / PITSTATUS sync-busy (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t R = 0x140;
+		enum { RTCEN = 0x01, PITEN = 0x01 };
+		enum { CTRLABUSY = 0x01, CNTBUSY = 0x02, PERBUSY = 0x04, CMPBUSY = 0x08 };
+		enum { PIT_CTRLBUSY = 0x01 };
+		/* CLK_PER=3.333MHz, RTC src=32.768kHz => ~101 CPU cycles per RTC tick;
+		 * the 2-cycle sync latency is ~203 CPU cycles (DS40002205A 23.12.2). */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+		cpu_write(m, R + RTCR_CLKSEL, 0x00);		/* INT32K */
+
+		/* STATUS reads 0 (idle) before any write. */
+		check("STATUS idle before writes", cpu_read(m, R + RTCR_STATUS), 0);
+
+		/* A CTRLA write asserts CTRLABUSY for the sync window. */
+		cpu_write(m, R + RTCR_CTRLA, RTCEN);
+		check("CTRLABUSY set right after CTRLA write",
+			  !!(cpu_read(m, R + RTCR_STATUS) & CTRLABUSY), 1);
+
+		long s = (long)m->cycle;
+		while ((long)m->cycle - s < 50) avr_run(m);	/* < 2 RTC cycles */
+		check("CTRLABUSY still set mid-sync",
+			  !!(cpu_read(m, R + RTCR_STATUS) & CTRLABUSY), 1);
+
+		while ((long)m->cycle - s < 260) avr_run(m);	/* past the sync latency */
+		check("CTRLABUSY clears after ~2 RTC cycles",
+			  !!(cpu_read(m, R + RTCR_STATUS) & CTRLABUSY), 0);
+
+		/* Each synchronised register asserts its own busy bit. */
+		cpu_write(m, R + RTCR_CNTL, 0);
+		check("CNTBUSY set after CNT write",
+			  !!(cpu_read(m, R + RTCR_STATUS) & CNTBUSY), 1);
+		cpu_write(m, R + RTCR_PERL, 8);
+		check("PERBUSY set after PER write",
+			  !!(cpu_read(m, R + RTCR_STATUS) & PERBUSY), 1);
+		cpu_write(m, R + RTCR_CMPL, 4);
+		check("CMPBUSY set after CMP write",
+			  !!(cpu_read(m, R + RTCR_STATUS) & CMPBUSY), 1);
+
+		/* PITCTRLA write asserts PITSTATUS.CTRLBUSY, clearing after the sync. */
+		cpu_write(m, R + RTCR_PITCTRLA, PITEN);
+		check("PIT CTRLBUSY set after PITCTRLA write",
+			  !!(cpu_read(m, R + RTCR_PITSTATUS) & PIT_CTRLBUSY), 1);
+		long p0 = (long)m->cycle;
+		while ((long)m->cycle - p0 < 260) avr_run(m);
+		check("PIT CTRLBUSY clears after ~2 RTC cycles",
+			  !!(cpu_read(m, R + RTCR_PITSTATUS) & PIT_CTRLBUSY), 0);
+	}
+
 	printf("== modern RTC_CNT interrupt gating (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t R = 0x140;
@@ -1729,12 +1790,37 @@ int main(void)
 		check("STATE 1 vs VREF (2000 > 1100)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
 		avr_raise_irq(ainp0, 800);			/* 800 < 1100 */
 		check("STATE 0 vs VREF (800 < 1100)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+
+		/* Input hysteresis (CTRLA.HYSMODE = 0x2 => ±25 mV). With V- = 1000 mV,
+		 * the output holds until V+ crosses by more than the band
+		 * (DS40002205A 29.3.2.1 / 29.5.1). */
+		enum { HYSMODE_25 = 0x04 };
+		cpu_write(m, C + ACR_INTCTRL, 0x00);		/* no interrupt for this part */
+		cpu_write(m, C + ACR_MUXCTRLA, 0x00);		/* PIN0/PIN0, not inverted */
+		avr_raise_irq(ainn0, 1000);
+		avr_raise_irq(ainp0, 900);			/* start clearly low */
+		cpu_write(m, C + ACR_CTRLA, ENABLE | HYSMODE_25);
+		check("hyst: STATE 0 at V+=900", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+
+		avr_raise_irq(ainp0, 1010);			/* +10 mV: inside band */
+		check("hyst: holds low at V+=1010 (<+25)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+		avr_raise_irq(ainp0, 1030);			/* +30 mV: crosses +band */
+		check("hyst: flips high at V+=1030 (>+25)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+		avr_raise_irq(ainp0, 990);			/* -10 mV: inside band */
+		check("hyst: holds high at V+=990 (>-25)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
+		avr_raise_irq(ainp0, 970);			/* -30 mV: crosses -band */
+		check("hyst: flips low at V+=970 (<-25)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
+
+		/* HYSMODE OFF: the same +10 mV crossing flips immediately. */
+		cpu_write(m, C + ACR_CTRLA, ENABLE);		/* HYSMODE = OFF */
+		avr_raise_irq(ainp0, 1010);
+		check("no hyst: flips high at V+=1010", !!(cpu_read(m, C + ACR_STATUS) & STATE), 1);
 	}
 
 	printf("== modern DAC0 (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t D = 0x6a0;
-		enum { ENABLE = 0x01 };
+		enum { ENABLE = 0x01, OUTEN = 0x40 };
 		/* default vref = 1100 mV; out = DATA * 1100 / 256. */
 
 		avr_t *m = avr_make_mcu_by_name("attiny3217");
@@ -1744,9 +1830,13 @@ int main(void)
 		memset(m->flash, 0, 0x2000);
 
 		g_dac_out = 0xffffffff;
+		g_dac_pin = 0xffffffff;
 		avr_irq_register_notify(
 			avr_io_getirq(m, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
 			dac_capture_hook, NULL);
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_PIN),
+			dac_pin_capture_hook, NULL);
 
 		/* DATA written while disabled produces no output. */
 		cpu_write(m, D + DACR_DATA, 128);
@@ -1768,6 +1858,26 @@ int main(void)
 		cpu_write(m, D + DACR_DATA, 200);
 		cpu_write(m, D + DACR_CTRLA, 0x00);
 		check("DAC out 0 after disable", g_dac_out, 0);
+
+		/* Output buffer (OUTEN): the internal OUT signal is available whenever
+		 * ENABLE=1, but the pin is driven only when OUTEN=1 as well
+		 * (DS40002205A 31.3.2.3). */
+		g_dac_pin = 0xffffffff;
+		cpu_write(m, D + DACR_DATA, 128);
+		cpu_write(m, D + DACR_CTRLA, ENABLE);		/* ENABLE, OUTEN=0 */
+		check("internal OUT driven without OUTEN", g_dac_out, 550);
+		check("pin NOT driven while OUTEN=0", g_dac_pin, 0xffffffff);
+
+		cpu_write(m, D + DACR_CTRLA, ENABLE | OUTEN);	/* enable output buffer */
+		check("pin driven once OUTEN=1", g_dac_pin, 550);
+
+		cpu_write(m, D + DACR_DATA, 64);		/* 64*1100/256 = 275 mV */
+		check("pin tracks DATA with OUTEN", g_dac_pin, 275);
+		check("internal OUT also tracks DATA", g_dac_out, 275);
+
+		cpu_write(m, D + DACR_CTRLA, ENABLE);		/* drop OUTEN */
+		check("pin released to 0 when OUTEN cleared", g_dac_pin, 0);
+		check("internal OUT unaffected by OUTEN clear", g_dac_out, 275);
 	}
 
 	printf("== modern DAC0 -> AC0 routing (sim_tiny3217) ==\n");
@@ -2220,6 +2330,12 @@ int main(void)
 		avr_init(m);
 		memset(m->flash, 0, 0x2000);	/* NOPs */
 
+		/* Default CTRLA.CLKSEL = OSC20M (unprescaled). Disable the main-clock
+		 * prescaler so CLK_PER = OSC20M = 20 MHz and one TCD count == one
+		 * CLK_PER cycle, keeping the cycle counts below source-independent. */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x61, 0x00);	/* MCLKCTRLB: PEN=0 -> 20 MHz */
+
 		/* The double-buffered sync logic always reports ready. */
 		check("TCD STATUS ready (ENRDY|CMDRDY)",
 			  cpu_read(m, T + TCDR_STATUS) & (ENRDY | CMDRDY), ENRDY | CMDRDY);
@@ -2268,6 +2384,54 @@ int main(void)
 			if (m->data[T + TCDR_INTFLAGS] & OVF) t2 = (long)m->cycle;
 		}
 		check("SYNCPRES/2 period ~202 cycles", (t2 - base) >= 198 && (t2 - base) <= 208, 1);
+	}
+
+	printf("== modern TCD0 clock source (CTRLA.CLKSEL) (sim_tiny3217) ==\n");
+	{
+		/* With the default main-clock prescaler (OSC20M/6 = 3.333 MHz CLK_PER),
+		 * a SYSCLK-clocked TCD tracks CLK_PER while an OSC20M-clocked TCD runs
+		 * from the unprescaled 20 MHz oscillator -> ~6x faster. Use CNTPRES=32
+		 * so the faster source is still representable in whole CLK_PER cycles.
+		 * (DS40002205A 22.5.1 CLKSEL; 22.2.1 clock selection.) */
+		const avr_io_addr_t T = 0xa80;
+		enum { ENABLE = 0x01, CNTPRES_DIV32 = (2 << 3) };
+		enum { CLKSEL_OSC20M = (0 << 5), CLKSEL_SYSCLK = (3 << 5) };
+		enum { OVF = 0x01 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+		check("default CLK_PER = 20M/6", m->frequency, 3333333);
+
+		/* TOP = 100 -> 101 counts; CNTPRES=32 -> 32 source ticks per count. */
+		cpu_write(m, T + TCDR_CMPBCLRL, 100);
+		cpu_write(m, T + TCDR_CMPBCLRH, 0);
+		cpu_write(m, T + TCDR_INTCTRL, OVF);
+
+		/* SYSCLK: period = 101 * 32 CLK_PER cycles = 3232. */
+		long s0 = (long)m->cycle, sovf = -1;
+		cpu_write(m, T + TCDR_CTRLA, ENABLE | CNTPRES_DIV32 | CLKSEL_SYSCLK);
+		for (int i = 0; i < 4000 && sovf < 0; i++) {
+			avr_run(m);
+			if (m->data[T + TCDR_INTFLAGS] & OVF) sovf = (long)m->cycle;
+		}
+		check("SYSCLK period ~3232 cycles",
+			  (sovf - s0) >= 3200 && (sovf - s0) <= 3264, 1);
+
+		/* Restart on OSC20M: 20 MHz / 3.333 MHz = 6x faster.
+		 * 101 * round(32/6=5.33)=5 = 505 CLK_PER cycles. */
+		cpu_write(m, T + TCDR_CTRLA, 0x00);
+		cpu_write(m, T + TCDR_INTFLAGS, OVF);
+		long o0 = (long)m->cycle, oovf = -1;
+		cpu_write(m, T + TCDR_CTRLA, ENABLE | CNTPRES_DIV32 | CLKSEL_OSC20M);
+		for (int i = 0; i < 4000 && oovf < 0; i++) {
+			avr_run(m);
+			if (m->data[T + TCDR_INTFLAGS] & OVF) oovf = (long)m->cycle;
+		}
+		check("OSC20M period ~505 cycles (6x faster than SYSCLK)",
+			  (oovf - o0) >= 480 && (oovf - o0) <= 530, 1);
 	}
 
 	printf("== modern TCD0 waveform output / One Ramp PWM (sim_tiny3217) ==\n");

@@ -5,14 +5,19 @@
 	tinyAVR 1-series, also megaAVR-0 and AVR Dx families).
 
 	Models the converted output voltage: when CTRLA.ENABLE is set, the output is
-	(DATA / 256) * VREF millivolts, otherwise 0. The value is published (in
-	millivolts) on the OUT IRQ whenever it changes, so it can feed the analog
-	comparator (AC's DAC input), the ADC, or be observed by a test/board. The DAC
-	has no interrupt.
+	(DATA / 256) * VREF millivolts, otherwise 0. Two outputs are distinguished
+	(DS40002205A 31.3.2.3):
+	  - OUT : the internal signal to the AC and ADC, available whenever ENABLE=1
+	          (independent of the pin buffer);
+	  - PIN : the buffered output on the OUT pin, driven only when ENABLE=1 *and*
+	          the output buffer is enabled (CTRLA.OUTEN).
+	Each is published (in millivolts) on its IRQ whenever it changes, so it can
+	feed the comparator (AC's DAC input), the ADC, or be observed by a test/board.
+	The DAC has no interrupt.
 
-	Not modelled: the physical output pin buffer (CTRLA.OUTEN — the OUT IRQ is
-	always emitted), run-standby, and exact reference selection (the VREF
-	peripheral — a plain settable vref_mv is used instead).
+	Not modelled: run-standby power/timing (no power or sleep-mode-gating model),
+	output-buffer start-up time, and exact reference selection (the VREF
+	peripheral drives a settable vref_mv; conversion is the ideal digital->mV).
 
 	Copyright 2026 simavr authors
 
@@ -47,9 +52,11 @@ enum {
 	DACR_DATA = 0x01,
 };
 
-/* IRQ: the converted output voltage (millivolts). */
+/* IRQs: the converted output voltage (millivolts). OUT is the internal signal
+ * (ENABLE-gated, feeds AC/ADC); PIN is the buffered pin output (ENABLE+OUTEN). */
 enum {
 	AVR_DAC_IRQ_OUT = 0,
+	AVR_DAC_IRQ_PIN,
 	AVR_DAC_IRQ_COUNT,
 };
 
@@ -61,7 +68,8 @@ typedef struct avr_dac_t {
 	avr_io_addr_t	r_ctrla, r_data;
 
 	uint32_t	vref_mv;	/* reference voltage in mV (default 1100) */
-	uint32_t	out_mv;		/* last published output (mV) */
+	uint32_t	out_mv;		/* last published internal output (mV) */
+	uint32_t	pin_mv;		/* last published pin-buffer output (mV) */
 } avr_dac_t;
 
 /*

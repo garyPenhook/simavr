@@ -407,8 +407,9 @@ tinyx1_init(struct avr_t * avr)
 			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_ADC0_MV),
 			tinyx1_vref_to_adc, mcu);
 
-	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector. */
-	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, '0');
+	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector.
+	 * OSCCFG fuse index 2 resolves the OSC20M base for CLKSEL=OSC20M. */
+	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, 2, '0');
 
 	/* TCD0 WOA/WOB feed CCL INSEL 0x9 (DS40002205A p.413-415: IN0/IN2->WOA,
 	 * IN1->WOB). */

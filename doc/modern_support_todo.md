@@ -17,12 +17,12 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 
 | Module | Sev | Gap (what is NOT fully supported) | Model |
 |---|---|---|---|
-| AC (Analog Comparator) | [F] | hysteresis; low-power / run-standby timing; physical pin-level behavior | `avr_ac.c` |
-| DAC | [F] | output-buffer behavior; run-standby; reference behavior (only digital→mV) | `avr_dac.c` |
+| AC (Analog Comparator) | [P] | input hysteresis (HYSMODE ±10/±25/±50 mV) now modelled with a held-state band; *remaining:* low-power / run-standby power+timing (no power or sleep-mode-gating model), physical output-pin buffer (OUTEN) | `avr_ac.c` |
+| DAC | [P] | output buffer (OUTEN) now modelled: a separate pin output, gated by ENABLE+OUTEN, distinct from the ENABLE-only internal OUT to AC/ADC. *Remaining:* run-standby power/timing (no model hook), output-buffer start-up time; conversion stays the ideal digital→mV | `avr_dac.c` |
 | CCL | [F] | event/peripheral INSEL sources decoded per family (tinyAVR-1 / megaAVR-0 maps verified across DS40002204/05/72/73/74/88/2287) and resolved from cached levels. Live wiring in the core templates: **AC0-2 OUT** (tinyAVR-1) and **AC0 OUT** (megaAVR-0) and **TCD0 WOA/WOB** (tinyAVR-1) now auto-connect to the CCL sources. **Not yet wired:** TCA0 WO0-2, TCB0-2 WO, USART TXD/XCK, SPI lines (need new waveform/line-level output IRQs in those models), and EVSYS EVENT0/1 (CCL not yet an EVSYS user); filter variants; sequencer corner cases; `tick_ctx` typing | `avr_ccl.c`, `sim_tinyx1.h`, `sim_megax08.h` |
-| TCD | [F] | clock source approximated as CLK_PER (no dedicated/PLL clock or its prescale); 4 WGM modes work | `avr_tcd.c` |
-| RTC / PIT | [F] | SYNCBUSY / PITSTATUS sync bits simplified; CRYSTERR & external-clock pins not modelled; CLK_PER change not retro-applied until reconfig | `avr_rtc.c` |
-| BOD / VLM | [F] | brown-out **reset** effect not modelled (VLM voltage monitor is modelled) | `avr_bod.c` |
+| TCD | [P] | clock source now decoded from CTRLA.CLKSEL — **OSC20M** (unprescaled internal osc, from OSCCFG fuse) and **SYSCLK** (CLK_PER) modelled, scaled by CLK_PER/f_TCD; 4 WGM modes work. *Remaining:* no EXTCLK pin and no dedicated/PLL clock; sub-CLK_PER count resolution not representable (rounded/clamped to ≥1 cycle/count) | `avr_tcd.c` |
+| RTC / PIT | [P] | STATUS (CTRLA/CNT/PER/CMP) & PITSTATUS (CTRLBUSY) sync-busy bits now asserted for the documented 2-RTC-clock-cycle latency, so busy-polls spin realistically. *Remaining:* CRYSTERR & external-clock pins not modelled; CLK_PER change not retro-applied until reconfig; write-during-busy not blocked | `avr_rtc.c` |
+| BOD / VLM | ✓ | brown-out **reset** modelled: VDD below CTRLB.LVL while enabled invokes a handler the cores wire to RSTCTRL (resets, records RSTFR.BORF); VLM monitor also modelled. Host-tested. No known functional gap | `avr_bod.c` |
 | USART | [P] | exact one-wire / line-level timing (async TX/RX, sync timing, loopback all work) | `avr_usart_modern.c` |
 | SPI | [P] | pin-contention / electrical realism (buffered protocol is complete) | `avr_spi_modern.c` |
 | TCB | [P] | first-period scheduling when enabled with non-zero CNT; filter/edge callback cost on static inputs | `avr_tcb.c` |
@@ -109,12 +109,28 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
    TXD/XCK and SPI SCK/MOSI/MISO need line-level output IRQs (overlaps the USART
    [P] line-timing gap); EVSYS EVENT0/1 need the CCL added as an EVSYS user.
    [F]
-2. **TCD clock source** — model the dedicated TCD clock / prescale instead of
-   CLK_PER, so TCD periods match firmware expectations. All 15 tinyAVR-1. [F]
-3. **AC hysteresis + run-standby** — needed for realistic comparator firmware.
-   All 23 micros. [F]
-4. **DAC output-buffer / reference behavior** — all 15 tinyAVR-1. [F]
-5. **RTC SYNCBUSY/PITSTATUS + external-clock pins** — all 23 micros. [F]
-6. **BOD brown-out reset** — all 23 micros. [F]
+2. **TCD clock source** — *done.* CTRLA.CLKSEL is decoded: OSC20M (unprescaled
+   internal oscillator, resolved from the OSCCFG fuse) and SYSCLK (CLK_PER) are
+   modelled, with the schedule scaled by CLK_PER/f_TCD so a prescaled main clock
+   no longer drags an OSC20M-clocked TCD. Host-tested in `test_avrxt_engine.c`.
+   *Remaining (downgraded to [P]):* EXTCLK pin and a dedicated/PLL TCD clock;
+   sub-CLK_PER count resolution. All 15 tinyAVR-1. [P]
+3. **AC hysteresis** — *done.* CTRLA.HYSMODE (±10/±25/±50 mV) modelled as a
+   held-state input band; host-tested in `test_avrxt_engine.c`. Run-standby /
+   low-power are power/timing fidelity with no model hook (the simulator has no
+   power model and only a shallow sleep model), so they stay unmodelled. All 23
+   micros. [P]
+4. **DAC output buffer** — *done.* CTRLA.OUTEN now gates a distinct pin output
+   (ENABLE+OUTEN), separate from the ENABLE-only internal OUT that feeds AC/ADC
+   (DS40002205A 31.3.2.3); host-tested. Run-standby/start-up timing stay
+   unmodelled (no power model). All 15 tinyAVR-1. [P]
+5. **RTC SYNCBUSY/PITSTATUS** — *done.* STATUS (CTRLABUSY/CNTBUSY/PERBUSY/
+   CMPBUSY) and PITSTATUS (CTRLBUSY) now assert for the documented 2-RTC-clock
+   sync latency (DS40002205A 23.12.2), converted to CPU cycles; host-tested.
+   External-clock pins / CRYSTERR remain unmodelled. All 23 micros. [P]
+6. **BOD brown-out reset** — *already done* (commit 2476c96, datasheet-verified
+   levels, host-tested): VDD below the BOD level invokes a handler the cores
+   wire to RSTCTRL, resetting and recording RSTFR.BORF. The stale "not modelled"
+   notes have been corrected. All 23 micros. ✓
 7. Polish [P]: USART line-level timing, SPI pin contention, TCB first-period
    scheduling, EVSYS generator-source encodings, ADC exact timing.

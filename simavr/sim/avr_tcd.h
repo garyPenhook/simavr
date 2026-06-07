@@ -6,9 +6,13 @@
 	high-resolution PWM; this models its periodic-overflow use together with the
 	four waveform-generation modes.
 
-	The counter runs from a prescaled clock (CLKSEL -> SYNCPRES -> CNTPRES) and,
-	in one-ramp operation, completes a cycle every (CMPBCLR + 1) counts, at which
-	point the OVF flag is set and TCD0_OVF raised (if enabled). The double-
+	The counter runs from the selected TCD clock source (CTRLA.CLKSEL: the
+	unprescaled OSC20M, or the System Clock CLK_PER) divided by SYNCPRES then
+	CNTPRES. Because the source can differ from CLK_PER, a prescaled main clock
+	makes an OSC20M-clocked TCD run faster than the CPU; the model scales the
+	schedule by CLK_PER / f_TCD accordingly. In one-ramp operation it completes a
+	cycle every (CMPBCLR + 1) counts, at which point the OVF flag is set and
+	TCD0_OVF raised (if enabled). The double-
 	buffered enable/command protocol is satisfied by reporting STATUS.ENRDY and
 	CMDRDY always ready, so the usual `while (!(TCD0.STATUS & ENRDY))` polling
 	passes.
@@ -19,8 +23,10 @@
 	FAULTCTRL (CMPAEN/CMPBEN) — so a board/test can observe the generated PWM.
 
 	Not modelled: TRIGA/TRIGB compare events, dithering, fault input, input
-	capture, and the exact TCD clock source (approximated as CLK_PER); those
-	registers still store.
+	capture, the EXTCLK source (no external-clock pin), and the dedicated TCD/PLL
+	clock; those registers still store. The OSC20M and SYSCLK sources are modelled
+	(CLKSEL), but sub-CLK_PER count resolution is not representable so the
+	per-count schedule is rounded to whole CLK_PER cycles.
 
 	Copyright 2026 simavr authors
 
@@ -82,9 +88,11 @@ typedef struct avr_tcd_t {
 
 	avr_int_vector_t	ovf;	/* TCDn_OVF */
 
+	uint32_t		freq_osc20m;	/* unprescaled OSC20M, for CLKSEL=OSC20M */
+
 	avr_cycle_count_t	start_cycle;
 	int32_t			start_count;
-	uint32_t		prescale;	/* CPU cycles per TCD count */
+	uint32_t		prescale;	/* CLK_PER cycles per TCD count */
 	uint32_t		top;		/* CMPBCLR captured at start */
 	uint8_t			phase;
 	int8_t			dir;
@@ -95,7 +103,9 @@ typedef struct avr_tcd_t {
 
 /*
  * Initialise a TCD block at data address 'base'. 'vec_ovf' is the TCDn_OVF
- * vector; 'name' is a tag for debug.
+ * vector; 'name' is a tag for debug. 'osccfg_fuse_index' is the OSCCFG fuse
+ * index (0xff if none), used to resolve the OSC20M base frequency for the
+ * CLKSEL=OSC20M clock source.
  */
 void
 avr_tcd_init(
@@ -103,6 +113,7 @@ avr_tcd_init(
 		avr_tcd_t * p,
 		avr_io_addr_t base,
 		uint8_t vec_ovf,
+		uint8_t osccfg_fuse_index,
 		char name);
 
 #define AVR_IOCTL_TCD_GETIRQ(_name) AVR_IOCTL_DEF('t','c','d',(_name))

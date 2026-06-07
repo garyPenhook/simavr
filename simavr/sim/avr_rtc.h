@@ -71,9 +71,9 @@ typedef struct avr_rtc_t {
 	char		name;
 
 	avr_io_addr_t	base;
-	avr_io_addr_t	r_ctrla, r_intctrl, r_intflags, r_clksel;
+	avr_io_addr_t	r_ctrla, r_status, r_intctrl, r_intflags, r_clksel;
 	avr_io_addr_t	r_cnt, r_per, r_cmp;	/* 16-bit (low byte address) */
-	avr_io_addr_t	r_pitctrla, r_pitintctrl, r_pitintflags;
+	avr_io_addr_t	r_pitctrla, r_pitstatus, r_pitintctrl, r_pitintflags;
 
 	avr_int_vector_t	cnt_vect;	/* RTC_CNT (OVF + CMP share this vector) */
 	avr_int_vector_t	pit_vect;	/* RTC_PIT */
@@ -86,6 +86,12 @@ typedef struct avr_rtc_t {
 	/* PIT scheduler bookkeeping. */
 	avr_cycle_count_t	pit_start;	/* cycle the current PIT period began */
 	uint32_t		pit_cpc;	/* CPU cycles per PIT period */
+
+	/* Synchronization-busy deadlines (cycle until which the bit reads '1').
+	 * STATUS index = bit position: 0 CTRLABUSY, 1 CNTBUSY, 2 PERBUSY,
+	 * 3 CMPBUSY; pit_busy_until covers PITSTATUS.CTRLBUSY. */
+	avr_cycle_count_t	busy_until[4];
+	avr_cycle_count_t	pit_busy_until;
 } avr_rtc_t;
 
 /*

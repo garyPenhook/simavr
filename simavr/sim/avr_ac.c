@@ -34,6 +34,8 @@
 
 /* CTRLA */
 #define ENABLE_bm	0x01
+#define HYSMODE_gm	0x06
+#define HYSMODE_gp	1
 #define INTMODE_gm	0x30
 #define INTMODE_gp	4
 #define INTMODE_BOTHEDGE	0
@@ -75,12 +77,37 @@ static uint32_t ac_neg_mv(avr_ac_t *p)
 	return 0;
 }
 
-/* Combinational comparator output (0/1), honouring INVERT. */
+/* Hysteresis half-band (mV) per CTRLA.HYSMODE: OFF / ±10 / ±25 / ±50 mV
+ * (DS40002205A 29.5.1). */
+static int32_t ac_hyst_mv(avr_ac_t *p)
+{
+	static const uint8_t band[4] = { 0, 10, 25, 50 };
+	return band[(rd(p->io.avr, p->r_ctrla) & HYSMODE_gm) >> HYSMODE_gp];
+}
+
+/* Raw comparator level (pre-INVERT). With a non-OFF hysteresis band the output
+ * only flips once the inputs cross by more than ±band, so inputs within the
+ * band hold the previous level (DS40002205A 29.3.2.1). With the band OFF this
+ * is the strict V+ > V- comparison (unchanged behaviour). */
+static uint8_t ac_compute_raw(avr_ac_t *p)
+{
+	int32_t vp = (int32_t)ac_pos_mv(p);
+	int32_t vn = (int32_t)ac_neg_mv(p);
+	int32_t hyst = ac_hyst_mv(p);
+
+	if (hyst == 0)
+		return vp > vn;
+	if (p->prev_raw)
+		return (vn - vp > hyst) ? 0 : 1;	/* hold high until V+ < V- - band */
+	return (vp - vn > hyst) ? 1 : 0;		/* hold low until V+ > V- + band */
+}
+
+/* Comparator output (0/1), honouring INVERT. */
 static uint8_t ac_compute_state(avr_ac_t *p)
 {
 	if (!ac_enabled(p))
 		return 0;
-	uint8_t s = ac_pos_mv(p) > ac_neg_mv(p);
+	uint8_t s = ac_compute_raw(p);
 	if (rd(p->io.avr, p->r_muxctrla) & INVERT_bm)
 		s ^= 1;
 	return s;
@@ -91,6 +118,10 @@ static void ac_evaluate(avr_ac_t *p)
 {
 	avr_t *avr = p->io.avr;
 	uint8_t state = ac_compute_state(p);
+
+	/* Commit the hysteresis memory (raw pre-INVERT level) for next time;
+	 * ac_compute_state() above used the prior value, so this is consistent. */
+	p->prev_raw = ac_enabled(p) ? ac_compute_raw(p) : 0;
 
 	/* STATUS.STATE mirrors the live output (preserve the W1C CMP flag). */
 	uint8_t status = rd(avr, p->r_status) & ~STATE_bm;
@@ -190,6 +221,7 @@ avr_ac_reset(avr_io_t *io)
 {
 	avr_ac_t *p = (avr_ac_t *)io;
 	p->prev_state = 0;
+	p->prev_raw = 0;
 }
 
 static const char *irq_names[AVR_AC_IRQ_COUNT] = {

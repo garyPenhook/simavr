@@ -11,8 +11,13 @@
 	edge selected by CTRLA.INTMODE the STATUS.CMP flag is set and the AC
 	interrupt raised (if enabled), and the output is mirrored on an OUT IRQ.
 
-	Not modelled: hysteresis (CTRLA.HYSMODE), low-power / run-standby timing, the
-	physical output pin buffer (CTRLA.OUTEN — the OUT IRQ is always emitted).
+	Input hysteresis (CTRLA.HYSMODE) is modelled: with a non-OFF level the raw
+	comparator output only flips once the inputs cross by more than the ±band
+	(±10/±25/±50 mV), so inputs hovering within the band hold the last output.
+
+	Not modelled: low-power / run-standby power/timing behaviour (LPMODE,
+	RUNSTDBY — no power or sleep-mode-gating model), the physical output pin
+	buffer (CTRLA.OUTEN — the OUT IRQ is always emitted).
 
 	Copyright 2026 simavr authors
 
@@ -79,6 +84,7 @@ typedef struct avr_ac_t {
 	uint32_t	vref_mv;	/* internal reference (MUXNEG = VREF) */
 	uint32_t	dacref_mv;	/* DAC output (MUXNEG = DAC) */
 	uint8_t		prev_state;	/* last comparator output (for edge detect) */
+	uint8_t		prev_raw;	/* last raw level (pre-INVERT), hysteresis memory */
 	int			base_irq;	/* global irq number of AINP0 */
 } avr_ac_t;
 

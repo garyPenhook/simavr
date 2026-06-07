@@ -32,21 +32,32 @@
 
 /* CTRLA */
 #define ENABLE_bm	0x01
+#define OUTEN_bm	0x40
 
 static inline uint8_t rd(avr_t *avr, avr_io_addr_t a) { return avr->data[a]; }
 
-/* Recompute the output and publish it on OUT if it changed. */
+/* Recompute the outputs and publish each if it changed. */
 static void dac_update(avr_dac_t *p)
 {
 	avr_t *avr = p->io.avr;
+	uint8_t ctrla = rd(avr, p->r_ctrla);
 	uint32_t out = 0;
 
-	if (rd(avr, p->r_ctrla) & ENABLE_bm)
+	if (ctrla & ENABLE_bm)
 		out = (uint32_t)rd(avr, p->r_data) * p->vref_mv / 256;
 
+	/* Internal output (to AC/ADC): available whenever ENABLE=1. */
 	if (out != p->out_mv) {
 		p->out_mv = out;
 		avr_raise_irq(p->io.irq + AVR_DAC_IRQ_OUT, out);
+	}
+
+	/* Pin output buffer: driven only when ENABLE=1 *and* OUTEN=1; with the
+	 * buffer disabled the pin is not driven (DS40002205A 31.3.2.3). */
+	uint32_t pin = (ctrla & OUTEN_bm) ? out : 0;
+	if (pin != p->pin_mv) {
+		p->pin_mv = pin;
+		avr_raise_irq(p->io.irq + AVR_DAC_IRQ_PIN, pin);
 	}
 }
 
@@ -71,10 +82,12 @@ avr_dac_reset(avr_io_t *io)
 {
 	avr_dac_t *p = (avr_dac_t *)io;
 	p->out_mv = 0;
+	p->pin_mv = 0;
 }
 
 static const char *irq_names[AVR_DAC_IRQ_COUNT] = {
 	[AVR_DAC_IRQ_OUT] = ">dac.out",
+	[AVR_DAC_IRQ_PIN] = ">dac.pin",
 };
 
 static avr_io_t _io = {

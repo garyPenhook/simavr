@@ -7,8 +7,13 @@
 	millivolts) is compared against a threshold a margin above the BOD level, and
 	STATUS.VLMS / INTFLAGS.VLMIF / the BOD_VLM interrupt are driven from a VDD
 	crossing in the configured direction. CTRLA (except SLEEP) and CTRLB are
-	read-only and loaded from FUSE.BODCFG at reset. The brown-out *reset* effect
-	is not modelled.
+	read-only and loaded from FUSE.BODCFG at reset.
+
+	The brown-out *reset* effect is modelled: when the BOD is enabled and VDD
+	falls below the CTRLB.LVL threshold (1.8/2.6/4.2 V for LVL 0/2/7, DS40002205A
+	p.34), a registered brown-out handler is invoked once per downward crossing.
+	The core templates wire that handler to RSTCTRL so the device resets and the
+	cause is recorded in RSTFR.BORF (see avr_bod_set_brownout_handler).
 
 	Copyright 2026 simavr authors
 

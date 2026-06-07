@@ -44,6 +44,15 @@
 #define SYNCPRES_gp	1
 #define CNTPRES_gm	0x18
 #define CNTPRES_gp	3
+#define CLKSEL_gm	0x60
+#define CLKSEL_gp	5
+#define CLKSEL_OSC20M	0x0	/* unprescaled internal 16/20 MHz oscillator */
+#define CLKSEL_EXTCLK	0x2	/* external clock (no pin modelled) */
+#define CLKSEL_SYSCLK	0x3	/* System Clock = CLK_PER */
+
+/* OSCCFG fuse: FREQSEL selects the OSC20M base (matches avr_clkctrl.c). */
+#define FREQSEL_gm	0x03
+#define FREQSEL_16MHZ	0x01
 
 /* CTRLB */
 #define WGMODE_gm	0x03
@@ -224,14 +233,41 @@ static uint32_t tcd_next_delta(avr_tcd_t *p, int32_t count)
 	return next;
 }
 
-/* CPU cycles per TCD count: SYNCPRES (1/2/4/8) * CNTPRES (1/4/32). */
+/*
+ * CLK_PER cycles per TCD count. The counter advances on CLK_TCD divided by
+ * SYNCPRES (1/2/4/8) * CNTPRES (1/4/32) (DS40002205A 22.2.1, 22.5.1). simavr
+ * schedules in CLK_PER cycles, so convert by the ratio CLK_PER / f_TCD, where
+ * f_TCD is the CTRLA.CLKSEL source:
+ *   - SYSCLK : f_TCD = CLK_PER (ratio 1, the common case)
+ *   - OSC20M : the *unprescaled* 16/20 MHz oscillator, so a prescaled main
+ *              clock makes the TCD run faster than the CPU
+ *   - EXTCLK / reserved : no external-clock pin is modelled; track CLK_PER
+ * Sub-CLK_PER resolution is not representable, so the result is rounded and
+ * clamped to >= 1 cycle/count.
+ */
 static uint32_t tcd_prescale(avr_tcd_t *p)
 {
 	avr_t *avr = p->io.avr;
-	uint32_t sync = 1u << ((rd(avr, p->r_ctrla) & SYNCPRES_gm) >> SYNCPRES_gp);
+	uint8_t ctrla = rd(avr, p->r_ctrla);
+	uint32_t sync = 1u << ((ctrla & SYNCPRES_gm) >> SYNCPRES_gp);
 	static const uint8_t cnt[4] = { 1, 4, 32, 32 };
-	uint32_t c = cnt[(rd(avr, p->r_ctrla) & CNTPRES_gm) >> CNTPRES_gp];
-	return sync * c;
+	uint32_t c = cnt[(ctrla & CNTPRES_gm) >> CNTPRES_gp];
+	uint32_t div = sync * c;
+
+	uint32_t clk_per = avr->frequency ? avr->frequency : 1;
+	uint32_t f_tcd;
+	switch ((ctrla & CLKSEL_gm) >> CLKSEL_gp) {
+	case CLKSEL_OSC20M:
+		f_tcd = p->freq_osc20m ? p->freq_osc20m : clk_per;
+		break;
+	case CLKSEL_SYSCLK:
+	default:	/* EXTCLK and reserved: unmodelled, track CLK_PER */
+		f_tcd = clk_per;
+		break;
+	}
+
+	uint64_t cyc = ((uint64_t)div * clk_per + f_tcd / 2) / f_tcd;
+	return cyc < 1 ? 1 : (uint32_t)cyc;
 }
 
 static avr_cycle_count_t
@@ -401,12 +437,19 @@ avr_tcd_init(
 		avr_tcd_t * p,
 		avr_io_addr_t base,
 		uint8_t vec_ovf,
+		uint8_t osccfg_fuse_index,
 		char name)
 {
 	memset(p, 0, sizeof(*p));
 	p->io = _io;
 	p->name = name;
 	p->base = base;
+
+	/* Resolve the OSC20M base from the OSCCFG fuse (matches avr_clkctrl.c). */
+	uint8_t osccfg = (osccfg_fuse_index == 0xff) ? 0 :
+					 avr->fuse[osccfg_fuse_index];
+	p->freq_osc20m = ((osccfg & FREQSEL_gm) == FREQSEL_16MHZ) ?
+					 16000000 : 20000000;
 	p->r_ctrla = base + TCDR_CTRLA;
 	p->r_ctrlb = base + TCDR_CTRLB;
 	p->r_intctrl = base + TCDR_INTCTRL;
