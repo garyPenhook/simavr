@@ -33,13 +33,13 @@
 #endif
 
 #ifndef _AVR_IOXXX_H_
-#  define _AVR_IOXXX_H_ "iom1608.h"
+#  define _AVR_IOXXX_H_ "iom808.h"
 #else
 #  error "Attempt to include more than one <avr/ioXXX.h> file."
 #endif
 
-#ifndef _AVR_ATMEGA1608_H_INCLUDED
-#define _AVR_ATMEGA1608_H_INCLUDED
+#ifndef _AVR_ATMEGA808_H_INCLUDED
+#define _AVR_ATMEGA808_H_INCLUDED
 
 /* Ungrouped common registers */
 #define CCP  _SFR_MEM8(0x0034)  /* Configuration Change Protection */
@@ -4759,10 +4759,10 @@ IO Module Instances. Mapped to memory.
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define DATAMEM_START     (0x0000)
-#  define DATAMEM_SIZE      (16384)
+#  define DATAMEM_SIZE      (8192)
 #else
 #  define DATAMEM_START     (0x0000U)
-#  define DATAMEM_SIZE      (16384U)
+#  define DATAMEM_SIZE      (8192U)
 #endif
 #define DATAMEM_END       (DATAMEM_START + DATAMEM_SIZE - 1)
 
@@ -4850,34 +4850,34 @@ IO Module Instances. Mapped to memory.
 #define MAPPED_EEPROM_END       (MAPPED_EEPROM_START + MAPPED_EEPROM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
-#  define INTERNAL_SRAM_START     (0x3800)
-#  define INTERNAL_SRAM_SIZE      (2048)
+#  define INTERNAL_SRAM_START     (0x3C00)
+#  define INTERNAL_SRAM_SIZE      (1024)
 #  define INTERNAL_SRAM_PAGE_SIZE (0)
 #else
-#  define INTERNAL_SRAM_START     (0x3800U)
-#  define INTERNAL_SRAM_SIZE      (2048U)
+#  define INTERNAL_SRAM_START     (0x3C00U)
+#  define INTERNAL_SRAM_SIZE      (1024U)
 #  define INTERNAL_SRAM_PAGE_SIZE (0U)
 #endif
 #define INTERNAL_SRAM_END       (INTERNAL_SRAM_START + INTERNAL_SRAM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define MAPPED_PROGMEM_START     (0x4000)
-#  define MAPPED_PROGMEM_SIZE      (16384)
+#  define MAPPED_PROGMEM_SIZE      (8192)
 #  define MAPPED_PROGMEM_PAGE_SIZE (64)
 #else
 #  define MAPPED_PROGMEM_START     (0x4000U)
-#  define MAPPED_PROGMEM_SIZE      (16384U)
+#  define MAPPED_PROGMEM_SIZE      (8192U)
 #  define MAPPED_PROGMEM_PAGE_SIZE (64U)
 #endif
 #define MAPPED_PROGMEM_END       (MAPPED_PROGMEM_START + MAPPED_PROGMEM_SIZE - 1)
 
 #if (defined(__ASSEMBLER__) || defined(__IAR_SYSTEMS_ASM__))
 #  define PROGMEM_START     (0x0000)
-#  define PROGMEM_SIZE      (16384)
+#  define PROGMEM_SIZE      (8192)
 #  define PROGMEM_PAGE_SIZE (64)
 #else
 #  define PROGMEM_START     (0x0000U)
-#  define PROGMEM_SIZE      (16384U)
+#  define PROGMEM_SIZE      (8192U)
 #  define PROGMEM_PAGE_SIZE (64U)
 #endif
 #define PROGMEM_END       (PROGMEM_START + PROGMEM_SIZE - 1)
@@ -4960,8 +4960,8 @@ IO Module Instances. Mapped to memory.
 
 /* ========== Signature ========== */
 #define SIGNATURE_0 0x1E
-#define SIGNATURE_1 0x94
-#define SIGNATURE_2 0x27
+#define SIGNATURE_1 0x93
+#define SIGNATURE_2 0x26
 
-#endif /* #ifdef _AVR_ATMEGA1608_H_INCLUDED */
+#endif /* #ifdef _AVR_ATMEGA808_H_INCLUDED */
 
