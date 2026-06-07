@@ -213,6 +213,12 @@ avr_ac_set_refs(avr_ac_t * p, uint32_t vref_mv, uint32_t dacref_mv)
 {
 	p->vref_mv = vref_mv;
 	p->dacref_mv = dacref_mv;
+	/* The negative input (VREF/DAC) is a comparator input, so a reference
+	 * change re-evaluates the output and can raise OUT / a CMP edge, just like
+	 * a pin change (DS40002205A p.417 §29.2: output reflects input changes).
+	 * Previously only the STATUS read recomputed STATE, so OUT/CMP missed
+	 * reference-driven crossings. */
+	ac_evaluate(p);
 }
 
 void
