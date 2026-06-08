@@ -58,6 +58,7 @@ enum {
 	AVR_NVM_SEC_NONE = 0,
 	AVR_NVM_SEC_EE,
 	AVR_NVM_SEC_FLASH,
+	AVR_NVM_SEC_USERROW,
 };
 
 typedef struct avr_nvmctrl_t {
@@ -69,6 +70,9 @@ typedef struct avr_nvmctrl_t {
 
 	avr_io_addr_t	ee_start;	// data address of mapped EEPROM byte 0
 	uint16_t	ee_size;	// EEPROM size in bytes
+
+	avr_io_addr_t	uro_start;	// data address of mapped USERROW byte 0 (0 = none)
+	uint16_t	uro_size;	// USERROW size in bytes
 
 	avr_io_addr_t	flash_start;	// data address of mapped flash byte 0 (0 = none)
 	uint32_t	flash_size;	// flash size in bytes
@@ -116,6 +120,19 @@ avr_nvmctrl_set_flash(
 		avr_io_addr_t flash_start,
 		uint32_t flash_size,
 		uint16_t flash_page);
+
+/*
+ * Enable the USERROW NVM section, mapped into the data space at 'uro_start'
+ * ('uro_size' bytes). USERROW is "one extra page of EEPROM" (DS40002205A 6.6):
+ * the CPU writes/reads it as normal EEPROM (page-buffer + PAGEWRITE/PAGEERASE/
+ * PAGEERASEWRITE/PAGEBUFCLR commands), it persists across reset, and it is NOT
+ * affected by a chip erase. Reuses the shared EEPROM page buffer.
+ */
+void
+avr_nvmctrl_set_userrow(
+		avr_nvmctrl_t * p,
+		avr_io_addr_t uro_start,
+		uint16_t uro_size);
 
 #ifdef __cplusplus
 };

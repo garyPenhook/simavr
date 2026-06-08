@@ -1378,6 +1378,65 @@ int main(void)
 		#undef NVM_RUN
 	}
 
+	printf("== modern NVMCTRL / USERROW (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t NV = 0x1000, EE = 0x1400, URO = 0x1300;
+		enum { CTRLA = 0x00, STATUS = 0x02 };
+		enum { CMD_PAGEWRITE = 1, CMD_PAGEERASE = 2, CMD_PAGEERASEWRITE = 3,
+			   CMD_CHIPERASE = 5 };
+		enum { EEBUSY = 0x02 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+		#define NVM_RUN() do { for (int i = 0; i < 200; i++) avr_run(m); } while (0)
+
+		/* USERROW is "one extra page of EEPROM" (DS40002205A 6.6): erased = 0xFF,
+		 * written via the EEPROM page-buffer + commands, persistent, and not
+		 * affected by chip erase. */
+		check("erased USERROW reads 0xFF", cpu_read(m, URO + 3), 0xff);
+
+		/* A write loads the buffer but does not commit. */
+		cpu_write(m, URO + 3, 0x5a);
+		check("USERROW unchanged before command", cpu_read(m, URO + 3), 0xff);
+
+		/* CCP + PAGEWRITE commits to USERROW (EEBUSY like EEPROM). */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEWRITE);
+		check("USERROW PAGEWRITE commits byte", cpu_read(m, URO + 3), 0x5a);
+		check("USERROW op asserts EEBUSY", !!(m->data[NV + STATUS] & EEBUSY), 1);
+		NVM_RUN();
+
+		/* USERROW and EEPROM are independent regions. */
+		cpu_write(m, EE + 3, 0x11);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEERASEWRITE);	/* last write = EEPROM */
+		NVM_RUN();
+		check("EEPROM write did not disturb USERROW", cpu_read(m, URO + 3), 0x5a);
+
+		/* CHIPERASE wipes EEPROM but NOT USERROW (DS40002205A 6.6). */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_CHIPERASE);
+		NVM_RUN();
+		check("CHIPERASE wipes EEPROM", cpu_read(m, EE + 3), 0xff);
+		check("CHIPERASE leaves USERROW intact", cpu_read(m, URO + 3), 0x5a);
+
+		/* USERROW persists across reset. */
+		avr_reset(m);
+		check("USERROW persists across reset", cpu_read(m, URO + 3), 0x5a);
+
+		/* PAGEERASE sets the buffered USERROW bytes back to 0xFF. */
+		cpu_write(m, URO + 3, 0x00);	/* load buffer (value irrelevant for erase) */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, NV + CTRLA, CMD_PAGEERASE);
+		check("USERROW PAGEERASE -> 0xFF", cpu_read(m, URO + 3), 0xff);
+		NVM_RUN();
+
+		#undef NVM_RUN
+	}
+
 	printf("== modern NVMCTRL flash self-programming (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t NV = 0x1000, EE = 0x1400;

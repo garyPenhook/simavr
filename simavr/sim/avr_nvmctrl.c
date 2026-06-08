@@ -24,6 +24,12 @@
 	FUSEWRITE is modelled through NVMCTRL.ADDR/DATA. It updates avr->fuse[] byte
 	storage directly and reports invalid addresses through STATUS.WRERROR.
 
+	USERROW (DS40002205A 6.6) is "one extra page of EEPROM": the CPU writes/reads
+	it as normal EEPROM, so it shares the EEPROM page buffer and the same
+	PAGEWRITE/PAGEERASE/PAGEERASEWRITE/PAGEBUFCLR commands (committing to its own
+	data region, with EEBUSY/EEREADY). It persists across reset and is NOT
+	affected by a chip erase. Enabled per-core via avr_nvmctrl_set_userrow().
+
 	Copyright 2026 simavr authors
 
  	This file is part of simavr.
@@ -143,6 +149,25 @@ avr_nvmctrl_ee_write(struct avr_t *avr, avr_io_addr_t addr,
 	/* note: avr->data[addr] (committed EEPROM) is intentionally left unchanged */
 }
 
+/* A byte written to the mapped USERROW region. USERROW is "one extra page of
+ * EEPROM" (DS40002205A 6.6) and the hardware shares one NVM page buffer, so it
+ * loads the same buffer (indexed by USERROW offset) tagged as the USERROW
+ * section; a later command commits it to data[uro_start..]. */
+static void
+avr_nvmctrl_uro_write(struct avr_t *avr, avr_io_addr_t addr,
+					  uint8_t v, void *param)
+{
+	avr_nvmctrl_t *p = (avr_nvmctrl_t *)param;
+	(void)avr;
+	uint16_t off = addr - p->uro_start;
+	if (off >= p->uro_size)
+		return;
+	p->buf[off] = v;
+	p->dirty[off] = 1;
+	p->last_section = AVR_NVM_SEC_USERROW;
+	/* committed USERROW (avr->data[addr]) is left unchanged until a command */
+}
+
 /* A byte written to the mapped flash region: load the flash page buffer for the
  * page it addresses (installed as avr->flashmap_write by avr_nvmctrl_set_flash). */
 static void
@@ -217,6 +242,34 @@ avr_nvmctrl_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 		}
 		avr->fuse[faddr] = avr->data[p->r_datal];
 		nvm_flash_complete(p);
+		return;
+	}
+
+	/* USERROW: committed like EEPROM (EEBUSY/EEREADY) but to its own region. */
+	if (p->last_section == AVR_NVM_SEC_USERROW) {
+		switch (cmd) {
+		case CMD_PAGEWRITE:
+		case CMD_PAGEERASEWRITE:
+			for (uint16_t i = 0; i < p->uro_size; i++)
+				if (p->dirty[i])
+					avr_core_watch_write(avr, p->uro_start + i, p->buf[i]);
+			nvm_bufclr(p);
+			nvm_complete(p);
+			break;
+		case CMD_PAGEERASE:
+			for (uint16_t i = 0; i < p->uro_size; i++)
+				if (p->dirty[i])
+					avr_core_watch_write(avr, p->uro_start + i, 0xff);
+			nvm_bufclr(p);
+			nvm_complete(p);
+			break;
+		case CMD_PAGEBUFCLR:
+			nvm_bufclr(p);
+			nvm_complete(p);
+			break;
+		default:
+			break;
+		}
 		return;
 	}
 
@@ -364,4 +417,28 @@ avr_nvmctrl_set_flash(
 	/* The engine forwards writes to the mapped flash region to our page buffer. */
 	avr->flashmap_write = avr_nvmctrl_flash_write;
 	avr->flashmap_write_param = p;
+}
+
+void
+avr_nvmctrl_set_userrow(
+		avr_nvmctrl_t * p,
+		avr_io_addr_t uro_start,
+		uint16_t uro_size)
+{
+	avr_t *avr = p->io.avr;
+	if (uro_size > AVR_NVM_EE_MAX)	/* shares the EEPROM page buffer */
+		uro_size = AVR_NVM_EE_MAX;
+	p->uro_start = uro_start;
+	p->uro_size = uro_size;
+
+	/* USERROW is non-volatile: prime to the erased state (0xFF) once and mark
+	 * it persistent so avr_reset() preserves it (a second range, since USERROW
+	 * at 0x1300 is not contiguous with the EEPROM at 0x1400). DS40002205A 6.6. */
+	avr->arch.persist2_start = uro_start;
+	avr->arch.persist2_end = uro_start + uro_size - 1;
+	memset(&avr->data[uro_start], 0xff, uro_size);
+
+	/* Intercept writes to the mapped USERROW region (page-buffer load). */
+	for (uint16_t i = 0; i < uro_size; i++)
+		avr_register_io_write(avr, uro_start + i, avr_nvmctrl_uro_write, p);
 }

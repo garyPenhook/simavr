@@ -243,6 +243,9 @@ avr_reset(
 		if (avr->arch.persist_end &&
 				i >= avr->arch.persist_start && i <= avr->arch.persist_end)
 			continue;
+		if (avr->arch.persist2_end &&
+				i >= avr->arch.persist2_start && i <= avr->arch.persist2_end)
+			continue;
 		avr->data[i] = 0;
 	}
 	_avr_sp_set(avr, avr->ramend);

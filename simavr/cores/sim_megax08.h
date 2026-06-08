@@ -261,6 +261,9 @@ megax08_init(struct avr_t * avr)
 	/* Flash self-programming; megaAVR-0 maps flash into data space at 0x4000. */
 	avr_nvmctrl_set_flash(&mcu->nvmctrl, MAPPED_PROGMEM_START,
 						  FLASHEND + 1, PROGMEM_PAGE_SIZE);
+	/* USERROW (extra EEPROM page) at USER_SIGNATURES_START (0x1300). */
+	avr_nvmctrl_set_userrow(&mcu->nvmctrl, USER_SIGNATURES_START,
+							USER_SIGNATURES_SIZE);
 
 	/* PORTA..F at 0x400..0x4A0 (+ VPORTA..F at 0x00..0x14). */
 	avr_port_modern_init(avr, &mcu->porta, 'A', 0x0400, 0x0000, PORTA_PORT_vect_num);

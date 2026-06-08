@@ -310,6 +310,9 @@ tinyx1_init(struct avr_t * avr)
 	/* Flash self-programming, mapped into data space at MAPPED_PROGMEM_START. */
 	avr_nvmctrl_set_flash(&mcu->nvmctrl, MAPPED_PROGMEM_START,
 						  FLASHEND + 1, PROGMEM_PAGE_SIZE);
+	/* USERROW (extra EEPROM page) at USER_SIGNATURES_START (0x1300). */
+	avr_nvmctrl_set_userrow(&mcu->nvmctrl, USER_SIGNATURES_START,
+							USER_SIGNATURES_SIZE);
 
 	/* PORTA at 0x400 (+ VPORTA at 0x00); PORTB/PORTC fitted by pin count. */
 	avr_port_modern_init(avr, &mcu->porta, 'A', 0x0400, 0x0000,

@@ -384,6 +384,10 @@ typedef struct avr_t {
 		// (inclusive) so EEPROM survives a reset like real hardware. 0/0 = none.
 		uint16_t	persist_start;
 		uint16_t	persist_end;
+		// A second persistent range, for non-contiguous NVM in data space (the
+		// modern-AVR USERROW at 0x1300 sits below the EEPROM at 0x1400). 0/0 = none.
+		uint16_t	persist2_start;
+		uint16_t	persist2_end;
 	} arch;
 
 	/*
