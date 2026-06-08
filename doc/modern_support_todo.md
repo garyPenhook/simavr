@@ -48,15 +48,16 @@ downgraded to [P]).
 Every block declared in the device headers and fitted by the templates
 (CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT, PORTMUX, TCA0, TCB0–3, TCD0, RTC/PIT,
 USART0–3, SPI0, TWI0, ADC0/1, AC0–2, DAC0, VREF, NVMCTRL, CCL, EVSYS, WDT,
-CRCSCAN, BOD/VLM, SYSCFG, CPUINT) has a model. What remains unimplemented are
-NVM/identity **config regions** and one header-less silicon block:
+CRCSCAN, BOD/VLM, SYSCFG, CPUINT) has a model. The NVM/identity **config
+regions** (USERROW, FUSE window, LOCKBIT, SIGROW SERNUM/OSCnnERR) are now
+modelled too; the only remaining unmodelled silicon is one header-less block:
 
 | Region / block | Addr | Status — what is NOT implemented | Affects |
 |---|---|---|---|
 | USERROW | 0x1300 | **Done.** Modelled as "one extra page of EEPROM" (DS40002205A 6.6): writes load the shared NVM page buffer and commit via the EEPROM commands (PAGEWRITE/PAGEERASE/PAGEERASEWRITE/PAGEBUFCLR, EEBUSY/EEREADY); it persists across reset (second persist range) and is **not** affected by CHIPERASE. Per-device size (32B on small parts, 64B on 16K/32K & megaAVR-0). Host-tested. | all 23 |
 | FUSE read-back window | 0x1280 | **Done.** `avr_syscfg` exposes the 9-byte FUSE_t window with a live read handler returning `avr->fuse[]` (DS40002205A 6.10: fuses are CPU-readable, not CPU-writable), so `FUSE.OSCCFG`/`BODCFG`/`SYSCFG0`/`BOOTEND` etc. read the real fuse value and reflect any NVMCTRL `FUSEWRITE`; direct writes are ignored. Host-tested. | all 23 |
-| LOCKBIT | 0x128A | Not modelled; reads 0. | all 23 |
-| SIGROW SERNUM / OSCnnERR | 0x1100+ | Only `DEVICEID[2:0]` and `TEMPSENSE0/1` are populated; the serial number (`SERNUM0..9`) and oscillator-error rows (`OSC16ERR*`, `OSC20ERR*`) read 0. | all 23 |
+| LOCKBIT | 0x128A | **Done.** Reads the unlocked key `0xC5` (DS40002205A 6.10.4.9), read-only to the CPU. simavr does not model the UPDI debug-access lock (CPU access is always permitted), so this is a faithful read-back. Host-tested. | all 23 |
+| SIGROW SERNUM / OSCnnERR | 0x1100+ | **Done.** `SERNUM0..9` is populated with a deterministic non-zero placeholder (no canonical value exists; real silicon is never all-zero). `OSC16ERR*`/`OSC20ERR*` are signed frequency-error calibrations where **0 = no error**, so they are left at 0 (a valid value). `DEVICEID[2:0]` and `TEMPSENSE0/1` were already populated. Host-tested. | all 23 |
 | PTC (Peripheral Touch Controller) | — | Present on tinyAVR-1 silicon but **absent from the avr-libc headers**, so it has no register map and no model (cannot be header-driven). | 15 tinyAVR-1 |
 
 Note: the in-tree `iotn3217.h` over-declares `DAC1`/`DAC2` (0x06A8/0x06B0) that do
@@ -170,12 +171,11 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
    wires ADC1, AC1 and AC2 (each gated on its fit). Stale "does not exist on the
    ATtiny3217" comments corrected; host-tested in `test_avrxt_engine.c`.
    tinyAVR-1 16K/32K parts only. [P]
-10. **NVM/identity config regions** *(existing [F], see "Not implemented at all")*
-   — **FUSE read-back window done** (`avr_syscfg`, live read of `avr->fuse[]`)
-   and **USERROW done** (`avr_nvmctrl`: EEPROM-style write/erase via the shared
-   page buffer, reset-persistent, CHIPERASE-immune; per-device 32/64 B), both
-   host-tested. *Remaining:* populate SIGROW SERNUM/OSCnnERR and model LOCKBIT.
-   Firmware reading oscillator calibration or serial number still gets zeros.
-   All 23.
+10. **NVM/identity config regions** — *done.* FUSE read-back window
+   (`avr_syscfg`, live read of `avr->fuse[]`); USERROW (`avr_nvmctrl`:
+   EEPROM-style write/erase via the shared page buffer, reset-persistent,
+   CHIPERASE-immune; per-device 32/64 B); LOCKBIT (reads `0xC5` unlocked);
+   SIGROW SERNUM (deterministic non-zero placeholder) and OSCnnERR (0 = no
+   error, valid). All host-tested across the family templates. All 23. ✓
 11. Polish [P]: USART line-level timing, SPI pin contention, TCB first-period
    scheduling, EVSYS generator-source encodings, ADC exact timing.

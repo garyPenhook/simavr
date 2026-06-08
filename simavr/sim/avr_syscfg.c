@@ -51,6 +51,18 @@ avr_syscfg_fuse_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 	return avr->fuse[idx];
 }
 
+/* FUSE.LOCKBIT read-back (DS40002205A 6.10.4.9). 0xC5 = unlocked; simavr does
+ * not model the UPDI debug lock, so it just reports the stored value. Sits past
+ * the FUSE_t window (offset 0x0A) and beyond avr->fuse[], so it has its own
+ * store. */
+static uint8_t
+avr_syscfg_lockbit_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
+{
+	avr_syscfg_t *p = (avr_syscfg_t *)param;
+	(void)avr; (void)addr;
+	return p->lockbit;
+}
+
 static void
 avr_syscfg_reset(avr_io_t *io)
 {
@@ -65,14 +77,25 @@ avr_syscfg_reset(avr_io_t *io)
 	avr->data[p->sigrow_base + SIGROWR_DEVICEID1] = avr->signature[1];
 	avr->data[p->sigrow_base + SIGROWR_DEVICEID2] = avr->signature[2];
 
+	/* SERNUM[0..9]: deterministic non-zero placeholder (no canonical value). */
+	for (int i = 0; i < SIGROWR_SERNUM_LEN; i++)
+		avr->data[p->sigrow_base + SIGROWR_SERNUM0 + i] = AVR_SIGROW_SERNUM_BYTE(i);
+
 	/* Temperature-sensor calibration (read by the ADC temp channel and firmware). */
 	avr->data[p->sigrow_base + SIGROWR_TEMPSENSE0] = AVR_SIGROW_TEMPSENSE0_CAL;
 	avr->data[p->sigrow_base + SIGROWR_TEMPSENSE1] = AVR_SIGROW_TEMPSENSE1_CAL;
+	/* OSCnnERRxV: 0 = no calibration error (a valid value); left at 0. */
+	avr->data[p->sigrow_base + SIGROWR_OSC16ERR3V] = 0;
+	avr->data[p->sigrow_base + SIGROWR_OSC16ERR5V] = 0;
+	avr->data[p->sigrow_base + SIGROWR_OSC20ERR3V] = 0;
+	avr->data[p->sigrow_base + SIGROWR_OSC20ERR5V] = 0;
 
 	/* The FUSE window is served live by avr_syscfg_fuse_read from avr->fuse[];
 	 * mirror the bytes into data[] too so a debugger / raw data peek matches. */
 	for (uint8_t i = 0; i < p->fuse_count && i < sizeof(avr->fuse); i++)
 		avr->data[p->fuse_base + i] = avr->fuse[i];
+	/* LOCKBIT is served live by avr_syscfg_lockbit_read; mirror for data peeks. */
+	avr->data[p->fuse_base + AVR_FUSE_LOCKBIT_OFFSET] = p->lockbit;
 }
 
 static const char *irq_names[1] = { NULL };
@@ -99,6 +122,7 @@ avr_syscfg_init(
 	p->sigrow_base = sigrow_base;
 	p->fuse_base = fuse_base;
 	p->fuse_count = fuse_count;
+	p->lockbit = AVR_FUSE_LOCKBIT_UNLOCKED;
 	p->revid = revid;
 
 	avr_register_io(avr, &p->io);
@@ -114,4 +138,9 @@ avr_syscfg_init(
 		avr_register_io_read(avr, fuse_base + i, avr_syscfg_fuse_read, p);
 		avr_register_io_write(avr, fuse_base + i, avr_syscfg_ro_write, p);
 	}
+	/* FUSE.LOCKBIT (offset 0x0A, past the FUSE_t window): read-back only. */
+	avr_register_io_read(avr, fuse_base + AVR_FUSE_LOCKBIT_OFFSET,
+						 avr_syscfg_lockbit_read, p);
+	avr_register_io_write(avr, fuse_base + AVR_FUSE_LOCKBIT_OFFSET,
+						  avr_syscfg_ro_write, p);
 }

@@ -3434,6 +3434,22 @@ int main(void)
 		 * update) is reflected immediately. */
 		m->fuse[2] = 0x12;
 		check("FUSE window tracks fuse[] (live)", cpu_read(m, FUSE + 2), 0x12);
+
+		/* FUSE.LOCKBIT (0x128A) reads the unlocked key 0xC5 (DS40002205A
+		 * 6.10.4.9); it is read-only to the CPU. */
+		check("FUSE.LOCKBIT reads unlocked key 0xC5", cpu_read(m, 0x128a), 0xc5);
+		cpu_write(m, 0x128a, 0x00);
+		check("FUSE.LOCKBIT read-only", cpu_read(m, 0x128a), 0xc5);
+
+		/* SIGROW.SERNUM[0..9] is populated with a deterministic non-zero serial
+		 * (real silicon is never all-zero); OSCnnERR read 0 = no error. */
+		check("SIGROW.SERNUM0 populated (0x10)", cpu_read(m, SIG + 0x03), 0x10);
+		check("SIGROW.SERNUM9 populated (0x19)", cpu_read(m, SIG + 0x0c), 0x19);
+		int sernum_nonzero = 0;
+		for (int i = 0; i < 10; i++)
+			sernum_nonzero |= cpu_read(m, SIG + 0x03 + i);
+		check("SIGROW.SERNUM not all-zero", !!sernum_nonzero, 1);
+		check("SIGROW.OSC20ERR3V = 0 (no error)", cpu_read(m, SIG + 0x24), 0x00);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

@@ -11,9 +11,11 @@
 
 	SIGROW.DEVICEID[2:0] is the three-byte device signature that firmware reads to
 	identify the part (0x1E 0x95 0x22 for the ATtiny3217); it is populated from
-	the core's signature[]. The serial-number (SERNUM) and calibration
-	(TEMPSENSE, OSCnnERRxV) bytes are device-unique factory data with no canonical
-	simulator value and are left as plain (zero) read-only storage.
+	the core's signature[]. SERNUM[0..9] is device-unique factory data with no
+	canonical simulator value, so it is populated with a deterministic non-zero
+	placeholder (real silicon is never all-zero). The OSCnnERRxV bytes are signed
+	oscillator frequency-error calibrations where 0 means "no error", so they are
+	left at 0 (a valid value). TEMPSENSE0/1 carry the modelled temp-sensor cal.
 
 	This block also exposes the memory-mapped FUSE read-back window (FUSE at
 	0x1280): per DS40002205A 6.10 the fuses can be read by the CPU but only
@@ -60,9 +62,27 @@ enum {
 	SIGROWR_DEVICEID0 = 0x00,
 	SIGROWR_DEVICEID1 = 0x01,
 	SIGROWR_DEVICEID2 = 0x02,
+	SIGROWR_SERNUM0 = 0x03,		/* serial number byte 0 (SERNUM0..9 = 10 bytes) */
+	SIGROWR_SERNUM_LEN = 10,
 	SIGROWR_TEMPSENSE0 = 0x20,	/* temp-sensor gain/slope */
 	SIGROWR_TEMPSENSE1 = 0x21,	/* temp-sensor offset */
+	SIGROWR_OSC16ERR3V = 0x22,	/* OSC20M @16MHz freq error at 3V (signed) */
+	SIGROWR_OSC16ERR5V = 0x23,
+	SIGROWR_OSC20ERR3V = 0x24,	/* OSC20M @20MHz freq error at 3V (signed) */
+	SIGROWR_OSC20ERR5V = 0x25,
 };
+
+/* FUSE.LOCKBIT lives at FUSE offset 0x0A (data 0x128A). 0xC5 = valid key
+ * (memory access unlocked); any other value locks UPDI access (DS40002205A
+ * 6.10.4.9). simavr does not model the debug-access lock (CPU access is always
+ * allowed), so LOCKBIT is a read-back register that defaults to "unlocked". */
+#define AVR_FUSE_LOCKBIT_OFFSET	0x0a
+#define AVR_FUSE_LOCKBIT_UNLOCKED	0xc5
+
+/* Deterministic, simulator-synthesized SERNUM byte i. Real silicon carries a
+ * unique factory serial number; simavr has no canonical value, so it publishes
+ * a fixed non-zero pattern (never all-zero, as the hardware never is). */
+#define AVR_SIGROW_SERNUM_BYTE(i)	(uint8_t)(0x10 + (i))
 
 /* Representative temperature-sensor calibration loaded into SIGROW. With these,
  * the datasheet transfer function T_K = ((adc - off)*gain + 0x80) >> 8 reduces
@@ -77,6 +97,7 @@ typedef struct avr_syscfg_t {
 	avr_io_addr_t	sigrow_base;
 	avr_io_addr_t	fuse_base;	/* memory-mapped FUSE read-back window */
 	uint8_t		fuse_count;	/* number of FUSE bytes exposed (FUSE_t size) */
+	uint8_t		lockbit;	/* FUSE.LOCKBIT read-back value (0xC5 = unlocked) */
 	uint8_t		revid;		/* SYSCFG.REVID value (0 = rev A) */
 } avr_syscfg_t;
 
