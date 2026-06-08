@@ -1,0 +1,59 @@
+board_attiny3217_leds — modern-AVR OpenGL LED window
+====================================================
+
+The *visual* tinyAVR-1 board: it opens a real window (OpenGL/GLUT) showing the
+eight PORTA pins of an ATtiny3217 as eight LEDs, animated live by the firmware —
+a single lit LED bounces back and forth ("Knight Rider"). USART0 narration is
+echoed to the terminal.
+
+This is the tinyAVR-1 sibling of board_atmega4809_leds, and the GUI counterpart
+to the headless examples:
+  * board_attiny3217 / board_atmega4809 — console + VCD demos
+  * board_modern_avr                    — all-cores coverage runner
+Same modern engine and peripheral models, but with something to watch.
+
+Build & run (from this folder)
+------------------------------
+
+Open a console, change into this folder, build, then run:
+
+    cd examples/board_attiny3217_leds   # the demo loads its .axf from here
+    make                                # builds the host program + firmware (.axf)
+    ./obj-*/ledramp.elf                 # run the demo (opens the window)
+
+The runnable program is the host binary built under obj-<arch>/ (for example
+obj-x86_64-pc-linux-gnu/ledramp.elf); the ./obj-*/ glob just picks it regardless
+of architecture. Run it from this folder so it finds attiny3217_ledramp.axf.
+
+A window titled "simavr - attiny3217 PORTA LEDs" appears with 8 LEDs; the lit
+one sweeps left/right. The terminal shows the firmware's USART0 output ("LED N").
+Press 'q' or Esc in the window to quit. (A graphical display is required, since
+this board opens an OpenGL window.)
+
+How it works
+------------
+
+  * The firmware (attiny3217_ledramp.c) drives all of PORTA as outputs and walks
+    a single set bit across it. USART0 TXD uses its default route (PB2), which is
+    already off the PORTA LED pins on the tinyAVR-1 — so, unlike the megaAVR-0
+    sibling, no PORTMUX change is needed.
+
+  * The host (ledramp.c) hooks the eight PORTA pin IRQs to a bitmap and draws
+    them as LEDs, hooks USART0 to stdout, and runs the AVR in a background
+    thread that is *throttled to real time* (compares simulated cycles to the
+    wall clock and sleeps the difference) so the 120 ms steps are watchable
+    instead of flashing past at simulation speed.
+
+The PORT and USART hooks are ordinary avr_irq_register_notify() calls on the
+classic IOPORT / UART IRQ meshes — the modern PORT and USART models reuse those
+abstractions, so the GUI plumbing is identical to simavr's classic GL boards
+(board_ledramp, board_hd44780).
+
+Requirements
+------------
+
+Needs OpenGL + GLUT (freeglut) dev libraries, like the other visual boards; the
+Makefile pulls them in via ../Makefile.opengl. Building the firmware needs a
+modern avr-gcc (12+) with the tinyAVR-1 headers; if avr-gcc cannot target
+attiny3217 the firmware step is skipped (so a plain `make` across examples/ still
+succeeds) — install a modern avr-gcc and re-run `make` to build and run the demo.

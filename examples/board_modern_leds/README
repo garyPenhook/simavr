@@ -1,0 +1,67 @@
+board_modern_leds — every supported modern AVR, with a UI
+=========================================================
+
+The *visual* all-cores board. Where board_modern_avr is the headless coverage
+runner that smoke-tests every supported modern core, this is the GUI: one
+OpenGL/GLUT host that opens a window showing PORTA as eight LEDs and animates
+them live — a single lit LED bounces back and forth ("Knight Rider") — for ANY
+of the 23 modern cores this fork supports:
+
+  tinyAVR 1-series (15): attiny212 214 412 414 416 417 814 816 817
+                         1614 1616 1617 3214 3216 3217
+  megaAVR 0-series (8):  atmega808 809 1608 1609 3208 3209 4808 4809
+
+It is the generic answer to "I want a UI for all the modern micros, not just one
+chip": the per-chip boards (board_attiny3217_leds, board_atmega4809_leds) are
+just this, frozen to a single device.
+
+Build & run (from this folder)
+------------------------------
+
+    cd examples/board_modern_leds
+    make                          # builds the host + one fw_<device>.axf per core
+    ./obj-*/leds.elf              # default: ATtiny3217
+    ./obj-*/leds.elf fw_atmega4809.axf
+    ./obj-*/leds.elf fw_attiny212.axf
+
+The runnable program is the host binary under obj-<arch>/ (e.g.
+obj-x86_64-pc-linux-gnu/leds.elf); the ./obj-*/ glob picks it regardless of
+architecture. Pass any fw_<device>.axf to choose the core; with no argument it
+loads fw_attiny3217.axf. The window title shows which core is running.
+
+A window appears with 8 LEDs; the lit one sweeps left/right. The terminal shows
+the firmware's USART0 output ("LED N"). Press 'q' or Esc to quit. (A graphical
+display is required, since this board opens an OpenGL window.)
+
+How it works
+------------
+
+  * One device-agnostic firmware (modern_ledramp.c) is compiled once per device
+    into fw_<device>.axf (same pattern as board_modern_avr). It drives all of
+    PORTA as outputs and walks a single set bit across it. USART0 TX is enabled
+    WITHOUT routing a physical TXD pin or PORTMUX: the default TXD pin differs by
+    family (PB2 on tinyAVR-1, PA0 on megaAVR-0), but simavr captures USART output
+    through the UART IRQ mesh independent of the physical pin — so the same
+    source runs on every core and PORTA stays entirely free for the LEDs.
+
+  * One host (leds.c) reads the loaded ELF's .mmcu section, instantiates that
+    core with avr_make_mcu_by_name(), hooks the eight PORTA pin IRQs to an LED
+    bitmap and USART0 to stdout, and runs the AVR in a background thread that is
+    *throttled to real time* (compares simulated cycles to the wall clock and
+    sleeps the difference) so the 120 ms steps are watchable. Nothing in the host
+    is chip-specific — the same binary drives all 23 cores.
+
+The PORT and USART hooks are ordinary avr_irq_register_notify() calls on the
+classic IOPORT / UART IRQ meshes — the modern PORT and USART models reuse those
+abstractions, so the GUI plumbing is identical to simavr's classic GL boards
+(board_ledramp, board_hd44780).
+
+Requirements
+------------
+
+Needs OpenGL + GLUT (freeglut) dev libraries, like the other visual boards; the
+Makefile pulls them in via ../Makefile.opengl. Building the firmware needs a
+modern avr-gcc (12+) with the tinyAVR-1 / megaAVR-0 headers; cores the installed
+toolchain cannot target are skipped (so a plain `make` across examples/ still
+succeeds) — install a modern avr-gcc and re-run `make` to build fw_*.axf for
+every supported core.

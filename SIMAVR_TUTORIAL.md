@@ -323,12 +323,30 @@ inspection on the simulated core — using the real device's symbols.
 
 ---
 
-## 10. Modern AVR (AVRxt) — the ATtiny3217
+## 10. Modern AVR (AVRxt) — tinyAVR 1-series & megaAVR 0-series
 
 Classic AVRs (ATmega/ATtiny "AVRe") and the **modern** tinyAVR 0/1-series,
 megaAVR-0, and AVR Dx parts ("AVRxt") differ enough that simavr models them with
-a separate code path. This fork ships a complete **ATtiny3217** core
-(`simavr/cores/sim_tiny3217.c`).
+a separate code path. This fork ships **23 modern AVRxt cores** — the **entire
+tinyAVR® 1-series** (15 devices) and the **entire megaAVR® 0-series** (8 devices,
+including the popular **ATmega4809**):
+
+| Family | Devices |
+|--------|---------|
+| **tinyAVR 1-series** (15) | ATtiny212/214, 412/414/416/417, 814/816/817, 1614/1616/1617, 3214/3216/3217 |
+| **megaAVR 0-series** (8)  | ATmega808/809, 1608/1609, 3208/3209, 4808/4809 |
+
+Each family is driven from one shared core template
+(`cores/sim_tinyx1.h`, `cores/sim_megax08.h`) plus a tiny per-device file
+(`sim_<device>.c`) that only supplies memory sizes, signature, the vector table,
+and which peripheral *instances* are fitted (PORTB/PORTC by pin count, TCB1 /
+ADC1 / AC1-2 on the larger tinyAVR, USART3 / TCB3 on the 48-pin megaAVR-0).
+Everything else comes from the device's avr-libc header, so adding a device is
+just dropping in its `.c` descriptor — no engine changes.
+
+The ATtiny3217 (`simavr/cores/sim_tiny3217.c`) is the worked example throughout
+this section, but every command below applies to any of the 23 parts by swapping
+the `-mmcu=` / part name.
 
 ### 10.1 What's different about AVRxt
 
@@ -346,20 +364,36 @@ set in `sim_core_declare_modern.h`.
 
 ### 10.2 Modelled peripherals
 
-The ATtiny3217 core wires up: CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT (A/B/C),
-TCA0, TCB0/1, TCD0, RTC+PIT, USART0, SPI0, TWI0, ADC0 (incl. temperature sensor
-with SIGROW calibration), DAC0, AC0, VREF, CCL, EVSYS, PORTMUX, NVMCTRL
-(EEPROM + flash self-programming), CRCSCAN, BOD/VLM, WDT, and SYSCFG/SIGROW
-device identity.
+The **ATtiny3217** (tinyAVR-1) core wires up: CLKCTRL, RSTCTRL, SLPCTRL,
+PORT/VPORT (A/B/C), TCA0, TCB0/1, TCD0, RTC+PIT, USART0, SPI0, TWI0, ADC0 (incl.
+temperature sensor with SIGROW calibration), DAC0, AC0, VREF, CCL, EVSYS,
+PORTMUX, NVMCTRL (EEPROM + flash self-programming), CRCSCAN, BOD/VLM, WDT, and
+SYSCFG/SIGROW device identity.
+
+The **ATmega4809** (megaAVR-0) core models six ports (A–F), TCA0, TCB0–3,
+USART0–3, TWI0, SPI0, RTC+PIT, ADC0 (with temp sensor), AC0, CCL, EVSYS, NVMCTRL,
+VREF, PORTMUX, WDT, CRCSCAN, BOD/VLM, SLPCTRL, RSTCTRL and SYSCFG/SIGROW. **TCD
+and DAC are not fitted on the megaAVR-0 family.** Smaller parts in each family
+simply fit fewer instances (e.g. the 8-pin ATtiny212 has no PORTB/PORTC, no
+ADC1/AC1-2, no TCB1).
+
+Every top-level block on these parts is present and functional; the remaining
+work is feature *depth* inside existing models (AC hysteresis/power, DAC output
+buffer, CCL line-level sources, USART line-level timing). The full per-module
+gap list is in [`doc/modern_support_todo.md`](doc/modern_support_todo.md).
 
 ### 10.3 Building and running modern firmware
 
-You need an avr-gcc new enough to know `-mmcu=attiny3217` (current avr-gcc /
-avr-libc with the ATtiny DFP). Then:
+You need an avr-gcc new enough to know the part (current avr-gcc / avr-libc with
+the ATtiny/megaAVR DFP). Then:
 
 ```bash
-avr-gcc -mmcu=attiny3217 -DF_CPU=8000000 -Os blink.c -o blink.axf
+avr-gcc -mmcu=attiny3217 -DF_CPU=8000000 -Os blink.c -o blink.axf   # tinyAVR-1
+avr-gcc -mmcu=atmega4809 -DF_CPU=8000000 -Os blink.c -o blink.axf   # megaAVR-0
 ```
+
+`run_avr --list-cores` shows every core the installed toolchain enabled (all 23
+when the DFPs are present).
 
 In `tests/` the modern parts have dedicated targets (they are excluded from the
 default suite because they need that newer toolchain):
@@ -427,12 +461,31 @@ gated behind explicit targets as noted above).
 
 ## 12. The Example Boards
 
-`examples/` contains complete, runnable front-ends worth studying:
+`examples/` contains complete, runnable front-ends worth studying.
+
+**Classic AVR boards:**
 
 - **`board_simduino`** — an Arduino-compatible board with a virtual bootloader.
 - **`board_hd44780`** — drives a character-LCD part from firmware.
 - **`board_ledramp`, `board_timer_64led`** — GPIO/timer demos with OpenGL output.
-- **`parts/`** — reusable simulated peripherals to drop into your own board.
+- **`board_ssd1306`, `board_sh1106`, `board_ds1338`, `board_i2ctest`,
+  `board_rotenc`** — SPI/I2C displays, RTC, and input parts.
+
+**Modern AVR (AVRxt) boards** — this fork's additions:
+
+- **`board_attiny3217`, `board_atmega4809`** — headless console + VCD blink demos,
+  one per modern family.
+- **`board_attiny3217_leds`, `board_atmega4809_leds`** — OpenGL/GLUT windows
+  showing the eight PORTA pins as LEDs with a live "Knight Rider" animation.
+- **`board_atmega4809_oled`** — a 128×64 SSD1306 OLED driven by an ATmega4809
+  over I2C/SPI, with an OpenGL window.
+- **`board_modern_avr`** — a headless coverage runner that smoke-tests *every*
+  one of the 23 modern cores.
+- **`board_modern_leds`** — the GUI all-cores board: one OpenGL host that runs
+  any of the 23 modern cores (pass `fw_<device>.axf` to pick one).
+
+**`parts/`** — reusable simulated peripherals (button, LED ramp, HD44780, I2C
+EEPROM, WS2812, …) to drop into your own board.
 
 Each board is a `main()` that makes a core, builds a few parts, connects IRQs,
 and runs the loop — i.e. everything in this tutorial, assembled.
