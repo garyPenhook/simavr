@@ -183,6 +183,39 @@ tinyx1_vref_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
 	avr_adc_modern_set_intref(&mcu->adc0, value);
 }
 
+#ifdef ADC1_RESRDY_vect_num
+/* VREF.CTRLC.ADC1REFSEL -> ADC1 internal reference (16K/32K parts). */
+static void
+tinyx1_vref_to_adc1(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_adc_modern_set_intref(&mcu->adc1, value);
+}
+#endif
+
+#ifdef AC1_AC_vect_num
+/* VREF.CTRLC.DAC1REFSEL -> AC1 reference (DAC1 absent on tinyAVR-1). */
+static void
+tinyx1_vref_to_ac1(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_ac_set_refs(&mcu->ac1, value, mcu->ac1.dacref_mv);
+}
+#endif
+
+#ifdef AC2_AC_vect_num
+/* VREF.CTRLD.DAC2REFSEL -> AC2 reference (DAC2 absent on tinyAVR-1). */
+static void
+tinyx1_vref_to_ac2(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_ac_set_refs(&mcu->ac2, value, mcu->ac2.dacref_mv);
+}
+#endif
+
 /*
  * EVSYS routing: AC0's output is an async event generator (source AC0_OUT =
  * 0x03); forward its level changes to EVSYS. The ADC0 EVSYS user delivers its
@@ -412,6 +445,24 @@ tinyx1_init(struct avr_t * avr)
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_ADC0_MV),
 			tinyx1_vref_to_adc, mcu);
+#ifdef ADC1_RESRDY_vect_num
+	/* CTRLC.ADC1REFSEL -> ADC1 (16K/32K parts). */
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_ADC1_MV),
+			tinyx1_vref_to_adc1, mcu);
+#endif
+#ifdef AC1_AC_vect_num
+	/* CTRLC.DAC1REFSEL -> AC1 reference (DAC1 absent). */
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC1_MV),
+			tinyx1_vref_to_ac1, mcu);
+#endif
+#ifdef AC2_AC_vect_num
+	/* CTRLD.DAC2REFSEL -> AC2 reference (DAC2 absent). */
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC2_MV),
+			tinyx1_vref_to_ac2, mcu);
+#endif
 
 	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector.
 	 * OSCCFG fuse index 2 resolves the OSC20M base for CLKSEL=OSC20M. */

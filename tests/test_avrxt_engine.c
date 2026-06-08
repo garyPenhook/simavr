@@ -2551,6 +2551,45 @@ int main(void)
 		cpu_write(m, D + DACR_CTRLA, DAC_ENABLE);
 		cpu_write(m, D + DACR_DATA, 128);
 		check("DAC out 550 mV with VREF 1100 (DATA=128)", g_dac_out, 550);
+
+		/* CTRLC.DAC1REFSEL[2:0] drives AC1's reference (DAC1 absent on tiny-1);
+		 * CTRLC.ADC1REFSEL[6:4] drives ADC1's internal reference (16K/32K).
+		 * AC1 at 0x688: V+ = AINP0 = 1200 mV, V- = internal VREF. */
+		const avr_io_addr_t C1 = 0x688, C2 = 0x690, A1 = 0x640;
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('1'), AVR_AC_IRQ_AINP0), 1200);
+		cpu_write(m, C1 + ACR_MUXCTRLA, MUXNEG_VREF);
+		cpu_write(m, C1 + ACR_CTRLA, AC_ENABLE);
+		cpu_write(m, V + CTRLC, 0x01);		/* DAC1REFSEL = 1 -> 1100 mV */
+		check("AC1 STATE 1 (1200 > CTRLC VREF 1100)",
+				!!(cpu_read(m, C1 + ACR_STATUS) & STATE), 1);
+		cpu_write(m, V + CTRLC, 0x03);		/* DAC1REFSEL = 3 -> 4300 mV */
+		check("AC1 STATE 0 (1200 < CTRLC VREF 4300)",
+				!!(cpu_read(m, C1 + ACR_STATUS) & STATE), 0);
+
+		/* CTRLD.DAC2REFSEL[2:0] drives AC2's reference (DAC2 absent). AC2 @0x690. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('2'), AVR_AC_IRQ_AINP0), 1200);
+		cpu_write(m, C2 + ACR_MUXCTRLA, MUXNEG_VREF);
+		cpu_write(m, C2 + ACR_CTRLA, AC_ENABLE);
+		cpu_write(m, V + CTRLD, 0x01);		/* DAC2REFSEL = 1 -> 1100 mV */
+		check("AC2 STATE 1 (1200 > CTRLD VREF 1100)",
+				!!(cpu_read(m, C2 + ACR_STATUS) & STATE), 1);
+		cpu_write(m, V + CTRLD, 0x04);		/* DAC2REFSEL = 4 -> 1500 mV */
+		check("AC2 STATE 0 (1200 < CTRLD VREF 1500)",
+				!!(cpu_read(m, C2 + ACR_STATUS) & STATE), 0);
+
+		/* CTRLC.ADC1REFSEL[6:4] tracks ADC1's internal reference. ADC1 @0x640,
+		 * AIN = 550 mV. ADC1REFSEL = 1 (1.1 V) => 550*1024/1100 = 512. */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('1'), 0), 550);
+		cpu_write(m, A1 + ADCMR_MUXPOS, 0);
+		cpu_write(m, A1 + ADCMR_CTRLA, 0x01);	/* ENABLE; REFSEL defaults INTREF */
+		cpu_write(m, V + CTRLC, (1 << 4));	/* ADC1REFSEL = 1.1V */
+		cpu_write(m, A1 + ADCMR_INTFLAGS, 0x01);
+		cpu_write(m, A1 + ADCMR_COMMAND, 0x01);	/* STCONV */
+		for (int i = 0; i < 4000 &&
+			 !(m->data[A1 + ADCMR_INTFLAGS] & 0x01); i++) avr_run(m);
+		check("ADC1 INTREF tracks CTRLC VREF (1.1V) => 512",
+				cpu_read(m, A1 + ADCMR_RESL) | (cpu_read(m, A1 + ADCMR_RESH) << 8),
+				512);
 	}
 
 	printf("== modern TCD0 (sim_tiny3217) ==\n");

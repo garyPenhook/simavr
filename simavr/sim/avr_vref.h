@@ -4,21 +4,28 @@
 	"Modern" AVR (AVRxt) Voltage Reference (VREF at 0x00A0 on the tinyAVR
 	1-series, also megaAVR-0 and AVR Dx families).
 
-	VREF holds the internal-reference selection for the analog peripherals.
-	CTRLA selects the reference voltage for ADC0 (ADC0REFSEL[6:4]) and for
-	DAC0/AC0 (DAC0REFSEL[2:0]); the options are 0.55 / 1.1 / 2.5 / 4.3 / 1.5 V.
-	CTRLB holds per-peripheral "force enable" bits (keep the reference running
-	even when not requested) which have no behavioural effect here. CTRLC/CTRLD
-	select references for ADC1/DAC1/DAC2, which do not exist on the ATtiny3217
-	(the registers are present in the address map and modelled as a store).
+	VREF holds the internal-reference selection for the analog peripherals
+	(register map: DS40002205A 18.4, p.162):
+	  CTRLA: ADC0REFSEL[6:4], DAC0REFSEL[2:0]  (DAC0REFSEL feeds DAC0 *and* AC0)
+	  CTRLB: per-peripheral "force enable" bits (no behavioural effect here)
+	  CTRLC: ADC1REFSEL[6:4], DAC1REFSEL[2:0]  (DAC1REFSEL feeds DAC1 *and* AC1)
+	  CTRLD: DAC2REFSEL[2:0]                    (feeds DAC2 *and* AC2)
+	The reference options are 0.55 / 1.1 / 2.5 / 4.3 / 1.5 V.
 
-	The DAC0/AC0 reference is *always* the internal VREF, so DAC0REFSEL is
-	published (decoded to millivolts) on the DAC0 IRQ whenever CTRLA changes;
-	sim_tiny3217 wires that to DAC0's and AC0's reference. ADC0's reference is
-	selected by ADC.CTRLC.REFSEL (internal VREF vs VDD vs external), which the
-	ADC model does not yet distinguish, so ADC0REFSEL is published on its own
-	IRQ but left unwired until the ADC models REFSEL — pushing it unconditionally
-	would override the ADC's VDD-referenced default.
+	On the tinyAVR 1-series the 16K/32K parts (attiny1614/1616/1617/3214/3216/
+	3217) fit ADC1 and AC1/AC2, so CTRLC/CTRLD are live there. DAC1/DAC2 do not
+	exist on any tinyAVR-1 part (there is a single 8-bit DAC0), so DAC1REFSEL and
+	DAC2REFSEL only feed AC1 and AC2 respectively. On the smaller tinyAVR-1 parts
+	and on megaAVR-0 those consumers are absent, so the published IRQs are simply
+	left unwired by the core template.
+
+	The DAC/AC reference is *always* the internal VREF, so each DACnREFSEL is
+	published (decoded to millivolts) whenever its CTRL register changes; the
+	core wires DAC0_MV to DAC0/AC0, DAC1_MV to AC1, and DAC2_MV to AC2. ADC0/ADC1
+	references are selected by ADC.CTRLC.REFSEL (internal VREF vs VDD vs
+	external); the ADC model distinguishes the internal reference via
+	avr_adc_modern_set_intref(), so ADCnREFSEL is published and the core wires it
+	to the matching ADC.
 
 	The reference selection is published only on a register *write*, never at
 	reset, so peripherals keep their own modelled reference defaults until
@@ -67,10 +74,23 @@ enum {
 #define VREF_ADC0REFSEL_gm	0x70	/* ADC0 reference select [6:4] */
 #define VREF_ADC0REFSEL_gp	4
 
+/* CTRLC bit fields (same layout as CTRLA, for ADC1 / DAC1+AC1). */
+#define VREF_DAC1REFSEL_gm	0x07	/* DAC1/AC1 reference select [2:0] */
+#define VREF_DAC1REFSEL_gp	0
+#define VREF_ADC1REFSEL_gm	0x70	/* ADC1 reference select [6:4] */
+#define VREF_ADC1REFSEL_gp	4
+
+/* CTRLD bit field (for DAC2+AC2). */
+#define VREF_DAC2REFSEL_gm	0x07	/* DAC2/AC2 reference select [2:0] */
+#define VREF_DAC2REFSEL_gp	0
+
 /* IRQs: the decoded reference voltage (millivolts) for each consumer. */
 enum {
-	AVR_VREF_IRQ_ADC0_MV = 0,	/* ADC0REFSEL decoded (left unwired, see .h) */
-	AVR_VREF_IRQ_DAC0_MV,		/* DAC0REFSEL decoded (feeds DAC0 and AC0) */
+	AVR_VREF_IRQ_ADC0_MV = 0,	/* CTRLA.ADC0REFSEL -> ADC0 internal ref */
+	AVR_VREF_IRQ_DAC0_MV,		/* CTRLA.DAC0REFSEL -> DAC0 and AC0 */
+	AVR_VREF_IRQ_ADC1_MV,		/* CTRLC.ADC1REFSEL -> ADC1 internal ref */
+	AVR_VREF_IRQ_DAC1_MV,		/* CTRLC.DAC1REFSEL -> AC1 (DAC1 absent) */
+	AVR_VREF_IRQ_DAC2_MV,		/* CTRLD.DAC2REFSEL -> AC2 (DAC2 absent) */
 	AVR_VREF_IRQ_COUNT,
 };
 

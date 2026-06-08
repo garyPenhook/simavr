@@ -59,10 +59,37 @@ avr_vref_ctrla_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *par
 }
 
 static void
+avr_vref_ctrlc_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	avr_vref_t *p = (avr_vref_t *)param;
+
+	avr_core_watch_write(avr, addr, v);
+
+	/* CTRLC mirrors CTRLA for the second analog set: ADC1 + DAC1/AC1. */
+	avr_raise_irq(p->io.irq + AVR_VREF_IRQ_DAC1_MV,
+			avr_vref_sel_to_mv((v & VREF_DAC1REFSEL_gm) >> VREF_DAC1REFSEL_gp));
+	avr_raise_irq(p->io.irq + AVR_VREF_IRQ_ADC1_MV,
+			avr_vref_sel_to_mv((v & VREF_ADC1REFSEL_gm) >> VREF_ADC1REFSEL_gp));
+}
+
+static void
+avr_vref_ctrld_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	avr_vref_t *p = (avr_vref_t *)param;
+
+	avr_core_watch_write(avr, addr, v);
+
+	/* CTRLD selects the DAC2/AC2 reference (DAC2 absent on tinyAVR-1 -> AC2). */
+	avr_raise_irq(p->io.irq + AVR_VREF_IRQ_DAC2_MV,
+			avr_vref_sel_to_mv((v & VREF_DAC2REFSEL_gm) >> VREF_DAC2REFSEL_gp));
+}
+
+static void
 avr_vref_store_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
 {
-	/* CTRLB force-enable bits and CTRLC/CTRLD (ADC1/DAC1/DAC2 — absent on the
-	 * ATtiny3217) have no behavioural effect; store and read back. */
+	/* CTRLB force-enable bits keep the reference running even when not
+	 * requested; no behavioural effect in this ideal model. Store and read
+	 * back. */
 	(void)param;
 	avr_core_watch_write(avr, addr, v);
 }
@@ -81,6 +108,9 @@ avr_vref_reset(avr_io_t *io)
 static const char *irq_names[AVR_VREF_IRQ_COUNT] = {
 	[AVR_VREF_IRQ_ADC0_MV] = ">vref.adc0.mv",
 	[AVR_VREF_IRQ_DAC0_MV] = ">vref.dac0.mv",
+	[AVR_VREF_IRQ_ADC1_MV] = ">vref.adc1.mv",
+	[AVR_VREF_IRQ_DAC1_MV] = ">vref.dac1.mv",
+	[AVR_VREF_IRQ_DAC2_MV] = ">vref.dac2.mv",
 };
 
 static avr_io_t _io = {
@@ -106,6 +136,6 @@ avr_vref_init(
 
 	avr_register_io_write(avr, base + VREFR_CTRLA, avr_vref_ctrla_write, p);
 	avr_register_io_write(avr, base + VREFR_CTRLB, avr_vref_store_write, p);
-	avr_register_io_write(avr, base + VREFR_CTRLC, avr_vref_store_write, p);
-	avr_register_io_write(avr, base + VREFR_CTRLD, avr_vref_store_write, p);
+	avr_register_io_write(avr, base + VREFR_CTRLC, avr_vref_ctrlc_write, p);
+	avr_register_io_write(avr, base + VREFR_CTRLD, avr_vref_ctrld_write, p);
 }

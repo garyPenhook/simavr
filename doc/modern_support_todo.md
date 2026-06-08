@@ -29,7 +29,7 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 | EVSYS | [F] | **TCA0 (SYNCUSER0 / USERTCA0) is now wired** in both templates to the new TCA EV_IN input, so event-driven TCA0 counting/gating behaves (see the TCA0 row). The megaAVR-0 user-index map was also corrected: USERTCB0-3 had been wired at indices 0-3 (which alias USERCCLLUT0A..1B); they are now at the real 20-23, and USERTCA0 at 19 (`iom4809.h` EVSYS_t). **Still not connected:** USART (SYNCUSER1 / USERUSART0) — the modern USART stops at BAUD with no EVCTRL / event-input path (`avr_usart_modern.h:42`), and its only event use is IrDA RX-via-event, which needs a bit/line-level RX decode the byte/FIFO USART model does not have (overlaps the USART [P] line-timing gap). Generator-source encodings also still need a datasheet pass. | `avr_evsys.c`, `avr_usart_modern.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | ADC | [P] | conversion delay is a cycle approximation, not exact ADC-clock timing | `avr_adc_modern.c` |
 | CPUINT | [F] | **IVSEL is read-back-only** — the bit is stored but the vector table is *not* relocated to the boot section (`avr_cpuint.h:22`). On real tinyAVR-1/megaAVR-0 silicon IVSEL relocates the vector base; a bootloader (or test) that sets IVSEL and relies on relocated vectors will read the bit back correctly and then dispatch from the wrong addresses. LVL0/1, NMI, round-robin, LVL0PRI and CVT are fully modelled. | `avr_cpuint.c` |
-| VREF | [F] | on tinyAVR-1 **16K/32K parts** the template fits ADC1 (`sim_tinyx1.h:320`) and AC1 (`:331`) and the header exposes VREF.CTRLC/CTRLD `ADC1REFSEL`/`DAC1REFSEL` (`iotn3217.h:2140`), but the model only publishes `ADC0_MV`/`DAC0_MV` IRQs (`avr_vref.h:70`) and the core wires only ADC0 + DAC0/AC0 (`sim_tinyx1.h:401`). So VREF.CTRLC/CTRLD writes are **read-back-only** for ADC1/AC1 — those blocks keep their default reference. (Comments in `avr_vref.h:11`/`avr_vref.c:64` are also wrong: they claim ADC1 "does not exist on the ATtiny3217"; ADC1 *does* exist on 16K/32K parts — only DAC1/DAC2 are non-existent.) | `avr_vref.c`, `sim_tinyx1.h` |
+| VREF | [P] | **ADC1/AC1/AC2 references now wired.** On tinyAVR-1 16K/32K parts the model publishes ADC1_MV (CTRLC.ADC1REFSEL→ADC1), DAC1_MV (CTRLC.DAC1REFSEL→AC1, DAC1 absent) and DAC2_MV (CTRLD.DAC2REFSEL→AC2, DAC2 absent), and `sim_tinyx1.h` wires each to the matching block (gated on the ADC1/AC1/AC2 fit). Register map verified against DS40002205A 18.4-18.5.3 (p.162-165): CTRLC = ADC1REFSEL[6:4]+DAC1REFSEL[2:0], CTRLD = DAC2REFSEL[2:0]; host-tested in `test_avrxt_engine.c`. The stale "does not exist on the ATtiny3217" comments are corrected. *Remaining (polish):* CTRLB force-enable bits have no power/timing effect (no power model). | `avr_vref.c`, `sim_tinyx1.h` |
 
 **Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
 PORTMUX, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
@@ -39,8 +39,8 @@ RSTFR.BORF; only the power/sleep-fidelity aspects shared by all peripherals are
 unmodelled).
 
 **Previously listed as gap-free but NOT (see the [F] rows above):** CPUINT
-(IVSEL vector relocation is read-back-only) and VREF (ADC1/AC1 reference is
-read-back-only on the 16K/32K tinyAVR-1 parts that fit those instances).
+(IVSEL vector relocation is read-back-only). VREF was in this list but the
+ADC1/AC1/AC2 references are now wired (downgraded to [P]).
 
 ## Not implemented at all
 
@@ -161,9 +161,12 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
 8. **CPUINT IVSEL vector relocation** *(new [F])* — relocate the dispatch base
    when IVSEL is set (needs a boot-section notion in the flash/vector model).
    Affects bootloaders and any firmware relying on relocated vectors. All 23.
-9. **VREF ADC1/AC1 reference** *(new [F])* — publish ADC1/DAC1 reference IRQs and
-   wire them in `sim_tinyx1.h`; fix the stale "does not exist on the ATtiny3217"
-   comments. tinyAVR-1 16K/32K parts only.
+9. **VREF ADC1/AC1/AC2 reference** — *done.* The model now publishes ADC1_MV,
+   DAC1_MV and DAC2_MV, decoded from CTRLC (ADC1REFSEL[6:4]/DAC1REFSEL[2:0]) and
+   CTRLD (DAC2REFSEL[2:0]) per DS40002205A 18.4-18.5.3 (p.162-165); `sim_tinyx1.h`
+   wires ADC1, AC1 and AC2 (each gated on its fit). Stale "does not exist on the
+   ATtiny3217" comments corrected; host-tested in `test_avrxt_engine.c`.
+   tinyAVR-1 16K/32K parts only. [P]
 10. **NVM/identity config regions** *(existing [F], see "Not implemented at all")*
    — mirror the FUSE read-back window, make USERROW reset-persistent with
    NVMCTRL write/erase semantics, and populate SIGROW SERNUM/OSCnnERR. Firmware
