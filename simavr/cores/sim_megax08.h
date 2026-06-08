@@ -419,7 +419,8 @@ megax08_init(struct avr_t * avr)
 	avr_bod_set_brownout_handler(&mcu->bod, megax08_bod_brownout, mcu);
 
 	/* SYSCFG (REVID/EXTBRK) at 0x0F00 and SIGROW at 0x1100; revision A. */
-	avr_syscfg_init(avr, &mcu->syscfg, 0x0f00, 0x1100, 0x00);
+	/* SYSCFG 0x0F00, SIGROW 0x1100, FUSE window 0x1280 (9 bytes = FUSE_t). */
+	avr_syscfg_init(avr, &mcu->syscfg, 0x0f00, 0x1100, 0x1280, 9, 0x00);
 }
 
 static void

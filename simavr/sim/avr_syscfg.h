@@ -15,6 +15,13 @@
 	(TEMPSENSE, OSCnnERRxV) bytes are device-unique factory data with no canonical
 	simulator value and are left as plain (zero) read-only storage.
 
+	This block also exposes the memory-mapped FUSE read-back window (FUSE at
+	0x1280): per DS40002205A 6.10 the fuses can be read by the CPU but only
+	programmed (via UPDI / NVMCTRL Fuse Write). A live read handler returns the
+	matching avr->fuse[] byte so a firmware read of FUSE.OSCCFG / BODCFG /
+	SYSCFG0 / BOOTEND etc. sees the real fuse value (and any NVMCTRL FUSEWRITE
+	update), while direct CPU writes are ignored.
+
 	Copyright 2026 simavr authors
 
  	This file is part of simavr.
@@ -68,13 +75,17 @@ typedef struct avr_syscfg_t {
 
 	avr_io_addr_t	syscfg_base;
 	avr_io_addr_t	sigrow_base;
+	avr_io_addr_t	fuse_base;	/* memory-mapped FUSE read-back window */
+	uint8_t		fuse_count;	/* number of FUSE bytes exposed (FUSE_t size) */
 	uint8_t		revid;		/* SYSCFG.REVID value (0 = rev A) */
 } avr_syscfg_t;
 
 /*
- * Initialise the SYSCFG block at 'syscfg_base' and the signature row at
- * 'sigrow_base'. 'revid' is the reported silicon revision. SIGROW.DEVICEID is
- * taken from avr->signature[].
+ * Initialise the SYSCFG block at 'syscfg_base', the signature row at
+ * 'sigrow_base', and the FUSE read-back window at 'fuse_base' ('fuse_count'
+ * bytes, the FUSE_t size). 'revid' is the reported silicon revision.
+ * SIGROW.DEVICEID is taken from avr->signature[]; the FUSE window reflects
+ * avr->fuse[].
  */
 void
 avr_syscfg_init(
@@ -82,6 +93,8 @@ avr_syscfg_init(
 		avr_syscfg_t * p,
 		avr_io_addr_t syscfg_base,
 		avr_io_addr_t sigrow_base,
+		avr_io_addr_t fuse_base,
+		uint8_t fuse_count,
 		uint8_t revid);
 
 #ifdef __cplusplus

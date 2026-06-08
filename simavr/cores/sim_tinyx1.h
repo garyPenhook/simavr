@@ -527,7 +527,8 @@ tinyx1_init(struct avr_t * avr)
 
 	/* SYSCFG (REVID/EXTBRK) at 0x0F00 and the signature row (SIGROW) at 0x1100;
 	 * DEVICEID is the device signature, revision A (0x00). */
-	avr_syscfg_init(avr, &mcu->syscfg, 0x0f00, 0x1100, 0x00);
+	/* SYSCFG 0x0F00, SIGROW 0x1100, FUSE window 0x1280 (9 bytes = FUSE_t). */
+	avr_syscfg_init(avr, &mcu->syscfg, 0x0f00, 0x1100, 0x1280, 9, 0x00);
 }
 
 static void

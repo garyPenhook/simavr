@@ -29,11 +29,26 @@
 #include <string.h>
 #include "avr_syscfg.h"
 
-/* Read-only registers (REVID, DEVICEID): ignore firmware writes. */
+/* Read-only registers (REVID, DEVICEID, FUSE window): ignore firmware writes. */
 static void
 avr_syscfg_ro_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
 {
 	(void)avr; (void)addr; (void)v; (void)param;
+}
+
+/*
+ * Memory-mapped FUSE read-back (DS40002205A 6.10): the CPU can read the fuses
+ * but not program them. Return the live avr->fuse[] byte so reads see the
+ * loaded fuses and any NVMCTRL FUSEWRITE update; reserved fuse addresses read 0.
+ */
+static uint8_t
+avr_syscfg_fuse_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
+{
+	avr_syscfg_t *p = (avr_syscfg_t *)param;
+	uint8_t idx = addr - p->fuse_base;
+	if (idx >= sizeof(avr->fuse))
+		return 0;
+	return avr->fuse[idx];
 }
 
 static void
@@ -53,6 +68,11 @@ avr_syscfg_reset(avr_io_t *io)
 	/* Temperature-sensor calibration (read by the ADC temp channel and firmware). */
 	avr->data[p->sigrow_base + SIGROWR_TEMPSENSE0] = AVR_SIGROW_TEMPSENSE0_CAL;
 	avr->data[p->sigrow_base + SIGROWR_TEMPSENSE1] = AVR_SIGROW_TEMPSENSE1_CAL;
+
+	/* The FUSE window is served live by avr_syscfg_fuse_read from avr->fuse[];
+	 * mirror the bytes into data[] too so a debugger / raw data peek matches. */
+	for (uint8_t i = 0; i < p->fuse_count && i < sizeof(avr->fuse); i++)
+		avr->data[p->fuse_base + i] = avr->fuse[i];
 }
 
 static const char *irq_names[1] = { NULL };
@@ -69,12 +89,16 @@ avr_syscfg_init(
 		avr_syscfg_t * p,
 		avr_io_addr_t syscfg_base,
 		avr_io_addr_t sigrow_base,
+		avr_io_addr_t fuse_base,
+		uint8_t fuse_count,
 		uint8_t revid)
 {
 	memset(p, 0, sizeof(*p));
 	p->io = _io;
 	p->syscfg_base = syscfg_base;
 	p->sigrow_base = sigrow_base;
+	p->fuse_base = fuse_base;
+	p->fuse_count = fuse_count;
 	p->revid = revid;
 
 	avr_register_io(avr, &p->io);
@@ -84,4 +108,10 @@ avr_syscfg_init(
 	avr_register_io_write(avr, sigrow_base + SIGROWR_DEVICEID0, avr_syscfg_ro_write, p);
 	avr_register_io_write(avr, sigrow_base + SIGROWR_DEVICEID1, avr_syscfg_ro_write, p);
 	avr_register_io_write(avr, sigrow_base + SIGROWR_DEVICEID2, avr_syscfg_ro_write, p);
+
+	/* FUSE read-back window: live reads from avr->fuse[], writes ignored. */
+	for (uint8_t i = 0; i < fuse_count && i < sizeof(avr->fuse); i++) {
+		avr_register_io_read(avr, fuse_base + i, avr_syscfg_fuse_read, p);
+		avr_register_io_write(avr, fuse_base + i, avr_syscfg_ro_write, p);
+	}
 }

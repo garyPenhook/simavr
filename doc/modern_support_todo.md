@@ -54,7 +54,7 @@ NVM/identity **config regions** and one header-less silicon block:
 | Region / block | Addr | Status — what is NOT implemented | Affects |
 |---|---|---|---|
 | USERROW | 0x1300 | User signature row: RAM-backed only — no NVMCTRL write/erase semantics and **not preserved across reset** (persist range covers EEPROM only). Reads/writes hit data[] but behave like plain RAM. | all 23 |
-| FUSE read-back window | 0x1280 | Fuses live in `avr->fuse[]` and are consumed internally (BOD/CLKCTRL/CRCSCAN) and writable via NVMCTRL `FUSEWRITE`, but are **not mirrored into the data-space FUSE registers** — a direct firmware read of `FUSE.OSCCFG`/`BODCFG`/etc. returns 0. | all 23 |
+| FUSE read-back window | 0x1280 | **Done.** `avr_syscfg` exposes the 9-byte FUSE_t window with a live read handler returning `avr->fuse[]` (DS40002205A 6.10: fuses are CPU-readable, not CPU-writable), so `FUSE.OSCCFG`/`BODCFG`/`SYSCFG0`/`BOOTEND` etc. read the real fuse value and reflect any NVMCTRL `FUSEWRITE`; direct writes are ignored. Host-tested. | all 23 |
 | LOCKBIT | 0x128A | Not modelled; reads 0. | all 23 |
 | SIGROW SERNUM / OSCnnERR | 0x1100+ | Only `DEVICEID[2:0]` and `TEMPSENSE0/1` are populated; the serial number (`SERNUM0..9`) and oscillator-error rows (`OSC16ERR*`, `OSC20ERR*`) read 0. | all 23 |
 | PTC (Peripheral Touch Controller) | — | Present on tinyAVR-1 silicon but **absent from the avr-libc headers**, so it has no register map and no model (cannot be header-driven). | 15 tinyAVR-1 |
@@ -171,9 +171,10 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
    ATtiny3217" comments corrected; host-tested in `test_avrxt_engine.c`.
    tinyAVR-1 16K/32K parts only. [P]
 10. **NVM/identity config regions** *(existing [F], see "Not implemented at all")*
-   — mirror the FUSE read-back window, make USERROW reset-persistent with
-   NVMCTRL write/erase semantics, and populate SIGROW SERNUM/OSCnnERR. Firmware
-   reading oscillator calibration, serial number, or fuse bytes gets bad data.
+   — **FUSE read-back window done** (`avr_syscfg`, live read of `avr->fuse[]`,
+   host-tested). *Remaining:* make USERROW reset-persistent with NVMCTRL
+   write/erase semantics, populate SIGROW SERNUM/OSCnnERR, and model LOCKBIT.
+   Firmware reading oscillator calibration or serial number still gets zeros.
    All 23.
 11. Polish [P]: USART line-level timing, SPI pin contention, TCB first-period
    scheduling, EVSYS generator-source encodings, ADC exact timing.

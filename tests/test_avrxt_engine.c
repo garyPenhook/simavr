@@ -3358,6 +3358,23 @@ int main(void)
 		/* SYSCFG.EXTBRK is a writable store. */
 		cpu_write(m, SYS + SYSCFGR_EXTBRK, 0x01);
 		check("SYSCFG EXTBRK stores", cpu_read(m, SYS + SYSCFGR_EXTBRK), 0x01);
+
+		/* FUSE read-back window (0x1280): the CPU can read the fuses (DS40002205A
+		 * 6.10). FUSE_t bytes: 1=BODCFG, 2=OSCCFG, 5=SYSCFG0, 8=BOOTEND. */
+		const avr_io_addr_t FUSE = 0x1280;
+		m->fuse[1] = 0x44; m->fuse[2] = 0x7e; m->fuse[5] = 0xf6; m->fuse[8] = 4;
+		avr_reset(m);
+		check("FUSE.BODCFG read-back", cpu_read(m, FUSE + 1), 0x44);
+		check("FUSE.OSCCFG read-back", cpu_read(m, FUSE + 2), 0x7e);
+		check("FUSE.SYSCFG0 read-back", cpu_read(m, FUSE + 5), 0xf6);
+		check("FUSE.BOOTEND read-back", cpu_read(m, FUSE + 8), 4);
+		/* The window is read-only: a direct CPU write is ignored. */
+		cpu_write(m, FUSE + 2, 0x00);
+		check("FUSE window read-only (OSCCFG unchanged)", cpu_read(m, FUSE + 2), 0x7e);
+		/* The read is live: an NVMCTRL FUSEWRITE (modelled as an avr->fuse[]
+		 * update) is reflected immediately. */
+		m->fuse[2] = 0x12;
+		check("FUSE window tracks fuse[] (live)", cpu_read(m, FUSE + 2), 0x12);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
