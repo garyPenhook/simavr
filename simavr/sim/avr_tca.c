@@ -41,8 +41,9 @@
 #define CLKSEL_gm	0x0e
 #define CLKSEL_gp	1
 
-/* CTRLB (normal-mode view): WGMODE[2:0], CMPnEN at bits 5/6/7 (DS40002205A
- * 20.5.2). Only single-slope PWM waveform output is modelled here. */
+/* CTRLB (normal-mode view): WGMODE[2:0], CMP0/1/2EN at bits 4/5/6 (DS40002205A
+ * 20.5.2; avr-libc TCA_SINGLE_CMP0EN_bm=0x10). Only single-slope PWM waveform
+ * output is modelled here. */
 #define WGMODE_gm		0x07
 #define WGMODE_SINGLESLOPE	0x03
 
@@ -65,7 +66,7 @@ enum {
 
 static const uint16_t clksel_div[8] = { 1, 2, 4, 8, 16, 64, 256, 1024 };
 static const uint8_t cmp_flag[3] = { CMP0_bm, CMP1_bm, CMP2_bm };
-static const uint8_t cmpen_bm[3] = { 0x20, 0x40, 0x80 };	/* CMP0/1/2EN */
+static const uint8_t cmpen_bm[3] = { 0x10, 0x20, 0x40 };	/* CTRLB CMP0/1/2EN */
 
 static uint32_t tca_top(avr_tca_t *p)
 {
@@ -399,7 +400,8 @@ static void
 avr_tca_reset(avr_io_t *io)
 {
 	avr_tca_t *p = (avr_tca_t *)io;
-	avr_cycle_timer_cancel(p->io.avr, avr_tca_event, p);
+	avr_t *avr = p->io.avr;
+	avr_cycle_timer_cancel(avr, avr_tca_event, p);
 	p->start_cycle = 0;
 	p->prescale = 1;
 	p->ev_target = 0;
@@ -407,6 +409,13 @@ avr_tca_reset(avr_io_t *io)
 	p->ev_input = 0;
 	for (int ch = 0; ch < 3; ch++)
 		p->wo_level[ch] = 0;
+	/* PER and PERBUF reset to 0xFFFF (DS40002205A 20.5.15), not 0 — the data[]
+	 * clear loop already zeroed them, so restore the real TOP default here.
+	 * CMPn/CMPnBUF reset to 0, which the clear loop already produced. */
+	avr->data[p->r_per] = 0xff;
+	avr->data[p->r_per + 1] = 0xff;
+	avr->data[p->base + 0x36] = 0xff;	/* PERBUFL */
+	avr->data[p->base + 0x37] = 0xff;	/* PERBUFH */
 }
 
 static const char *irq_names[AVR_TCA_IRQ_COUNT] = {

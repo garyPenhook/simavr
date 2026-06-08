@@ -988,6 +988,11 @@ int main(void)
 		avr_init(m);
 		memset(m->flash, 0, 0x2000);	/* NOPs */
 
+		/* PER (and PERBUF) reset to 0xFFFF, not 0 (DS40002205A 20.5.15). */
+		check("TCA PER resets to 0xFFFF (low)", cpu_read(m, TA + TCAR_PERL), 0xff);
+		check("TCA PER resets to 0xFFFF (high)", cpu_read(m, TA + TCAR_PERH), 0xff);
+		check("TCA PERBUF resets to 0xFFFF (low)", cpu_read(m, TA + 0x36), 0xff);
+
 		cpu_write(m, TA + TCAR_PERL, 200); cpu_write(m, TA + TCAR_PERH, 0);
 		cpu_write(m, TA + TCAR_CMP1L, 50); cpu_write(m, TA + TCAR_CMP1L + 1, 0);
 		cpu_write(m, TA + TCAR_INTCTRL, F_OVF | F_CMP1);	/* OVF + CMP1 enable */
@@ -1053,7 +1058,8 @@ int main(void)
 	{
 		const avr_io_addr_t TA = 0xa00, L = 0x1c0;
 		enum { ENABLE = 0x01 };
-		enum { WGMODE_SS = 0x03, WGMODE_FRQ = 0x01, CMP0EN = 0x20 };
+		enum { WGMODE_SS = 0x03, WGMODE_FRQ = 0x01,
+			   CMP0EN = 0x10, CMP1EN = 0x20, CMP2EN = 0x40 };	/* CTRLB bits 4/5/6 */
 		enum { CCL_EN = 0x01, LUT_EN = 0x01, CTRLA = 0x00,
 			   L0CTRLA = 0x05, L0CTRLB = 0x06, L0CTRLC = 0x07, TRUTH0 = 0x08 };
 
@@ -1108,6 +1114,16 @@ int main(void)
 		/* Clearing CMP0EN stops overriding the pin (low). */
 		cpu_write(m, TA + TCAR_CTRLB, WGMODE_SS);
 		check("WO0 low when CMP0EN cleared", wo0, 0);
+
+		/* Discriminating check (CTRLB bit positions): WO0 is gated by CMP0EN
+		 * (bit 4 = 0x10), NOT by CMP1EN (bit 5 = 0x20). Enabling only CMP1EN
+		 * must leave WO0 low. CMP0 is 30 (< TOP), so a wrong bit map would drive
+		 * WO0 high here. */
+		cpu_write(m, TA + TCAR_CMP0L, 30); cpu_write(m, TA + TCAR_CMP0L + 1, 0);
+		cpu_write(m, TA + TCAR_CTRLB, WGMODE_SS | CMP1EN);
+		check("WO0 NOT driven by CMP1EN (bit map correct)", wo0, 0);
+		cpu_write(m, TA + TCAR_CTRLB, WGMODE_SS | CMP0EN);
+		check("WO0 driven by CMP0EN=0x10", wo0, 1);
 
 		/* FRQ / dual-slope WGMODE variants are unmodelled => WO stays low. */
 		cpu_write(m, TA + TCAR_CMP0L, 30); cpu_write(m, TA + TCAR_CMP0L + 1, 0);
