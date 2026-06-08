@@ -1898,6 +1898,108 @@ int main(void)
 		#undef ADC_RES
 	}
 
+	printf("== modern ADC0 wide coverage (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t A = 0x600;
+		enum { ENABLE = 0x01, FREERUN = 0x02, RESSEL8 = 0x04, STCONV = 0x01 };
+		enum { F_RESRDY = 0x01, F_WCMP = 0x02 };
+		enum { WINCM_BELOW = 1, WINCM_ABOVE = 2, WINCM_INSIDE = 3,
+			   WINCM_OUTSIDE = 4, WINCM_NONE = 0 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		#define ADC_CONVERT() do { \
+			cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY | F_WCMP);	/* W1C clear */ \
+			cpu_write(m, A + ADCMR_COMMAND, STCONV); \
+			for (int i = 0; i < 4000 && \
+				 !(m->data[A + ADCMR_INTFLAGS] & F_RESRDY); i++) avr_run(m); \
+		} while (0)
+		#define ADC_RES() (cpu_read(m, A + ADCMR_RESL) | \
+						   (cpu_read(m, A + ADCMR_RESH) << 8))
+		#define SET_MV(ch,mv) avr_raise_irq( \
+			avr_io_getirq(m, AVR_IOCTL_ADCM_GETIRQ('0'), (ch)), (mv))
+
+		cpu_write(m, A + ADCMR_MUXPOS, 3);
+		SET_MV(3, 1650);
+
+		/* 8-bit resolution (CTRLA.RESSEL): 1650/3300 -> 128, and clamp at 255. */
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE | RESSEL8);
+		ADC_CONVERT();  check("8-bit 1650mV -> 128", ADC_RES(), 128);
+		SET_MV(3, 3300); ADC_CONVERT(); check("8-bit clamps to 255", ADC_RES(), 255);
+
+		/* 10-bit clamp when input >= vref. */
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);
+		SET_MV(3, 5000); ADC_CONVERT(); check("10-bit >vref clamps to 1023", ADC_RES(), 1023);
+		SET_MV(3, 1650);
+
+		/* All window-comparator modes against a 512 result, window [100,200]. */
+		cpu_write(m, A + ADCMR_WINLTL, 100); cpu_write(m, A + ADCMR_WINLTL + 1, 0);
+		cpu_write(m, A + ADCMR_WINHTL, 200); cpu_write(m, A + ADCMR_WINHTL + 1, 0);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_BELOW);
+		ADC_CONVERT(); check("WIN BELOW: 512<100 -> no", !!(m->data[A+ADCMR_INTFLAGS]&F_WCMP), 0);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_ABOVE);
+		ADC_CONVERT(); check("WIN ABOVE: 512>200 -> yes", !!(m->data[A+ADCMR_INTFLAGS]&F_WCMP), 1);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_INSIDE);
+		ADC_CONVERT(); check("WIN INSIDE [100,200]: 512 -> no", !!(m->data[A+ADCMR_INTFLAGS]&F_WCMP), 0);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_OUTSIDE);
+		ADC_CONVERT(); check("WIN OUTSIDE [100,200]: 512 -> yes", !!(m->data[A+ADCMR_INTFLAGS]&F_WCMP), 1);
+		cpu_write(m, A + ADCMR_CTRLE, WINCM_NONE);
+		ADC_CONVERT(); check("WIN NONE: never flags", !!(m->data[A+ADCMR_INTFLAGS]&F_WCMP), 0);
+		cpu_write(m, A + ADCMR_CTRLE, 0);
+
+		/* 64-sample accumulation sum (no averaging): 64 * 512 = 32768. */
+		cpu_write(m, A + ADCMR_CTRLB, 6);
+		ADC_CONVERT(); check("64-sample accumulation = 32768", ADC_RES(), 32768);
+		cpu_write(m, A + ADCMR_CTRLB, 0);
+
+		/* STCONV self-clears on completion. */
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);
+		cpu_write(m, A + ADCMR_COMMAND, STCONV);
+		check("STCONV busy immediately after start",
+			  !!(m->data[A + ADCMR_COMMAND] & STCONV), 1);
+		for (int i = 0; i < 4000 && !(m->data[A+ADCMR_INTFLAGS]&F_RESRDY); i++) avr_run(m);
+		check("STCONV self-clears on completion",
+			  !!(m->data[A + ADCMR_COMMAND] & STCONV), 0);
+
+		/* Disabling the ADC cancels an in-flight conversion (no RESRDY). */
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);
+		cpu_write(m, A + ADCMR_COMMAND, STCONV);
+		cpu_write(m, A + ADCMR_CTRLA, 0);	/* disable mid-flight */
+		for (int i = 0; i < 2000; i++) avr_run(m);
+		check("disable cancels in-flight conversion",
+			  !!(m->data[A + ADCMR_INTFLAGS] & F_RESRDY), 0);
+
+		/* Free-running keeps converting without further STCONV writes. */
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE | FREERUN);
+		for (int i = 0; i < 2000; i++) avr_run(m);
+		check("free-run produced a result", ADC_RES(), 512);
+		cpu_write(m, A + ADCMR_INTFLAGS, F_RESRDY);	/* W1C clear */
+		for (int i = 0; i < 2000; i++) avr_run(m);
+		check("free-run re-sets RESRDY", !!(m->data[A+ADCMR_INTFLAGS]&F_RESRDY), 1);
+		cpu_write(m, A + ADCMR_CTRLA, ENABLE);
+
+		/* Temperature-sensor channel: code recovers ~300 K via the datasheet
+		 * transfer function with the modelled SIGROW cal. */
+		SET_MV(AVR_ADCM_CH_TEMPSENSE, 300);	/* die temp in Kelvin on the temp IRQ */
+		cpu_write(m, A + ADCMR_MUXPOS, AVR_ADCM_CH_TEMPSENSE);
+		ADC_CONVERT();
+		{
+			int code = ADC_RES();
+			int off = (int8_t)cpu_read(m, 0x1100 + 0x21);
+			int gain = cpu_read(m, 0x1100 + 0x20);
+			int tk = ((code - off) * gain + 0x80) >> 8;
+			check("temp-sensor round-trip ~300K", (tk >= 298 && tk <= 302), 1);
+		}
+
+		#undef ADC_CONVERT
+		#undef ADC_RES
+		#undef SET_MV
+	}
+
 	printf("== modern ADC0 reference select (CTRLC.REFSEL + VREF) (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t A = 0x600, V = 0x0a0;
