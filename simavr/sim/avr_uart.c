@@ -28,6 +28,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "avr_uart.h"
+#include "avr_ioport.h"
 #include "sim_core.h"
 #include "sim_hex.h"
 #include "sim_time.h"
@@ -289,6 +290,30 @@ avr_uart_udr_write(
 }
 
 
+/*
+ * Claim or release a USART pin (TxD/RxD) from the GPIO port via the ioport
+ * pin-function override. 'out' selects forced direction (TxD = output high
+ * idle, RxD = input). No-op when the core did not wire the pin (port == 0).
+ */
+static void
+avr_uart_set_pin_function(
+		avr_t * avr,
+		avr_uart_iopin_t * pin,
+		int claim,
+		int out)
+{
+	if (!pin->port)
+		return;
+	avr_ioport_function_t f = {
+		.name = pin->port,
+		.mask = 1 << pin->pin,
+		.claim = claim ? 1 : 0,
+		.ddr = out ? (1 << pin->pin) : 0,
+		.value = out ? (1 << pin->pin) : 0,	// TxD idles high (mark)
+	};
+	avr_ioctl(avr, AVR_IOCTL_IOPORT_SET_FUNCTION(pin->port), &f);
+}
+
 static void
 avr_uart_write(
 		struct avr_t * avr,
@@ -366,7 +391,19 @@ avr_uart_write(
 	if (clear_rxc)
 		avr_uart_clear_interrupt(avr, &p->rxc);
 
-	///TODO: handle the RxD & TxD pins function override
+	// Hand the TxD/RxD pins to/from the USART to match TXEN/RXEN: while TXEN is
+	// set the USART owns TxD as a high-idle output, and while RXEN is set it
+	// owns RxD as an input, overriding GPIO DDR/PORT (real pin-function
+	// override). Reconcile only on writes to the control register that holds
+	// TXEN/RXEN, and from the written bit values rather than a transition: the
+	// UART model pre-sets TXEN at reset (a printf-without-enable convenience)
+	// without going through this callback, so a transition test would miss it
+	// while a reset-time claim would wrongly grab the pin on cores that use it
+	// as GPIO. A core that does not wire the pins is unaffected (port == 0).
+	if (addr == p->txen.reg) {
+		avr_uart_set_pin_function(avr, &p->txd, new_txen, 1 /*output*/);
+		avr_uart_set_pin_function(avr, &p->rxd, new_rxen, 0 /*input*/);
+	}
 
 	if (new_rxen != rxen) {
 		if (new_rxen) {

@@ -64,6 +64,12 @@ DECLARE_FIFO(uint16_t, uart_fifo, 64);
  * }
  *
  */
+// Optional port/pin coordinates for USART pin-function override (TxD/RxD).
+// port == 0 means "not wired" and leaves the model unchanged.
+typedef struct avr_uart_iopin_t {
+	uint8_t port, pin;
+} avr_uart_iopin_t;
+
 enum {
 	UART_IRQ_INPUT = 0,
 	UART_IRQ_OUTPUT,
@@ -128,6 +134,13 @@ typedef struct avr_uart_t {
 
 	uint8_t *		stdio_out;
 	int				stdio_len;	// current size in the stdio output
+
+	// Optional TxD/RxD pin coordinates for pin-function override. When a core
+	// wires them (port set to the uppercase port letter), the USART claims the
+	// TxD pin as a high-idle output while TXEN is set and the RxD pin as an
+	// input while RXEN is set, overriding GPIO DDR/PORT — matching the real
+	// pin ownership. port == 0 leaves the model byte-for-byte unchanged.
+	avr_uart_iopin_t	txd, rxd;
 } avr_uart_t;
 
 /* takes a uint32_t* as parameter */

@@ -295,6 +295,10 @@ avr_spi_modern_ctrlb_write(struct avr_t *avr, avr_io_addr_t addr,
 
 	avr_core_watch_write(avr, addr, v);
 	if (!!(old & BUFEN_bm) != !!(v & BUFEN_bm)) {
+		/* Tear down any in-flight transfer so it cannot complete later under
+		 * the new mode and leak a stale OUTPUT/interrupt across the boundary. */
+		avr_cycle_timer_cancel(avr, avr_spi_modern_xfer, p);
+		p->busy = 0;
 		p->tx_shift_valid = 0;
 		p->tx_buf_valid = 0;
 		p->rx_head = 0;

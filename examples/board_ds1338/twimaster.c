@@ -72,17 +72,22 @@ unsigned char i2c_start(unsigned char address)
 /*************************************************************************
  Issues a start condition and sends address and transfer direction.
  If device is busy, use ack polling to wait until device is ready
- 
- FIXME: If device doesn't exist stays in an infinite loop
+
+ An absent device NACKs every poll, so the wait is bounded by
+ I2C_START_WAIT_MAX_RETRIES and gives up (leaving the bus stopped) rather
+ than spinning forever.
 
  Input:   address and transfer direction of I2C device
 *************************************************************************/
+#ifndef I2C_START_WAIT_MAX_RETRIES
+#define I2C_START_WAIT_MAX_RETRIES 100
+#endif
 void i2c_start_wait(unsigned char address)
 {
     uint8_t   twst;
+    uint16_t  retry = I2C_START_WAIT_MAX_RETRIES;
 
-
-    while ( 1 )
+    while ( retry-- )
     {
 	    // send START condition
 	    TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);

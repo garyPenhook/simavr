@@ -78,6 +78,21 @@ static void spi_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
 	g_spi_out = value & 0xff;
 }
 
+/* Captures the last ACK/NACK a modern-TWI slave emits on the wire (the data
+ * bit is 1=ACK, 0=NACK). */
+static int g_twi_ack_seen;
+static uint8_t g_twi_ack_bit;
+static void twi_ack_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq; (void)param;
+	avr_twi_msg_irq_t m;
+	m.u.v = value;
+	if (m.u.twi.msg & TWI_COND_ACK) {
+		g_twi_ack_seen = 1;
+		g_twi_ack_bit = m.u.twi.data & 1;
+	}
+}
+
 /* Captures the DAC output (millivolts, full width). */
 static uint32_t g_dac_out;
 static void dac_capture_hook(struct avr_irq_t *irq, uint32_t value, void *param)
@@ -524,6 +539,9 @@ int main(void)
 						avr_io_getirq(tw, ioctl, TWI_IRQ_INPUT));
 		avr_connect_irq(avr_io_getirq(tw, ioctl, TWI_IRQ_OUTPUT),
 						slave.irq + TWI_IRQ_OUTPUT);
+		/* Tap the wire to observe the ACK/NACK our own slave role emits. */
+		avr_irq_register_notify(avr_io_getirq(tw, ioctl, TWI_IRQ_OUTPUT),
+								twi_ack_capture_hook, NULL);
 
 		/* ---- Master: enable, force idle ---- */
 		cpu_write(tw, B + TWIM_MCTRLA, MENABLE);
@@ -591,6 +609,27 @@ int main(void)
 		avr_raise_irq(in, avr_twi_irq_msg(TWI_COND_STOP, (0x33 << 1) | 0, 0));
 		check("slave APIF set on STOP",
 			  !!(tw->data[B + TWIM_SSTATUS] & SS_APIF), 1);
+
+		/* ---- Slave honours SCTRLB.ACKACT: NACK the next address ---- */
+		enum { S_ACKACT = 0x04 };
+		/* Clear the lingering APIF and arm ACKACT=NACK in one write (the
+		 * datasheet permits ACKACT and SCMD together, DS40002205A 26.5.10). */
+		cpu_write(tw, B + TWIM_SCTRLB, SCMD_RESPONSE | S_ACKACT);
+		check("APIF cleared before ACKACT test",
+			  !!(tw->data[B + TWIM_SSTATUS] & SS_APIF), 0);
+		g_twi_ack_seen = 0;
+		avr_raise_irq(in, avr_twi_irq_msg(TWI_COND_START | TWI_COND_ADDR,
+										  (0x33 << 1) | 0, 0));
+		check("slave NACKs the address when ACKACT=1",
+			  g_twi_ack_seen && g_twi_ack_bit == 0, 1);
+		check("slave still raises APIF on a NACKed address",
+			  !!(tw->data[B + TWIM_SSTATUS] & SS_APIF), 1);
+		/* A NACKed address leaves the slave unselected: a following data byte
+		 * is dropped rather than latched into SDATA. */
+		cpu_write(tw, B + TWIM_SDATA, 0x00);
+		avr_raise_irq(in, avr_twi_irq_msg(TWI_COND_WRITE, (0x33 << 1) | 0, 0x99));
+		check("NACKed slave ignores the following write byte",
+			  tw->data[B + TWIM_SDATA], 0x00);
 	}
 
 	printf("== sim_tiny3217 core: TWI0 wired in ==\n");
@@ -1590,6 +1629,45 @@ int main(void)
 		check("no RTC counter event after disable", fired, 0);
 	}
 
+	printf("== modern RTC live-reschedule continuity (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t R = 0x140;
+		enum { RTCEN = 0x01, F_CMP = 0x02 };
+		/* CLK_PER=3.333MHz, RTC src=32.768kHz => ~101 CPU cycles per RTC tick. */
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		cpu_write(m, R + RTCR_PERL, 0xff); cpu_write(m, R + RTCR_PERH, 0xff);
+		cpu_write(m, R + RTCR_CMPL, 0xff); cpu_write(m, R + RTCR_CMPH, 0xff);
+		cpu_write(m, R + RTCR_INTCTRL, 0);	/* flags only, no interrupt */
+		cpu_write(m, R + RTCR_CLKSEL, 0x00);	/* INT32K */
+		cpu_write(m, R + RTCR_CTRLA, RTCEN);
+
+		/* Advance the counter ~10 ticks WITHOUT reading CNT, so the CNT
+		 * register stays stale at 0 (it is only refreshed on a CNT read). */
+		long s = (long)m->cycle;
+		while ((long)m->cycle - s < 1010) avr_run(m);
+
+		/* Move CMP just ahead of the live count. The reschedule must anchor
+		 * from the live count (~10 ticks), so the match lands ~2 ticks later.
+		 * The pre-fix bug re-anchored from the stale CNT register (0) and
+		 * pushed the match out to ~12 ticks (~1200 cycles). */
+		cpu_write(m, R + RTCR_CMPL, 12); cpu_write(m, R + RTCR_CMPH, 0);
+
+		long w = (long)m->cycle, tcmp = -1;
+		for (int i = 0; i < 4000 && tcmp < 0; i++) {
+			avr_run(m);
+			if (m->data[R + RTCR_INTFLAGS] & F_CMP) tcmp = (long)m->cycle - w;
+		}
+		check("CMP match found after live reschedule", tcmp >= 0, 1);
+		check("CMP match anchored to live count (not stale CNT)",
+			  tcmp >= 0 && tcmp < 600, 1);
+	}
+
 	printf("== modern RTC STATUS / PITSTATUS sync-busy (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t R = 0x140;
@@ -2141,6 +2219,39 @@ int main(void)
 		for (int i = 0; i < 400 && !(m->data[S + SPIMR_INTFLAGS] & F_IF); i++)
 			avr_run(m);
 		check("first byte (0x11) clocked, not 0x22", g_spi_mosi, 0x11);
+	}
+
+	printf("== modern SPI0 BUFEN mode-switch teardown (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t S = 0x820;
+		enum { ENABLE = 0x01, MASTER = 0x20, BUFEN = 0x80 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);	/* NOPs */
+
+		g_spi_avr = m;
+		g_spi_mosi = 0;
+		avr_irq_register_notify(
+			avr_io_getirq(m, AVR_IOCTL_SPI_GETIRQ('0'), SPI_IRQ_OUTPUT),
+			spi_echo_hook, NULL);
+
+		/* Buffered master: kick off a transfer, then flip BUFEN mid-flight. */
+		cpu_write(m, S + SPIMR_CTRLA, ENABLE | MASTER);
+		cpu_write(m, S + SPIMR_CTRLB, BUFEN);
+		cpu_write(m, S + SPIMR_DATA, 0x5a);	/* schedules a transfer (busy) */
+		cpu_write(m, S + SPIMR_CTRLB, 0);	/* switch to unbuffered mid-flight */
+
+		/* The in-flight transfer must be torn down: it may not complete later
+		 * under the new mode and leak a stale MOSI byte, interrupt or flag. */
+		for (int i = 0; i < 200; i++) avr_run(m);
+		check("cancelled transfer emits no MOSI byte", g_spi_mosi, 0);
+		check("no stale interrupt after BUFEN switch",
+			  avr_has_pending_interrupts(m), 0);
+		check("INTFLAGS clear after BUFEN switch",
+			  m->data[S + SPIMR_INTFLAGS], 0);
 	}
 
 	printf("== modern SPI0 client (sim_tiny3217) ==\n");

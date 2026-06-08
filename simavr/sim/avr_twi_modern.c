@@ -358,8 +358,16 @@ avr_twi_modern_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 				clr_bits(avr, p->r_sstatus, S_DIR);
 				set_bits(avr, p->r_sstatus,
 						 S_AP | S_APIF | S_CLKHOLD | (dir ? S_DIR : 0));
-				/* Auto-ACK the address so the synchronous master proceeds. */
-				twi_modern_send(p, TWI_COND_ACK, p->s_selected, 1);
+				/* Honour the pre-configured ACKACT (SCTRLB.ACKACT: 0=ACK,
+				 * 1=NACK, DS40002205A 26.5.10). In this synchronous model the
+				 * master reads our reply before firmware can run, so firmware
+				 * that wants to reject an address pre-arms ACKACT=NACK. A NACK
+				 * leaves APIF set (firmware still sees the address) but the slave
+				 * is not selected, so no data is exchanged. */
+				uint8_t aack = (rd(avr, p->r_sctrlb) & S_ACKACT) ? 0 : 1;
+				twi_modern_send(p, TWI_COND_ACK, p->s_selected, aack);
+				if (!aack)
+					p->s_selected = 0;
 				if (rd(avr, p->r_sctrla) & S_APIEN)
 					avr_raise_interrupt(avr, &p->svector);
 			}
@@ -372,7 +380,11 @@ avr_twi_modern_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 			wr(avr, p->r_sdata, msg.u.twi.data);
 			clr_bits(avr, p->r_sstatus, S_DIR);
 			set_bits(avr, p->r_sstatus, S_DIF | S_CLKHOLD);
-			twi_modern_send(p, TWI_COND_ACK, p->s_selected, 1);
+			/* ACK/NACK the received byte per ACKACT (DS40002205A
+			 * 26.5.10): firmware pre-arms ACKACT=NACK to reject a
+			 * write. A NACK is reported to the master via RXACK. */
+			uint8_t dack = (rd(avr, p->r_sctrlb) & S_ACKACT) ? 0 : 1;
+			twi_modern_send(p, TWI_COND_ACK, p->s_selected, dack);
 			if (rd(avr, p->r_sctrla) & S_DIEN)
 				avr_raise_interrupt(avr, &p->svector);
 		}

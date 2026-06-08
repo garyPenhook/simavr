@@ -85,6 +85,26 @@ typedef struct avr_ioport_external_t {
 // add port name (uppercase) to set default input pin IRQ values
 #define AVR_IOCTL_IOPORT_SET_EXTERNAL(_name) AVR_IOCTL_DEF('i','o','p',(_name))
 
+/*
+ * Peripheral pin-function override. A peripheral (e.g. a USART claiming its
+ * TxD/RxD pins when TXEN/RXEN are set) uses this to take a pin's direction and
+ * output level away from the GPIO DDR/PORT registers, and to hand it back.
+ *   claim == 1: own the pins in 'mask'; their direction becomes 'ddr' and, for
+ *               pins forced to output, their level becomes 'value'.
+ *   claim == 0: release the pins in 'mask' back to GPIO control.
+ * Pins not listed in 'mask' are untouched.
+ */
+typedef struct avr_ioport_function_t {
+	unsigned long name : 7,
+		mask : 8,	// pins this call addresses
+		claim : 1,	// 1 = take over, 0 = release back to GPIO
+		ddr : 8,	// forced direction for claimed pins (1 = output)
+		value : 8;	// forced output level for claimed output pins
+} avr_ioport_function_t;
+
+// add port name (uppercase) to claim/release pins for a peripheral function
+#define AVR_IOCTL_IOPORT_SET_FUNCTION(_name) AVR_IOCTL_DEF('i','o','f',(_name))
+
 /**
  * pin structure
  */
@@ -124,6 +144,14 @@ typedef struct avr_ioport_t {
 	struct {
 		uint8_t pull_mask, pull_value;
 	} external;
+
+	// Peripheral pin-function override (see avr_ioport_function_t). When a bit
+	// is set in func.mask the pin's direction/output is forced by the owning
+	// peripheral instead of DDR/PORT. Empty by default, so a port with no
+	// claimed pins behaves exactly as before.
+	struct {
+		uint8_t mask, ddr, value;
+	} func;
 } avr_ioport_t;
 
 void avr_ioport_init(avr_t * avr, avr_ioport_t * port);

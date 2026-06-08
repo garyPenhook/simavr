@@ -101,8 +101,11 @@ int main()
 
 	printf("P<%02X ", PIND);
 
-	/* TODO: Test the level-triggered interupt.  It can be started
-	 * by a pin-value change or by writing to either of EICRA and EIMSK.
+	/* The level-triggered (low-level) external interrupt is covered
+	 * separately by atmega168_extint_level.c / test_atmega168_extint_level.c,
+	 * which self-triggers INT0 via an output pin to exercise the continuous
+	 * re-trigger path and its termination without perturbing this test's
+	 * carefully choreographed expected-output strings.
 	 */
 
 	/* Try pin change interrupt. */

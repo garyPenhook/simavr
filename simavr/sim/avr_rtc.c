@@ -163,6 +163,21 @@ static uint32_t rtc_cnt_now(avr_rtc_t *p)
 	return ticks % (top + 1);
 }
 
+/* Freeze the live counter value into the CNT registers. While the RTC runs the
+ * CNT bytes are only refreshed on explicit CNT reads/writes, so a reschedule
+ * triggered by a CTRLA/CLKSEL/PER/CMP write must latch the true count first or
+ * it would re-anchor the phase from a stale (often 0) register value. Safe to
+ * call when stopped (cnt_cpt==0 → rtc_cnt_now()==0, but we bail anyway). */
+static void rtc_latch_cnt(avr_rtc_t *p)
+{
+	avr_t *avr = p->io.avr;
+	if (!p->cnt_cpt || !rtc_cnt_enabled(p))
+		return;
+	uint16_t cnt = rtc_cnt_now(p);
+	avr->data[p->r_cnt] = cnt & 0xff;
+	avr->data[p->r_cnt + 1] = cnt >> 8;
+}
+
 /* Smallest event count strictly greater than 'from' (compare, or PER+1 wrap). */
 static uint32_t rtc_next_target(avr_rtc_t *p, uint32_t from)
 {
@@ -273,6 +288,7 @@ avr_rtc_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 					uint8_t v, void *param)
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
+	rtc_latch_cnt(p);	/* preserve live count across the reschedule */
 	avr_core_watch_write(avr, addr, v);
 	rtc_mark_busy(p, BUSY_CTRLA);
 	avr_rtc_cnt_reschedule(p);
@@ -283,6 +299,7 @@ avr_rtc_clksel_write(struct avr_t *avr, avr_io_addr_t addr,
 					 uint8_t v, void *param)
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
+	rtc_latch_cnt(p);	/* preserve live count across the reschedule */
 	avr_core_watch_write(avr, addr, v);
 	/* Clock source changed: both functions re-derive their period. */
 	avr_rtc_cnt_reschedule(p);
@@ -294,6 +311,7 @@ avr_rtc_per_write(struct avr_t *avr, avr_io_addr_t addr,
 				  uint8_t v, void *param)
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
+	rtc_latch_cnt(p);	/* preserve live count across the reschedule */
 	avr_core_watch_write(avr, addr, v);	/* low or high byte */
 	rtc_mark_busy(p, BUSY_PER);
 	if (rtc_cnt_enabled(p))
@@ -305,6 +323,7 @@ avr_rtc_cmp_write(struct avr_t *avr, avr_io_addr_t addr,
 				  uint8_t v, void *param)
 {
 	avr_rtc_t *p = (avr_rtc_t *)param;
+	rtc_latch_cnt(p);	/* preserve live count across the reschedule */
 	avr_core_watch_write(avr, addr, v);	/* low or high byte */
 	rtc_mark_busy(p, BUSY_CMP);
 	if (rtc_cnt_enabled(p))

@@ -55,6 +55,20 @@ avr_ioport_flag_bit_write(
 	return 1;
 }
 
+/* Effective direction with the peripheral pin-function override applied. */
+static inline uint8_t
+avr_ioport_eff_ddr(avr_ioport_t * p, uint8_t ddr)
+{
+	return (ddr & ~p->func.mask) | (p->func.ddr & p->func.mask);
+}
+
+/* Effective PORT (output drive) with the override applied. */
+static inline uint8_t
+avr_ioport_eff_port(avr_ioport_t * p, uint8_t port)
+{
+	return (port & ~p->func.mask) | (p->func.value & p->func.mask);
+}
+
 static uint8_t
 avr_ioport_read(
 		struct avr_t * avr,
@@ -62,8 +76,9 @@ avr_ioport_read(
 		void * param)
 {
 	avr_ioport_t * p = (avr_ioport_t *)param;
-	uint8_t ddr = avr->data[p->r_ddr];
-	uint8_t v = (avr->data[p->r_pin] & ~ddr) | (avr->data[p->r_port] & ddr);
+	uint8_t ddr = avr_ioport_eff_ddr(p, avr->data[p->r_ddr]);
+	uint8_t v = (avr->data[p->r_pin] & ~ddr) |
+				(avr_ioport_eff_port(p, avr->data[p->r_port]) & ddr);
 
 	avr->data[addr] = v;
 	avr_raise_irq(p->io.irq + IOPORT_IRQ_REG_PIN, v);
@@ -79,7 +94,8 @@ avr_ioport_update_irqs(
 		avr_ioport_t * p)
 {
 	avr_t * avr = p->io.avr;
-	uint8_t ddr = avr->data[p->r_ddr];
+	uint8_t ddr = avr_ioport_eff_ddr(p, avr->data[p->r_ddr]);
+	uint8_t port = avr_ioport_eff_port(p, avr->data[p->r_port]);
 
 	// Set the PORT value if the pin is marked as output
 	// otherwise, if there is an 'external' pullup, set it
@@ -88,7 +104,7 @@ avr_ioport_update_irqs(
 
 	for (int i = 0; i < 8; i++) {
 		if (ddr & (1 << i))
-			avr_raise_irq(p->io.irq + i, (avr->data[p->r_port] >> i) & 1);
+			avr_raise_irq(p->io.irq + i, (port >> i) & 1);
 		else if (!avr->options.no_pullups) {
 			if (p->external.pull_mask & (1 << i))
 				avr_raise_irq(p->io.irq + i,
@@ -99,7 +115,7 @@ avr_ioport_update_irqs(
 			}
 		}
 	}
-	uint8_t pin = (avr->data[p->r_pin] & ~ddr) | (avr->data[p->r_port] & ddr);
+	uint8_t pin = (avr->data[p->r_pin] & ~ddr) | (port & ddr);
 	pin = (pin & ~p->external.pull_mask) | p->external.pull_value;
 	avr_raise_irq(p->io.irq + IOPORT_IRQ_PIN_ALL, pin);
 
@@ -279,6 +295,9 @@ avr_ioport_reset(
 		avr_io_t * port)
 {
 	avr_ioport_t * p = (avr_ioport_t *)port;
+	// Pins return to GPIO control on reset (peripherals re-claim on their own
+	// register writes, e.g. USART TXEN/RXEN).
+	p->func.mask = p->func.ddr = p->func.value = 0;
 	for (int i = 0; i < IOPORT_IRQ_PIN_ALL; i++)
 		avr_irq_register_notify(p->io.irq + i, avr_ioport_irq_notify, p);
 	avr_irq_register_notify(p->io.irq + IOPORT_IRQ_PIN_ALL_IN,
@@ -342,6 +361,26 @@ avr_ioport_ioctl(
 				avr_ioport_external_t * m = (avr_ioport_external_t*)io_param;
 				p->external.pull_mask = m->mask;
 				p->external.pull_value = m->value;
+				res = 0;
+			}
+			/*
+			 * Claim / release pins for a peripheral pin function (e.g. USART
+			 * TxD/RxD on TXEN/RXEN). Forces direction/output for the listed
+			 * pins, overriding DDR/PORT, or hands them back to GPIO.
+			 */
+			if (ctl == AVR_IOCTL_IOPORT_SET_FUNCTION(p->name)) {
+				avr_ioport_function_t * f = (avr_ioport_function_t*)io_param;
+				uint8_t m = f->mask;
+				if (f->claim) {
+					p->func.mask |= m;
+					p->func.ddr = (p->func.ddr & ~m) | (f->ddr & m);
+					p->func.value = (p->func.value & ~m) | (f->value & m);
+				} else {
+					p->func.mask &= ~m;
+					p->func.ddr &= ~m;
+					p->func.value &= ~m;
+				}
+				avr_ioport_update_irqs(p);
 				res = 0;
 			}
 		}

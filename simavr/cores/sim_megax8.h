@@ -125,6 +125,9 @@ const struct mcu_t SIM_CORENAME = {
 
 	//PRR/PRUSART0, upe=UPE, reg/bit name index=0, no 'C' in RX/TX vector names
 	AVR_UART_DECLARE(PRR, PRUSART0, UPE, 0, ),
+	// USART0 owns TxD (PD1) / RxD (PD0) when TXEN / RXEN are set.
+	.uart.txd = { .port = 'D', .pin = 1 },
+	.uart.rxd = { .port = 'D', .pin = 0 },
 
 	.acomp = {
 		.mux_inputs = 8,
