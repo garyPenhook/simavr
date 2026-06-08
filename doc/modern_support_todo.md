@@ -29,10 +29,12 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 | EVSYS | [F] | **TCA0 (SYNCUSER0 / USERTCA0) is now wired** in both templates to the new TCA EV_IN input, so event-driven TCA0 counting/gating behaves (see the TCA0 row). The megaAVR-0 user-index map was also corrected: USERTCB0-3 had been wired at indices 0-3 (which alias USERCCLLUT0A..1B); they are now at the real 20-23, and USERTCA0 at 19 (`iom4809.h` EVSYS_t). **Still not connected:** USART (SYNCUSER1 / USERUSART0) — the modern USART stops at BAUD with no EVCTRL / event-input path (`avr_usart_modern.h:42`), and its only event use is IrDA RX-via-event, which needs a bit/line-level RX decode the byte/FIFO USART model does not have (overlaps the USART [P] line-timing gap). Generator-source encodings also still need a datasheet pass. | `avr_evsys.c`, `avr_usart_modern.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | ADC | [P] | conversion delay is a cycle approximation, not exact ADC-clock timing | `avr_adc_modern.c` |
 | CPUINT | ✓ | **IVSEL vector relocation now modelled.** The engine adds a vector base in `avr_service_interrupts_modern()`: IVSEL=1 → boot section (flash 0x0000), IVSEL=0 → application section (flash FUSE.BOOTEND*256), per DS40002205A 13.5.1. The CPUINT register block mirrors IVSEL into the engine and the cores pass the BOOTEND fuse index (8); with the default BOOTEND=0 the base stays 0, so the common no-bootloader case is unchanged. Host-tested in `test_avrxt_engine.c`. LVL0/1, NMI, round-robin, LVL0PRI and CVT were already fully modelled. | `avr_cpuint.c`, `sim_interrupts.c` |
-| VREF | [P] | **ADC1/AC1/AC2 references now wired.** On tinyAVR-1 16K/32K parts the model publishes ADC1_MV (CTRLC.ADC1REFSEL→ADC1), DAC1_MV (CTRLC.DAC1REFSEL→AC1, DAC1 absent) and DAC2_MV (CTRLD.DAC2REFSEL→AC2, DAC2 absent), and `sim_tinyx1.h` wires each to the matching block (gated on the ADC1/AC1/AC2 fit). Register map verified against DS40002205A 18.4-18.5.3 (p.162-165): CTRLC = ADC1REFSEL[6:4]+DAC1REFSEL[2:0], CTRLD = DAC2REFSEL[2:0]; host-tested in `test_avrxt_engine.c`. The stale "does not exist on the ATtiny3217" comments are corrected. *Remaining (polish):* CTRLB force-enable bits have no power/timing effect (no power model). | `avr_vref.c`, `sim_tinyx1.h` |
+| VREF | [P] | **ADC1/AC1/AC2 references now wired.** On tinyAVR-1 16K/32K parts the model publishes ADC1_MV (CTRLC.ADC1REFSEL→ADC1), DAC1_MV (CTRLC.DAC1REFSEL→DAC1/AC1) and DAC2_MV (CTRLD.DAC2REFSEL→DAC2/AC2), and `sim_tinyx1.h` wires each to the matching block (gated on the ADC1/AC1/AC2 fit). **DAC1 (0x06A8) and DAC2 (0x06B0) are now modelled** (DS40002205A Table 7-1) — full DAC blocks with no output pin whose DATA-scaled output is the AC1/AC2 "DAC" negative input (31.3.2.3), wired like DAC0→AC0; the prior "DAC1/DAC2 absent" assumption was wrong. Register map verified against DS40002205A 18.4-18.5.3 (p.162-165): CTRLC = ADC1REFSEL[6:4]+DAC1REFSEL[2:0], CTRLD = DAC2REFSEL[2:0]; host-tested in `test_avrxt_engine.c`. *Remaining (polish):* CTRLB force-enable bits have no power/timing effect (no power model). | `avr_vref.c`, `sim_tinyx1.h` |
+| PORTMUX | [P] | **Peripheral pin mapping / alternate routing not modelled.** The four CTRL registers store and read back the routing selection, but selecting default-vs-alternate pins has *no behavioural effect*: each peripheral reaches the outside world through its own dedicated IRQ (USART TXD/RXD, SPI, TCA0 WO0-2, TCB WO, TCD WOA/WOB), **not** via the PORTMUX-selected `PORTx` pin. So firmware-driven GPIO maps to the real pins (PORT/VPORT model), but a peripheral *function* does not appear on its mapped physical pin (`PORTx.IN` / pin IRQ / VCD pin trace), and runtime PORTMUX switching does not move the signal. This is the same abstraction classic simavr uses (UART/SPI expose their own IRQs, not port pins), so firmware logic is unaffected; it only matters for pin-level VCD traces, external parts wired to a specific physical pin, and runtime re-routing. Closing it needs PORTMUX to connect/disconnect each peripheral output IRQ to the selected port pin with a peripheral-override flag on that pin. | `avr_portmux.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 
-**Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
-PORTMUX, TWI0, NVMCTRL (EEPROM + flash self-program), WDT, CRCSCAN,
+**Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT
+(incl. per-pin PINnCTRL pull-up / INVEN, host-tested), TWI0, NVMCTRL (EEPROM +
+flash self-program), WDT, CRCSCAN,
 SYSCFG/SIGROW (but see the SIGROW/USERROW/FUSE config-region gaps under "Not
 implemented at all"), BOD/VLM (voltage-level monitor + brown-out reset →
 RSTFR.BORF; only the power/sleep-fidelity aspects shared by all peripherals are
@@ -60,9 +62,13 @@ modelled too; the only remaining unmodelled silicon is one header-less block:
 | SIGROW SERNUM / OSCnnERR | 0x1100+ | **Done.** `SERNUM0..9` is populated with a deterministic non-zero placeholder (no canonical value exists; real silicon is never all-zero). `OSC16ERR*`/`OSC20ERR*` are signed frequency-error calibrations where **0 = no error**, so they are left at 0 (a valid value). `DEVICEID[2:0]` and `TEMPSENSE0/1` were already populated. Host-tested. | all 23 |
 | PTC (Peripheral Touch Controller) | — | Present on tinyAVR-1 silicon but **absent from the avr-libc headers**, so it has no register map and no model (cannot be header-driven). | 15 tinyAVR-1 |
 
-Note: the in-tree `iotn3217.h` over-declares `DAC1`/`DAC2` (0x06A8/0x06B0) that do
-not exist on the hardware (the tinyAVR 1-series has a single 8-bit DAC0); they are
-intentionally not wired.
+Note: `DAC1`/`DAC2` (0x06A8/0x06B0) are real DAC blocks on the 16K/32K tinyAVR-1
+parts (1614/1616/1617/3214/3216/3217), per DS40002205A Table 7-1 and the device
+headers — *not* spurious. They have no output pin; their DATA-scaled output is
+the AC1/AC2 "DAC" negative input (DS40002205A 31.3.2.3). **Done:** wired in
+`sim_tinyx1.h` (gated on `AC1_AC_vect_num`/`AC2_AC_vect_num`), mirroring the
+DAC0→AC0 routing; VREF.CTRLC/CTRLD select their reference. Host-tested. The 9
+smaller parts have only DAC0.
 
 ## Per-micro fitted instances and applicable gaps
 
@@ -87,12 +93,12 @@ USART + SPI + TCB + EVSYS + ADC gaps.** Instance counts that multiply a gap:
 | attiny417 | A,B,C | 1 | 1 | 1 | — |
 | attiny816 | A,B,C | 1 | 1 | 1 | — |
 | attiny817 | A,B,C | 1 | 1 | 1 | — |
-| attiny1614 | A,B | 3 | 2 | 2 | AC×3, ADC×2, TCB×2 |
-| attiny1616 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2 |
-| attiny1617 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2 |
-| attiny3214 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2 |
-| attiny3216 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2 |
-| attiny3217 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2 |
+| attiny1614 | A,B | 3 | 2 | 2 | AC×3, ADC×2, TCB×2, DAC×3 |
+| attiny1616 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2, DAC×3 |
+| attiny1617 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2, DAC×3 |
+| attiny3214 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2, DAC×3 |
+| attiny3216 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2, DAC×3 |
+| attiny3217 | A,B,C | 3 | 2 | 2 | AC×3, ADC×2, TCB×2, DAC×3 |
 
 ### megaAVR 0-series (8) — **no DAC, no TCD** (those gaps do not apply)
 

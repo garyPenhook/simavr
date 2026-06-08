@@ -990,8 +990,10 @@ RSTFR W1C, and a software reset zeroing the cycle counter and setting SWRF
 internal reference voltage for ADC0 (ADC0REFSEL[6:4]) and for DAC0/AC0
 (DAC0REFSEL[2:0]); the codes 0..4 map to 0.55 / 1.1 / 2.5 / 4.3 / 1.5 V
 (`avr_vref_sel_to_mv`). CTRLB holds the per-peripheral force-enable bits and
-CTRLC/CTRLD select references for ADC1/DAC1/DAC2 (absent on the ATtiny3217); all
-reset to 0x00 and are modelled as a store.
+CTRLC/CTRLD select references for ADC1/DAC1/DAC2 (all present on the ATtiny3217,
+a 32K part: ADC1 @0x640, DAC1 @0x06A8, DAC2 @0x06B0); all reset to 0x00 and are
+modelled as a store. DAC1/DAC2 have no output pin — their output is the AC1/AC2
+DAC negative input — and are wired like DAC0→AC0 (see Phase: DAC1/DAC2).
 - **DAC0/AC0 coupling:** their reference is *always* the internal VREF, so on a
   CTRLA write the decoded DAC0REFSEL voltage is published on a VREF IRQ that
   `sim_tiny3217` wires to `avr_dac_set_vref` and `avr_ac_set_refs` (mirroring the

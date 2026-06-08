@@ -819,6 +819,53 @@ int main(void)
 		check("INTFLAGS cleared by W1C", m->data[PA + PORTM_INTFLAGS], 0);
 	}
 
+	printf("== modern PORT pull-up / INVEN (sim_tiny3217) ==\n");
+	{
+		/* PINnCTRL.PULLUPEN (bit 3) enables the internal pull-up on an input-only
+		 * pin; INVEN (bit 7) inverts the resolved level (DS40002205A 16.5.11). An
+		 * external driver overrides the weak internal pull-up. */
+		enum { PULLUPEN = 0x08, INVEN = 0x80 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+
+		const avr_io_addr_t PA = 0x400;
+
+		/* All inputs, undriven. Without a pull-up an undriven input reads 0. */
+		cpu_write(m, PA + PORTM_DIR, 0x00);
+		check("undriven input pin0 reads 0", cpu_read(m, PA + PORTM_IN) & 1, 0);
+
+		/* Enable pull-up on pin0 -> IN reads high. */
+		cpu_write(m, PA + PORTM_PIN0CTRL + 0, PULLUPEN);
+		check("input pin0 with pull-up reads high", cpu_read(m, PA + PORTM_IN) & 1, 1);
+
+		/* An external driver pulling pin0 low overrides the internal pull-up. */
+		avr_ioport_external_t ext = { .name = 'A', .mask = 0x01, .value = 0x00 };
+		avr_ioctl(m, AVR_IOCTL_IOPORT_SET_EXTERNAL('A'), &ext);
+		check("external low overrides internal pull-up", cpu_read(m, PA + PORTM_IN) & 1, 0);
+
+		/* Release the external drive; the pull-up reasserts high on the next
+		 * re-evaluation (a PINnCTRL re-write). */
+		ext.mask = 0x00;
+		avr_ioctl(m, AVR_IOCTL_IOPORT_SET_EXTERNAL('A'), &ext);
+		cpu_write(m, PA + PORTM_PIN0CTRL + 0, PULLUPEN);
+		check("pull-up reasserts high after external release",
+			  cpu_read(m, PA + PORTM_IN) & 1, 1);
+
+		/* INVEN inverts the resolved input level: pulled-up + inverted reads 0. */
+		cpu_write(m, PA + PORTM_PIN0CTRL + 0, PULLUPEN | INVEN);
+		check("pulled-up input with INVEN reads 0", cpu_read(m, PA + PORTM_IN) & 1, 0);
+
+		/* The global no-pullups option disables the model (AVR_MCU_PORT_NO_PULL). */
+		m->options.no_pullups = 1;
+		cpu_write(m, PA + PORTM_PIN0CTRL + 1, PULLUPEN);
+		check("no_pullups option: pulled input pin1 stays 0",
+			  cpu_read(m, PA + PORTM_IN) & 0x02, 0);
+		m->options.no_pullups = 0;
+	}
+
 	printf("== modern CLKCTRL (sim_tiny3217) ==\n");
 	{
 		enum { MCLKCTRLA = 0x60, MCLKCTRLB = 0x61, MCLKLOCK = 0x62 };
@@ -2466,6 +2513,48 @@ int main(void)
 		check("AC STATE 0 (800 < DAC 1095)", !!(cpu_read(m, C + ACR_STATUS) & STATE), 0);
 	}
 
+	printf("== modern DAC1/DAC2 -> AC1/AC2 routing (sim_tiny3217) ==\n");
+	{
+		/* The 16K/32K tinyAVR-1 parts fit DAC1 (0x06A8) and DAC2 (0x06B0). They
+		 * have no output pin; the DATA-scaled output is the AC1/AC2 DAC negative
+		 * input (DS40002205A 31.3.2.3, Table 7-1). VREF.CTRLC/CTRLD select the
+		 * DAC1/DAC2 reference. */
+		const avr_io_addr_t V = 0xa0, C1 = 0x688, D1 = 0x6a8, C2 = 0x690, D2 = 0x6b0;
+		enum { CTRLC = 0x02, CTRLD = 0x03 };
+		enum { AC_ENABLE = 0x01, DAC_ENABLE = 0x01, MUXNEG_DAC = 0x03, STATE = 0x10 };
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* DAC1 reference = 1100 mV (CTRLC.DAC1REFSEL = 1). AC1: V+ = 800 mV,
+		 * V- = DAC1. DATA = 128 -> 550 mV; 800 > 550 => STATE 1. */
+		cpu_write(m, V + CTRLC, 0x01);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('1'), AVR_AC_IRQ_AINP0), 800);
+		cpu_write(m, C1 + ACR_MUXCTRLA, MUXNEG_DAC);
+		cpu_write(m, C1 + ACR_CTRLA, AC_ENABLE);
+		cpu_write(m, D1 + DACR_CTRLA, DAC_ENABLE);
+		cpu_write(m, D1 + DACR_DATA, 128);
+		check("AC1 STATE 1 (800 > DAC1 550)", !!(cpu_read(m, C1 + ACR_STATUS) & STATE), 1);
+		/* DATA = 255 -> 1095 mV; 800 < 1095 => STATE 0 (DATA scaling reaches AC1). */
+		cpu_write(m, D1 + DACR_DATA, 255);
+		check("AC1 STATE 0 (800 < DAC1 1095)", !!(cpu_read(m, C1 + ACR_STATUS) & STATE), 0);
+
+		/* DAC2 reference = 1100 mV (CTRLD.DAC2REFSEL = 1). AC2: V+ = 800 mV,
+		 * V- = DAC2; DATA = 128 -> 550 mV => STATE 1, DATA = 255 => STATE 0. */
+		cpu_write(m, V + CTRLD, 0x01);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('2'), AVR_AC_IRQ_AINP0), 800);
+		cpu_write(m, C2 + ACR_MUXCTRLA, MUXNEG_DAC);
+		cpu_write(m, C2 + ACR_CTRLA, AC_ENABLE);
+		cpu_write(m, D2 + DACR_CTRLA, DAC_ENABLE);
+		cpu_write(m, D2 + DACR_DATA, 128);
+		check("AC2 STATE 1 (800 > DAC2 550)", !!(cpu_read(m, C2 + ACR_STATUS) & STATE), 1);
+		cpu_write(m, D2 + DACR_DATA, 255);
+		check("AC2 STATE 0 (800 < DAC2 1095)", !!(cpu_read(m, C2 + ACR_STATUS) & STATE), 0);
+	}
+
 	printf("== modern AC0 -> CCL input source (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t C = 0x680, D = 0x6a0, L = 0x1c0;
@@ -2874,9 +2963,10 @@ int main(void)
 		cpu_write(m, D + DACR_DATA, 128);
 		check("DAC out 550 mV with VREF 1100 (DATA=128)", g_dac_out, 550);
 
-		/* CTRLC.DAC1REFSEL[2:0] drives AC1's reference (DAC1 absent on tiny-1);
-		 * CTRLC.ADC1REFSEL[6:4] drives ADC1's internal reference (16K/32K).
-		 * AC1 at 0x688: V+ = AINP0 = 1200 mV, V- = internal VREF. */
+		/* CTRLC.DAC1REFSEL[2:0] selects the DAC1/AC1 reference, also feeding AC1's
+		 * internal-VREF input (MUXNEG=2); CTRLC.ADC1REFSEL[6:4] drives ADC1's
+		 * internal reference (16K/32K). The DAC-input (MUXNEG=3) path is exercised
+		 * separately below. AC1 at 0x688: V+ = AINP0 = 1200 mV, V- = internal VREF. */
 		const avr_io_addr_t C1 = 0x688, C2 = 0x690, A1 = 0x640;
 		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('1'), AVR_AC_IRQ_AINP0), 1200);
 		cpu_write(m, C1 + ACR_MUXCTRLA, MUXNEG_VREF);
@@ -2888,7 +2978,8 @@ int main(void)
 		check("AC1 STATE 0 (1200 < CTRLC VREF 4300)",
 				!!(cpu_read(m, C1 + ACR_STATUS) & STATE), 0);
 
-		/* CTRLD.DAC2REFSEL[2:0] drives AC2's reference (DAC2 absent). AC2 @0x690. */
+		/* CTRLD.DAC2REFSEL[2:0] selects DAC2/AC2's reference (internal-VREF path).
+		 * AC2 @0x690. */
 		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('2'), AVR_AC_IRQ_AINP0), 1200);
 		cpu_write(m, C2 + ACR_MUXCTRLA, MUXNEG_VREF);
 		cpu_write(m, C2 + ACR_CTRLA, AC_ENABLE);

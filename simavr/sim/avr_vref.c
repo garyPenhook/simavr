@@ -79,7 +79,7 @@ avr_vref_ctrld_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *par
 
 	avr_core_watch_write(avr, addr, v);
 
-	/* CTRLD selects the DAC2/AC2 reference (DAC2 absent on tinyAVR-1 -> AC2). */
+	/* CTRLD selects the DAC2/AC2 reference (DAC2 feeds AC2's DAC input). */
 	avr_raise_irq(p->io.irq + AVR_VREF_IRQ_DAC2_MV,
 			avr_vref_sel_to_mv((v & VREF_DAC2REFSEL_gm) >> VREF_DAC2REFSEL_gp));
 }

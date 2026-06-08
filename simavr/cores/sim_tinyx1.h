@@ -134,6 +134,12 @@ struct mcu_t {
 	avr_ac_t			ac2;
 #endif
 	avr_dac_t			dac0;
+#ifdef AC1_AC_vect_num
+	avr_dac_t			dac1;	/* feeds AC1's DAC input (no output pin) */
+#endif
+#ifdef AC2_AC_vect_num
+	avr_dac_t			dac2;	/* feeds AC2's DAC input (no output pin) */
+#endif
 	avr_ccl_t			ccl;
 	avr_evsys_t			evsys;
 	avr_portmux_t		portmux;
@@ -195,23 +201,29 @@ tinyx1_vref_to_adc1(struct avr_irq_t * irq, uint32_t value, void * param)
 #endif
 
 #ifdef AC1_AC_vect_num
-/* VREF.CTRLC.DAC1REFSEL -> AC1 reference (DAC1 absent on tinyAVR-1). */
+/* VREF.CTRLC.DAC1REFSEL selects the reference for DAC1, whose analog output is
+ * AC1's "DAC" negative input (DS40002205A 31.3.2.3). Push the decoded reference
+ * (mV) to DAC1 and to AC1's internal-VREF input, mirroring the DAC0/AC0 wiring;
+ * the DATA-scaled DAC1 output reaches AC1 over the DAC1 OUT IRQ. */
 static void
-tinyx1_vref_to_ac1(struct avr_irq_t * irq, uint32_t value, void * param)
+tinyx1_vref_to_dac1_ac1(struct avr_irq_t * irq, uint32_t value, void * param)
 {
 	struct mcu_t * mcu = (struct mcu_t *)param;
 	(void)irq;
+	avr_dac_set_vref(&mcu->dac1, value);
 	avr_ac_set_refs(&mcu->ac1, value, mcu->ac1.dacref_mv);
 }
 #endif
 
 #ifdef AC2_AC_vect_num
-/* VREF.CTRLD.DAC2REFSEL -> AC2 reference (DAC2 absent on tinyAVR-1). */
+/* VREF.CTRLD.DAC2REFSEL selects DAC2's reference; DAC2's output is AC2's DAC
+ * negative input. */
 static void
-tinyx1_vref_to_ac2(struct avr_irq_t * irq, uint32_t value, void * param)
+tinyx1_vref_to_dac2_ac2(struct avr_irq_t * irq, uint32_t value, void * param)
 {
 	struct mcu_t * mcu = (struct mcu_t *)param;
 	(void)irq;
+	avr_dac_set_vref(&mcu->dac2, value);
 	avr_ac_set_refs(&mcu->ac2, value, mcu->ac2.dacref_mv);
 }
 #endif
@@ -381,6 +393,23 @@ tinyx1_init(struct avr_t * avr)
 			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
 			avr_io_getirq(avr, AVR_IOCTL_ADCM_GETIRQ('0'), AVR_ADCM_CH_DAC0));
 
+#ifdef AC1_AC_vect_num
+	/* DAC1 (8-bit) at 0x06A8; the 16K/32K parts fit it (Table 7-1). It has no
+	 * output pin on tinyAVR-1 — its DATA-scaled output is AC1's DAC negative
+	 * input (DS40002205A 31.3.2.3), delivered over the DAC1 OUT IRQ. */
+	avr_dac_init(avr, &mcu->dac1, 0x06a8, '1');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('1'), AVR_DAC_IRQ_OUT),
+			tinyx1_dac_to_ac, &mcu->ac1);
+#endif
+#ifdef AC2_AC_vect_num
+	/* DAC2 (8-bit) at 0x06B0; output is AC2's DAC negative input. */
+	avr_dac_init(avr, &mcu->dac2, 0x06b0, '2');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('2'), AVR_DAC_IRQ_OUT),
+			tinyx1_dac_to_ac, &mcu->ac2);
+#endif
+
 	/* CCL (configurable custom logic) at 0x01C0; 2 LUTs on the 1-series. */
 	avr_ccl_init(avr, &mcu->ccl, 0x01c0, 2, '0');
 
@@ -455,16 +484,16 @@ tinyx1_init(struct avr_t * avr)
 			tinyx1_vref_to_adc1, mcu);
 #endif
 #ifdef AC1_AC_vect_num
-	/* CTRLC.DAC1REFSEL -> AC1 reference (DAC1 absent). */
+	/* CTRLC.DAC1REFSEL -> DAC1 reference (DAC1 output is AC1's DAC input). */
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC1_MV),
-			tinyx1_vref_to_ac1, mcu);
+			tinyx1_vref_to_dac1_ac1, mcu);
 #endif
 #ifdef AC2_AC_vect_num
-	/* CTRLD.DAC2REFSEL -> AC2 reference (DAC2 absent). */
+	/* CTRLD.DAC2REFSEL -> DAC2 reference (DAC2 output is AC2's DAC input). */
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC2_MV),
-			tinyx1_vref_to_ac2, mcu);
+			tinyx1_vref_to_dac2_ac2, mcu);
 #endif
 
 	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector.
