@@ -79,6 +79,8 @@ typedef struct  avr_int_table_t {
 	uint8_t			cpuint_lvl0pri;	// LVL0PRI: LVL0 scheduling base / last-acked vector
 	uint8_t			cpuint_lvl0rr;	// LVL0RR: round-robin scheduling enabled
 	uint8_t			cpuint_cvt;		// CVT: compact vector table (all LVL0 share vector 3)
+	uint8_t			cpuint_ivsel;	// IVSEL: vectors in boot section (1) vs app section (0)
+	uint8_t			cpuint_bootend_idx;	// FUSE.BOOTEND index for the IVSEL base (0xff = none)
 	uint8_t			max_vector;		// highest registered vector number (LVL0 wrap)
 } avr_int_table_t, *avr_int_table_p;
 
@@ -141,6 +143,10 @@ void avr_cpuint_set_lvl1vec(struct avr_t *avr, uint8_t vector);
 void avr_cpuint_set_lvl0pri(struct avr_t *avr, uint8_t pri);
 void avr_cpuint_set_lvl0rr(struct avr_t *avr, uint8_t enabled);
 void avr_cpuint_set_cvt(struct avr_t *avr, uint8_t enabled);
+void avr_cpuint_set_ivsel(struct avr_t *avr, uint8_t enabled);
+// Tell the engine which FUSE.BOOTEND index bounds the boot/app sections, so
+// IVSEL can relocate the modern vector base (0xff disables relocation).
+void avr_cpuint_set_bootend_idx(struct avr_t *avr, uint8_t fuse_index);
 uint8_t avr_cpuint_get_status(struct avr_t *avr);
 uint8_t avr_cpuint_get_lvl0pri(struct avr_t *avr);
 

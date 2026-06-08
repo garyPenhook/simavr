@@ -19,9 +19,12 @@
 	           round robin), read-back returns the live value
 	  LVL1VEC: vector number elevated to priority level 1 (0 = none)
 
-	IVSEL relocates the vector table to the boot section; simavr's flash model
-	has no boot section, so the bit is stored for faithful read-back but the
-	dispatch address is not relocated. CVT is fully modelled in the engine.
+	IVSEL relocates the vector table (DS40002205A 13.5.1): IVSEL=1 places it at
+	the start of the boot section (flash 0x0000), IVSEL=0 at the start of the
+	application section (flash FUSE.BOOTEND*256). The engine applies this base in
+	avr_service_interrupts_modern(); with the default BOOTEND=0 the whole flash is
+	boot, the app section starts at 0, and IVSEL has no effect. CVT is also fully
+	modelled in the engine.
 
 	Copyright 2026 simavr authors
 
@@ -71,6 +74,8 @@ typedef struct avr_cpuint_t {
 
 /*
  * Initialise a CPUINT block at data address 'base'. 'name' is a tag for debug.
+ * 'bootend_fuse_index' locates FUSE.BOOTEND so IVSEL can relocate the vector
+ * table to the boot/application section (0xff to disable relocation).
  * Requires the core to have AVR_ARCH_F_CPUINT set (modern dispatch).
  */
 void
@@ -78,6 +83,7 @@ avr_cpuint_init(
 		avr_t * avr,
 		avr_cpuint_t * p,
 		avr_io_addr_t base,
+		uint8_t bootend_fuse_index,
 		char name);
 
 #ifdef __cplusplus

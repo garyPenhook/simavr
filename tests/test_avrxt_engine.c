@@ -444,6 +444,40 @@ int main(void)
 		check("CVT: NMI dispatches to vector 1", avr->pc, 1 * vs);
 		avr->interrupts.cpuint_cvt = 0;
 
+		// I. IVSEL relocates the vector base (DS40002205A 13.5.1). With
+		// FUSE.BOOTEND=4 the boot section is 4*256=0x400 bytes; the application
+		// section (IVSEL=0) starts there, the boot section (IVSEL=1) at 0.
+		avr->interrupts.cpuint_bootend_idx = 8;
+		avr->fuse[8] = 4;				// BOOTEND*256 = 0x400 app-section base
+		INT_RESET();
+		avr->sreg[S_I] = 1;
+		avr->interrupts.cpuint_ivsel = 0;		// vectors at application section
+		avr->pc = 0x100;
+		avr_raise_interrupt(avr, &v10);
+		avr_service_interrupts(avr);
+		check("IVSEL=0 dispatches at BOOTEND*256 + vector*vsize",
+				avr->pc, 0x400 + 10 * vs);
+
+		INT_RESET();
+		avr->sreg[S_I] = 1;
+		avr->interrupts.cpuint_ivsel = 1;		// vectors at boot section (0)
+		avr->pc = 0x100;
+		avr_raise_interrupt(avr, &v10);
+		avr_service_interrupts(avr);
+		check("IVSEL=1 dispatches at boot section (base 0)", avr->pc, 10 * vs);
+
+		// With BOOTEND=0 the whole flash is boot, so IVSEL=0 has no effect.
+		avr->fuse[8] = 0;
+		INT_RESET();
+		avr->sreg[S_I] = 1;
+		avr->interrupts.cpuint_ivsel = 0;
+		avr->pc = 0x100;
+		avr_raise_interrupt(avr, &v10);
+		avr_service_interrupts(avr);
+		check("BOOTEND=0: IVSEL=0 base stays 0", avr->pc, 10 * vs);
+		avr->interrupts.cpuint_bootend_idx = 0xff;
+		avr->interrupts.cpuint_ivsel = 0;
+
 		#undef INT_RESET
 	}
 

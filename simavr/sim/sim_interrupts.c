@@ -36,6 +36,7 @@ avr_interrupt_init(
 {
 	avr_int_table_p table = &avr->interrupts;
 	memset(table, 0, sizeof(*table));
+	table->cpuint_bootend_idx = 0xff;	// no IVSEL relocation unless a core wires it
 
 	static const char *names[] = { ">avr.int.pending", ">avr.int.running" };
 	avr_init_irq(&avr->irq_pool, table->irq,
@@ -107,6 +108,18 @@ void
 avr_cpuint_set_cvt(avr_t *avr, uint8_t enabled)
 {
 	avr->interrupts.cpuint_cvt = !!enabled;
+}
+
+void
+avr_cpuint_set_ivsel(avr_t *avr, uint8_t enabled)
+{
+	avr->interrupts.cpuint_ivsel = !!enabled;
+}
+
+void
+avr_cpuint_set_bootend_idx(avr_t *avr, uint8_t fuse_index)
+{
+	avr->interrupts.cpuint_bootend_idx = fuse_index;
 }
 
 uint8_t
@@ -415,7 +428,15 @@ avr_service_interrupts_modern(avr_t * avr)
 	uint8_t target = best->vector;
 	if (table->cpuint_cvt)
 		target = best_level == 2 ? 1 : best_level == 1 ? 2 : 3;
-	avr->pc = target * avr->vector_size;
+	// IVSEL relocates the vector table (DS40002205A 13.5.1): IVSEL=1 places it
+	// at the start of the boot section (flash 0x0000); IVSEL=0 at the start of
+	// the application section (flash BOOTEND*256). With BOOTEND=0 the whole
+	// flash is boot, the app section starts at 0, and IVSEL has no effect — the
+	// common no-bootloader case, so this leaves base==0 unchanged there.
+	uint32_t vbase = 0;
+	if (!table->cpuint_ivsel && table->cpuint_bootend_idx != 0xff)
+		vbase = (uint32_t)avr->fuse[table->cpuint_bootend_idx] * 256;
+	avr->pc = vbase + target * avr->vector_size;
 
 	avr_raise_irq(best->irq + AVR_INT_IRQ_RUNNING, 1);
 	avr_raise_irq(table->irq + AVR_INT_IRQ_RUNNING, best->vector);

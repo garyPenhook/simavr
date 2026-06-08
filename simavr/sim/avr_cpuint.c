@@ -55,6 +55,7 @@ avr_cpuint_ctrla_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
 	avr_core_watch_write(avr, p->r_ctrla, nv);
 	avr_cpuint_set_lvl0rr(avr, nv & LVL0RR_bm);
 	avr_cpuint_set_cvt(avr, nv & CVT_bm);
+	avr_cpuint_set_ivsel(avr, nv & IVSEL_bm);
 }
 
 /*
@@ -113,6 +114,7 @@ avr_cpuint_reset(avr_io_t *io)
 	/* All CPUINT registers reset to 0x00; clear the engine mirror to match. */
 	avr_cpuint_set_lvl0rr(avr, 0);
 	avr_cpuint_set_cvt(avr, 0);
+	avr_cpuint_set_ivsel(avr, 0);
 	avr_cpuint_set_lvl0pri(avr, 0);
 	avr_cpuint_set_lvl1vec(avr, 0);
 }
@@ -130,6 +132,7 @@ avr_cpuint_init(
 		avr_t * avr,
 		avr_cpuint_t * p,
 		avr_io_addr_t base,
+		uint8_t bootend_fuse_index,
 		char name)
 {
 	memset(p, 0, sizeof(*p));
@@ -140,6 +143,9 @@ avr_cpuint_init(
 	p->r_status = base + CPUINTR_STATUS;
 	p->r_lvl0pri = base + CPUINTR_LVL0PRI;
 	p->r_lvl1vec = base + CPUINTR_LVL1VEC;
+
+	/* IVSEL relocates the vector base relative to FUSE.BOOTEND. */
+	avr_cpuint_set_bootend_idx(avr, bootend_fuse_index);
 
 	avr_register_io(avr, &p->io);
 	avr_register_io_write(avr, p->r_ctrla, avr_cpuint_ctrla_write, p);

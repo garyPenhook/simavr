@@ -28,7 +28,7 @@ Legend: **[F]** = functional gap (firmware can observe wrong/absent behavior);
 | TCA0 | [P] | single-slope PWM waveform output (WO0-2) now modelled (set at BOTTOM, cleared on the CMPn match; CMPn=0 → static low, CMPn>TOP → static high) and wired to CCL. **Event counting (EVCTRL.CNTEI + EVACT) now modelled** and wired to EVSYS SYNCUSER0: POSEDGE/ANYEDGE clock the counter from event edges (clock scheduler suspended), HIGHLVL gates the prescaled clock on the event line, UPDOWN runs the up-count half. *Remaining:* UPDOWN down-count half (event line high) is not representable by the single-slope up-counter (counter freezes there); FRQ (TOP=CMP0) and the dual-slope WGMODE variants are not modelled — the counter engine is a single-slope up-counter, so both the count behaviour and WOn stay single-slope/low there; split (dual 8-bit) mode; physical WO pins via PORTMUX | `avr_tca.c` |
 | EVSYS | [F] | **TCA0 (SYNCUSER0 / USERTCA0) is now wired** in both templates to the new TCA EV_IN input, so event-driven TCA0 counting/gating behaves (see the TCA0 row). The megaAVR-0 user-index map was also corrected: USERTCB0-3 had been wired at indices 0-3 (which alias USERCCLLUT0A..1B); they are now at the real 20-23, and USERTCA0 at 19 (`iom4809.h` EVSYS_t). **Still not connected:** USART (SYNCUSER1 / USERUSART0) — the modern USART stops at BAUD with no EVCTRL / event-input path (`avr_usart_modern.h:42`), and its only event use is IrDA RX-via-event, which needs a bit/line-level RX decode the byte/FIFO USART model does not have (overlaps the USART [P] line-timing gap). Generator-source encodings also still need a datasheet pass. | `avr_evsys.c`, `avr_usart_modern.c`, `sim_tinyx1.h`, `sim_megax08.h` |
 | ADC | [P] | conversion delay is a cycle approximation, not exact ADC-clock timing | `avr_adc_modern.c` |
-| CPUINT | [F] | **IVSEL is read-back-only** — the bit is stored but the vector table is *not* relocated to the boot section (`avr_cpuint.h:22`). On real tinyAVR-1/megaAVR-0 silicon IVSEL relocates the vector base; a bootloader (or test) that sets IVSEL and relies on relocated vectors will read the bit back correctly and then dispatch from the wrong addresses. LVL0/1, NMI, round-robin, LVL0PRI and CVT are fully modelled. | `avr_cpuint.c` |
+| CPUINT | ✓ | **IVSEL vector relocation now modelled.** The engine adds a vector base in `avr_service_interrupts_modern()`: IVSEL=1 → boot section (flash 0x0000), IVSEL=0 → application section (flash FUSE.BOOTEND*256), per DS40002205A 13.5.1. The CPUINT register block mirrors IVSEL into the engine and the cores pass the BOOTEND fuse index (8); with the default BOOTEND=0 the base stays 0, so the common no-bootloader case is unchanged. Host-tested in `test_avrxt_engine.c`. LVL0/1, NMI, round-robin, LVL0PRI and CVT were already fully modelled. | `avr_cpuint.c`, `sim_interrupts.c` |
 | VREF | [P] | **ADC1/AC1/AC2 references now wired.** On tinyAVR-1 16K/32K parts the model publishes ADC1_MV (CTRLC.ADC1REFSEL→ADC1), DAC1_MV (CTRLC.DAC1REFSEL→AC1, DAC1 absent) and DAC2_MV (CTRLD.DAC2REFSEL→AC2, DAC2 absent), and `sim_tinyx1.h` wires each to the matching block (gated on the ADC1/AC1/AC2 fit). Register map verified against DS40002205A 18.4-18.5.3 (p.162-165): CTRLC = ADC1REFSEL[6:4]+DAC1REFSEL[2:0], CTRLD = DAC2REFSEL[2:0]; host-tested in `test_avrxt_engine.c`. The stale "does not exist on the ATtiny3217" comments are corrected. *Remaining (polish):* CTRLB force-enable bits have no power/timing effect (no power model). | `avr_vref.c`, `sim_tinyx1.h` |
 
 **Fully supported (no known gaps):** CLKCTRL, RSTCTRL, SLPCTRL, PORT/VPORT,
@@ -38,9 +38,9 @@ implemented at all"), BOD/VLM (voltage-level monitor + brown-out reset →
 RSTFR.BORF; only the power/sleep-fidelity aspects shared by all peripherals are
 unmodelled).
 
-**Previously listed as gap-free but NOT (see the [F] rows above):** CPUINT
-(IVSEL vector relocation is read-back-only). VREF was in this list but the
-ADC1/AC1/AC2 references are now wired (downgraded to [P]).
+**Previously listed as gap-free but NOT, now fixed:** CPUINT (IVSEL vector
+relocation is now modelled) and VREF (ADC1/AC1/AC2 references now wired,
+downgraded to [P]).
 
 ## Not implemented at all
 
@@ -158,9 +158,12 @@ EVSYS + ADC gaps** (1× AC0, 1× ADC0), multiplied by USART/TCB instance count:
    RX-via-event, which needs a bit/line-level RX decode the byte/FIFO USART
    model lacks; this now folds into the USART [P] line-timing gap (item 11).
    All 23 micros.
-8. **CPUINT IVSEL vector relocation** *(new [F])* — relocate the dispatch base
-   when IVSEL is set (needs a boot-section notion in the flash/vector model).
-   Affects bootloaders and any firmware relying on relocated vectors. All 23.
+8. **CPUINT IVSEL vector relocation** — *done.* The modern dispatch adds a
+   vector base (`avr_service_interrupts_modern()`): IVSEL=1 → boot section
+   (0x0000), IVSEL=0 → application section (FUSE.BOOTEND*256), per DS40002205A
+   13.5.1. The CPUINT register block mirrors IVSEL into the engine and the cores
+   pass the BOOTEND fuse index; BOOTEND=0 leaves the base at 0 (no-bootloader
+   case unchanged). Host-tested in `test_avrxt_engine.c`. All 23. ✓
 9. **VREF ADC1/AC1/AC2 reference** — *done.* The model now publishes ADC1_MV,
    DAC1_MV and DAC2_MV, decoded from CTRLC (ADC1REFSEL[6:4]/DAC1REFSEL[2:0]) and
    CTRLD (DAC2REFSEL[2:0]) per DS40002205A 18.4-18.5.3 (p.162-165); `sim_tinyx1.h`

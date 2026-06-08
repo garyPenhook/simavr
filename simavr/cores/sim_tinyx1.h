@@ -513,8 +513,9 @@ tinyx1_init(struct avr_t * avr)
 	/* SLPCTRL (sleep controller) at 0x0050. */
 	avr_slpctrl_init(avr, &mcu->slpctrl, 0x0050, '0');
 
-	/* CPUINT (interrupt controller registers) at 0x0110. */
-	avr_cpuint_init(avr, &mcu->cpuint, 0x0110, '0');
+	/* CPUINT (interrupt controller registers) at 0x0110; FUSE.BOOTEND (index 8)
+	 * sets the IVSEL vector-relocation base. */
+	avr_cpuint_init(avr, &mcu->cpuint, 0x0110, 8, '0');
 
 	/* RSTCTRL (reset controller) at 0x0040. */
 	avr_rstctrl_init(avr, &mcu->rstctrl, 0x0040, '0');
