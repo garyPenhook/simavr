@@ -78,8 +78,9 @@ avr_register_vector(
 	if (vector->vector > table->max_vector)
 		table->max_vector = vector->vector;
 	if (vector->trace)
-		printf("IRQ%d registered (enabled %04x:%d)\n",
-			vector->vector, vector->enable.reg, vector->enable.bit);
+		printf("IRQ%d registered (enabled %04x:%u)\n",
+			vector->vector, (unsigned int)vector->enable.reg,
+			(unsigned int)vector->enable.bit);
 
 	if (!vector->enable.reg)
 		AVR_LOG(avr, LOG_WARNING, "IRQ%d No 'enable' bit !\n",

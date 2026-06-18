@@ -139,9 +139,17 @@ avr_init(
 	*((uint16_t*)&avr->flash[avr->flashend + 1]) = AVR_OVERFLOW_OPCODE;
 	avr->codeend = avr->flashend;
 	avr->data = malloc(avr->ramend + 1);
+	if (!avr->data) {
+		AVR_LOG(avr, LOG_ERROR, "%s: out of memory allocating SRAM\n", __func__);
+		abort();
+	}
 	memset(avr->data, 0, avr->ramend + 1);
 #ifdef CONFIG_SIMAVR_TRACE
 	avr->trace_data = calloc(1, sizeof(struct avr_trace_data_t));
+	if (!avr->trace_data) {
+		AVR_LOG(avr, LOG_ERROR, "%s: out of memory allocating trace data\n", __func__);
+		abort();
+	}
         avr->trace_data->data_names_size = avr->ioend + 1;
 #endif
 	avr->data_names = calloc(avr->ioend + 1, sizeof (char *));
@@ -537,6 +545,10 @@ avr_core_allocate(
 		uint32_t coreLen)
 {
 	uint8_t * b = malloc(coreLen);
+	if (!b) {
+		AVR_LOG(NULL, LOG_ERROR, "%s: out of memory\n", __func__);
+		abort();
+	}
 	memcpy(b, core, coreLen);
 	return (avr_t *)b;
 }

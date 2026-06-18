@@ -56,8 +56,8 @@ const char * _sreg_bit_name = "cznvshti";
 
 #define T(w) w
 
-#define REG_TOUCH(a, r) (a)->trace_data->touched[(r) >> 5] |= (1 << ((r) & 0x1f))
-#define REG_ISTOUCHED(a, r) ((a)->trace_data->touched[(r) >> 5] & (1 << ((r) & 0x1f)))
+#define REG_TOUCH(a, r) (a)->trace_data->touched[(r) >> 5] |= (1u << ((r) & 0x1f))
+#define REG_ISTOUCHED(a, r) ((a)->trace_data->touched[(r) >> 5] & (1u << ((r) & 0x1f)))
 
 //#define RESTRICT_TRACE
 #ifdef RESTRICT_TRACE
@@ -466,7 +466,7 @@ const char * avr_regname(avr_t * avr, unsigned int reg)
 		static const char pairs[] = {'X', 'Y', 'Z'};
 		char tt[16];
 		if (reg < 26)
-			sprintf(tt, "r%d", reg);
+			sprintf(tt, "r%u", reg);
 		else {
 			if (reg < 32)
 				sprintf(tt, "%c%c",
