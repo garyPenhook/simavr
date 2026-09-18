@@ -204,8 +204,8 @@ avr_init(
 	// number of address bytes to push/pull on/off the stack
 	avr->address_size = avr->eind ? 3 : 2;
 	avr->log = LOG_ERROR;
+	avr_regbit_set(avr, avr->reset_flags.porf);  // Power-on reset flag.
 	avr_reset(avr);
-	avr_regbit_set(avr, avr->reset_flags.porf);		// by  default set to power-on reset
 	return 0;
 }
 
@@ -241,9 +241,19 @@ void
 avr_reset(
 		avr_t * avr)
 {
+	uint8_t porf, extrf, borf, wdrf;
+
 	AVR_LOG(avr, LOG_TRACE, "%s reset\n", avr->mmcu);
 
 	avr->resetting = 1;
+
+	/* Save the reset flags. */
+
+	porf = avr_regbit_get(avr, avr->reset_flags.porf);
+	extrf = avr_regbit_get(avr, avr->reset_flags.extrf);
+	borf = avr_regbit_get(avr, avr->reset_flags.borf);
+	wdrf = avr_regbit_get(avr, avr->reset_flags.wdrf);
+
 	avr->state = cpu_Running;
 	for(int i = 0x20; i <= avr->ioend; i++) {
 		// Preserve a persistent data range (e.g. modern-AVR EEPROM mapped into
@@ -265,12 +275,25 @@ avr_reset(
 	if (avr->reset)
 		avr->reset(avr);
 	avr_io_t * port = avr->io_port;
+
+	/* Restore the reset flags before peripherals reset. */
+
+	if (porf)
+		avr_regbit_set(avr, avr->reset_flags.porf);
+	if (extrf)
+		avr_regbit_set(avr, avr->reset_flags.extrf);
+	if (borf)
+		avr_regbit_set(avr, avr->reset_flags.borf);
+	if (wdrf)
+		avr_regbit_set(avr, avr->reset_flags.wdrf);
+
 	while (port) {
 		if (port->reset)
 			port->reset(port);
 		port = port->next;
 	}
 	avr->cycle = 0; // Prevent crash
+
 	avr->resetting = 0;
 }
 
@@ -430,10 +453,8 @@ avr_callback_run_gdb(
 	if (step)
 		avr->state = cpu_Running;
 
-	avr_flashaddr_t new_pc = avr->pc;
-
 	if (avr->state == cpu_Running) {
-		new_pc = avr_run_one(avr);
+		avr->pc = avr_run_one(avr);
 #if CONFIG_SIMAVR_TRACE
 		avr_dump_state(avr);
 #endif
@@ -441,10 +462,8 @@ avr_callback_run_gdb(
 
 	// run the cycle timers, get the suggested sleep time
 	// until the next timer is due
+
 	avr_cycle_count_t sleep = avr_cycle_timer_process(avr);
-
-	avr->pc = new_pc;
-
 	if (avr->state == cpu_Sleeping) {
 		if (!avr->sreg[S_I]) {
 			if (avr->log)
@@ -492,10 +511,8 @@ void
 avr_callback_run_raw(
 		avr_t * avr)
 {
-	avr_flashaddr_t new_pc = avr->pc;
-
 	if (avr->state == cpu_Running) {
-		new_pc = avr_run_one(avr);
+		avr->pc = avr_run_one(avr);
 #if CONFIG_SIMAVR_TRACE
 		avr_dump_state(avr);
 #endif
@@ -504,8 +521,6 @@ avr_callback_run_raw(
 	// run the cycle timers, get the suggested sleep time
 	// until the next timer is due
 	avr_cycle_count_t sleep = avr_cycle_timer_process(avr);
-
-	avr->pc = new_pc;
 
 	if (avr->state == cpu_Sleeping) {
 		if (!avr->sreg[S_I]) {

@@ -266,10 +266,8 @@ avr_iomem_getirq(
 		const char * name,
 		int index)
 {
-	if (index > 8)
-		return NULL;
 	avr_io_addr_t a = AVR_DATA_TO_IO(addr);
-	if (a >= avr->io_count)
+	if (a >= avr->io_count || index > 8)
 		return NULL;
 	if (avr->io[a].irq == NULL) {
 		/*

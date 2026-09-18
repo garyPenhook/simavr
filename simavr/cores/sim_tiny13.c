@@ -65,6 +65,12 @@ static const struct mcu_t {
 		.signature = { SIGNATURE_0,SIGNATURE_1,SIGNATURE_2 },
 		.fuse = { LFUSE_DEFAULT, HFUSE_DEFAULT },
 #endif
+		.reset_flags = {
+			.porf = AVR_IO_REGBIT(MCU_STATUS_REG, PORF),
+			.extrf = AVR_IO_REGBIT(MCU_STATUS_REG, EXTRF),
+			.borf = AVR_IO_REGBIT(MCU_STATUS_REG, BORF),
+			.wdrf = AVR_IO_REGBIT(MCU_STATUS_REG, WDRF)
+		},
 		.init = init,
 		.reset = reset,
 	},
@@ -88,12 +94,7 @@ static const struct mcu_t {
 	.timer0 = {
 		.name = '0',
 		.wgm = { AVR_IO_REGBIT(TCCR0A, WGM00), AVR_IO_REGBIT(TCCR0A, WGM01), AVR_IO_REGBIT(TCCR0B, WGM02) },
-		.wgm_op = {
-			[0] = AVR_TIMER_WGM_NORMAL8(),
-			[2] = AVR_TIMER_WGM_CTC(),
-			[3] = AVR_TIMER_WGM_FASTPWM8(),
-			[7] = AVR_TIMER_WGM_OCPWM(),
-		},
+		WGM_OPS_8,
 		.cs = { AVR_IO_REGBIT(TCCR0B, CS00), AVR_IO_REGBIT(TCCR0B, CS01), AVR_IO_REGBIT(TCCR0B, CS02) },
 		.cs_div = { 0, 0, 3 /* 8 */, 6 /* 64 */, 8 /* 256 */, 10 /* 1024 */ },
 
