@@ -3564,6 +3564,20 @@ int main(void)
 			  !!m9->io[AVR_DATA_TO_IO(0x0860 + USARTR_TXDATAL)].w.c, 1);
 		check("atmega4809 TCB3 CNTL hooked",
 			  !!m9->io[AVR_DATA_TO_IO(0x0ab0 + TCBR_CNTL)].r.c, 1);
+
+		/* 48 KB flash is not a power of two: the whole 0x4000-0xFFFF window
+		 * maps 1:1, so data 0xB424 must read flash[0x7424], not a masked
+		 * alias in the low half (Csmith fuzz seed 292515608). */
+		m9->flash[0x7424] = 0x5c;
+		m9->flash[0x3424] = 0x00;
+		m9->flash[0xbfff] = 0xc3;
+		put16(m9, 0, 0x9000); put16(m9, 2, 0xb424);	/* LDS r0, 0xB424 */
+		put16(m9, 4, 0x9010); put16(m9, 6, 0xffff);	/* LDS r1, 0xFFFF */
+		m9->pc = 0;
+		m9->pc = avr_run_one(m9);
+		m9->pc = avr_run_one(m9);
+		check("atmega4809 LDS 0xB424 reads flash[0x7424]", m9->data[0], 0x5c);
+		check("atmega4809 LDS 0xFFFF reads last flash byte", m9->data[1], 0xc3);
 	}
 
 	printf("== megaAVR-0 CCL (sim_mega4809) ==\n");

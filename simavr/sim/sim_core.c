@@ -398,8 +398,11 @@ static inline uint8_t _avr_get_ram(avr_t * avr, uint16_t addr)
 		/*
 		 * Modern AVR maps the flash into the data space so constants can be
 		 * read with ordinary LD/LDD/LDS. Redirect to the flash array.
+		 * Wrap with a modulo, not '& flashend': 48 KB parts (ATmega4808/9)
+		 * are not a power of two, and the mask would alias 0xB424 to 0x3424.
 		 */
-		return avr->flash[(addr - avr->arch.flashmap_start) & avr->flashend];
+		return avr->flash[(addr - avr->arch.flashmap_start) %
+						  (avr->flashend + 1)];
 	} else if (addr > 31 && AVR_DATA_TO_IO(addr) < avr->io_count) {
 		avr_io_addr_t io = AVR_DATA_TO_IO(addr);
 
