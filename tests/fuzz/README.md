@@ -100,6 +100,17 @@ candidates with warnings that usually mean C-Reduce introduced undefined
 behaviour, but the filter is only heuristic. Before filing a bug, read the
 reduced program and confirm it is still well defined.
 
+Triage before reducing. Rebuild the program at the disagreeing optimisation
+levels on the other cores, including the classic `atmega328p`:
+- If every core gives the same CRC at a given `-O` level, and the CRC only
+  changes with `-O` (or with the codegen family, avr5 vs. avrxmega3), the
+  simulator is consistent. The cause is avr-gcc or undefined behaviour in the
+  generated program under AVR's 16-bit `int`.
+- If two cores built for the same family (e.g. `attiny3217` and `atmega4809`,
+  both avrxmega3) disagree at the same `-O` level, suspect simavr. To find the
+  first wrong value, log each argument to `fuzz_crc_val` (the `transparent_crc`
+  sequence) on both cores and diff the two lists.
+
 To decide where the bug is, compare the two builds' disassembly
 (`avr-objdump -d`):
 - If both builds compute the value the C code specifies and simavr still
@@ -107,6 +118,18 @@ To decide where the bug is, compare the two builds' disassembly
 - If one build is simply wrong code, the bug is in **avr-gcc**. This is most
   likely between `atmega328p` and the AVRxt parts, since they use different
   code-generation paths.
+
+## Findings
+
+- **2026-09-24, seed 292515608 (fixed in `df4f262`).** On `atmega4809` at
+  `-O0`, `const` data in the upper 16 KB of flash came back as code bytes.
+  The engine wrapped mapped-flash reads with `& flashend`, which is wrong for
+  the 48 KB ATmega4808/4809. The default configs build `atmega4809` only at
+  `-Os`, where programs rarely reach that far into flash. Add
+  `atmega4809:-O0` to `CONFIGS` to cover large images.
+- The first ~10k seeds also gave 18 mismatches that follow the optimisation
+  level on every core, the classic `atmega328p` included. Per the triage rule
+  above, these are not simavr bugs.
 
 ## Self-test
 

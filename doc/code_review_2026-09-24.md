@@ -29,7 +29,7 @@ this review found that the TODO understates the problem.
 
 | # | Sev | Area | Finding | Tag |
 |---|-----|------|---------|-----|
-| 1 | **High** | CPUINT engine | Stale pending-FIFO entries pile up. After ~63 flag clears, new interrupts are silently lost and stay stuck forever | confirmed |
+| 1 | **High** | CPUINT engine | **FIXED.** Stale pending-FIFO entries pile up. After ~63 flag clears, new interrupts are silently lost and stay stuck forever | confirmed |
 | 2 | **High** | CPUINT / reset | `CPUINT.STATUS` survives reset. A WDT/SW reset taken inside an ISR blocks all LVL0 interrupts permanently | confirmed |
 | 3 | **High** | PORT | `PINnCTRL.INVEN` makes `PORTx.IN` flip on every read | confirmed + DS |
 | 4 | **High** | TCB | PWM8 CAPT events are dropped when the cycle timer fires late. A `while(1);` loop loses 50 % of them | confirmed |
@@ -55,7 +55,7 @@ this review found that the TODO understates the problem.
 
 ## Details
 
-### 1. Stale entries in the CPUINT pending FIFO → lost interrupts (High) [confirmed]
+### 1. Stale entries in the CPUINT pending FIFO → lost interrupts (High) [confirmed] — **FIXED**: `avr_clear_interrupt()` now dequeues the vector on CPUINT cores; regression check in `test_avrxt_engine.c`.
 
 `sim_interrupts.c:356` (`avr_service_interrupts_modern`):
 
@@ -319,3 +319,12 @@ Each confirmed item has a small host-only repro that fits
    interrupt dispatches.
 3. PA0 input, `PIN0CTRL.INVEN=1`: four `PORTA.IN` reads must match.
 4. TCB0 PWM8 CCMPL=10 over a `rjmp .-2` field: CAPT count ≈ cycles / 11.
+
+## Addendum: found after the review
+
+- **Flash-in-data reads wrong on 48 KB parts (High, fixed in `df4f262`).**
+  `_avr_get_ram()` wrapped mapped-flash offsets with `& flashend`, which
+  aliases on the non-power-of-two ATmega4808/4809. Data 0xB424 read flash
+  0x3424 instead of 0x7424. The Csmith fuzzer found it (`tests/fuzz/README.md`,
+  "Findings"). The wrap is now a modulo, with a regression check in
+  `test_avrxt_engine.c`.

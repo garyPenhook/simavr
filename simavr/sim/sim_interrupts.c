@@ -227,6 +227,18 @@ avr_clear_interrupt(
 		return;
 	if (vector->trace)
 		printf("IRQ%d cleared\n", vector->vector);
+	// Modern CPUINT: dequeue the vector now. The modern dispatcher picks by
+	// priority and never drains stale (no longer pending) entries, so they
+	// would pile up until the fifo is full and new raises are lost. The
+	// in-order rewrite cannot overflow: each write follows a read.
+	if (vector->pending && (avr->arch.flags & AVR_ARCH_F_CPUINT)) {
+		avr_int_pending_t *fifo = &avr->interrupts.pending;
+		for (int n = avr_int_pending_get_read_size(fifo); n > 0; n--) {
+			avr_int_vector_p v = avr_int_pending_read(fifo);
+			if (v != vector)
+				avr_int_pending_write(fifo, v);
+		}
+	}
 	vector->pending = 0;
 
 	avr_raise_irq(vector->irq + AVR_INT_IRQ_PENDING, 0);

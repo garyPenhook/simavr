@@ -493,6 +493,24 @@ int main(void)
 		avr->interrupts.cpuint_bootend_idx = 0xff;
 		avr->interrupts.cpuint_ivsel = 0;
 
+		// Clearing a queued-but-unserviced vector must dequeue it. Stale
+		// entries used to pile up until the 64-entry FIFO was full, after
+		// which a newly raised vector was never queued nor dispatched.
+		INT_RESET();
+		avr->sreg[S_I] = 0;
+		for (int k = 0; k < 70; k++) {
+			avr_raise_interrupt(avr, &v10);
+			avr_clear_interrupt(avr, &v10);
+		}
+		check("raise/clear x70 leaves nothing pending",
+				avr_has_pending_interrupts(avr), 0);
+		avr_raise_interrupt(avr, &v20);
+		avr->sreg[S_I] = 1;
+		avr->pc = 0x100;
+		avr_service_interrupts(avr);
+		check("vector raised after x70 raise/clear dispatches",
+				avr->pc, 20 * vs);
+
 		#undef INT_RESET
 	}
 
