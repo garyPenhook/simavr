@@ -80,6 +80,12 @@ struct avr_host_t {
 
 	pthread_mutex_t		lock;		/* guards avr and everything below */
 	pthread_cond_t		cond;		/* run-state changes, wakes the sim thread */
+	/* Stop notification for avr_host_wait_stopped(), on its own lock: a
+	 * waiter re-taking 'lock' after a timed wait would not be counted in
+	 * 'waiters' and could lose it to the sim thread for seconds. */
+	pthread_mutex_t		stop_lock;
+	pthread_cond_t		stop_cond;
+	int					running;	/* mirror of mode == RUNNING, under stop_lock */
 	pthread_t			thread;
 	int					threaded;
 	int					quit;
@@ -124,10 +130,14 @@ struct avr_host_t {
 	uint32_t			ev_head, ev_count, ev_dropped;
 	int					ev_pipe[2];
 
-	char				err[256];
 };
 
-static char host_create_err[256];
+/* Last failure on the calling thread (errno-style), so concurrent callers
+ * of one instance never see each other's messages. */
+static __thread struct {
+	int		code;
+	char	msg[256];
+} host_err;
 
 static void host_sub_notify(struct avr_irq_t * irq, uint32_t value,
 		void * param);
@@ -146,9 +156,9 @@ host_error(
 {
 	va_list ap;
 	va_start(ap, fmt);
-	vsnprintf(h ? h->err : host_create_err,
-			  h ? sizeof(h->err) : sizeof(host_create_err), fmt, ap);
+	vsnprintf(host_err.msg, sizeof(host_err.msg), fmt, ap);
 	va_end(ap);
+	host_err.code = code;
 	return code;
 }
 
@@ -230,6 +240,17 @@ host_flush_coalesced(
 	}
 }
 
+/* Called with 'lock' held after every change of h->mode. */
+static void
+host_publish_mode(
+		avr_host_t * h)
+{
+	pthread_mutex_lock(&h->stop_lock);
+	h->running = h->mode == AVR_HOST_RUNNING;
+	pthread_cond_broadcast(&h->stop_cond);
+	pthread_mutex_unlock(&h->stop_lock);
+}
+
 static void
 host_set_mode(
 		avr_host_t * h,
@@ -248,6 +269,9 @@ host_set_mode(
 	}
 	host_push(h, AVR_HOST_EV_STATE, 0, h->avr->cycle,
 			  host_public_state(h), reason, id);
+	/* Last: wait_stopped() must not return before the STATE event (and the
+	 * flushed pin values) are queued. */
+	host_publish_mode(h);
 	pthread_cond_broadcast(&h->cond);
 }
 
@@ -554,6 +578,12 @@ host_wrap(
 	pthread_mutex_init(&h->lock, NULL);
 	pthread_mutex_init(&h->ev_lock, NULL);
 	pthread_cond_init(&h->cond, NULL);
+	pthread_mutex_init(&h->stop_lock, NULL);
+	pthread_condattr_t ca;
+	pthread_condattr_init(&ca);
+	pthread_condattr_setclock(&ca, CLOCK_MONOTONIC);	/* immune to clock jumps */
+	pthread_cond_init(&h->stop_cond, &ca);
+	pthread_condattr_destroy(&ca);
 #ifndef _WIN32
 	if (pipe(h->ev_pipe) == 0) {
 		for (int i = 0; i < 2; i++) {
@@ -663,8 +693,7 @@ avr_host_new_from_elf(
 	avr_host_t * h = avr_host_new(mmcu,
 			f->frequency ? f->frequency : fallback_freq_hz);
 	if (h && host_load_common(h, f) != 0) {
-		host_error(NULL, AVR_HOST_EIO, "%s", h->err);
-		avr_host_free(h);
+		avr_host_free(h);			/* error already recorded */
 		h = NULL;
 	}
 	host_free_firmware(f);
@@ -701,6 +730,8 @@ avr_host_free(
 	}
 #endif
 	pthread_cond_destroy(&h->cond);
+	pthread_cond_destroy(&h->stop_cond);
+	pthread_mutex_destroy(&h->stop_lock);
 	pthread_mutex_destroy(&h->ev_lock);
 	pthread_mutex_destroy(&h->lock);
 	free(h);
@@ -710,7 +741,14 @@ const char *
 avr_host_last_error(
 		avr_host_t * h)
 {
-	return h ? h->err : host_create_err;
+	return host_err.msg;
+}
+
+int
+avr_host_last_error_code(
+		avr_host_t * h)
+{
+	return host_err.code;
 }
 
 const char *
@@ -931,6 +969,7 @@ host_go(
 	 * that instruction rather than hit the same breakpoint again. */
 	h->skip_break = h->resume_pc_valid && h->avr->pc == h->resume_pc;
 	h->mode = AVR_HOST_RUNNING;
+	host_publish_mode(h);
 	host_pace_rebase(h);
 	if (h->threaded) {
 		pthread_cond_broadcast(&h->cond);
@@ -1038,7 +1077,7 @@ avr_host_wait_stopped(
 	int res = 0;
 	struct timespec deadline;
 
-	clock_gettime(CLOCK_REALTIME, &deadline);
+	clock_gettime(CLOCK_MONOTONIC, &deadline);
 	if (timeout_ms > 0) {
 		deadline.tv_sec += timeout_ms / 1000;
 		deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
@@ -1047,18 +1086,17 @@ avr_host_wait_stopped(
 			deadline.tv_nsec -= 1000000000L;
 		}
 	}
-	host_lock(h);
-	while (h->mode == AVR_HOST_RUNNING && res == 0) {
+	pthread_mutex_lock(&h->stop_lock);
+	while (h->running && res == 0) {
 		if (timeout_ms < 0)
-			pthread_cond_wait(&h->cond, &h->lock);
+			pthread_cond_wait(&h->stop_cond, &h->stop_lock);
 		else if (timeout_ms == 0 ||
-				pthread_cond_timedwait(&h->cond, &h->lock, &deadline) ==
-					ETIMEDOUT)
-			res = h->mode == AVR_HOST_RUNNING ?
-					host_error(h, AVR_HOST_ESTATE, "still running") : 0;
+				pthread_cond_timedwait(&h->stop_cond, &h->stop_lock,
+									   &deadline) == ETIMEDOUT)
+			res = h->running ? AVR_HOST_ESTATE : 0;
 	}
-	host_unlock(h);
-	return res;
+	pthread_mutex_unlock(&h->stop_lock);
+	return res ? host_error(h, res, "still running") : 0;
 }
 
 int

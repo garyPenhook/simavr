@@ -114,7 +114,8 @@ test_discovery(void)
 
 	CHECK("unknown core rejected", avr_host_new("atmega9999", 0) == NULL);
 	CHECK("creation error reported",
-		  strstr(avr_host_last_error(NULL), "atmega9999") != NULL);
+		  strstr(avr_host_last_error(NULL), "atmega9999") != NULL &&
+		  avr_host_last_error_code(NULL) == AVR_HOST_ENOENT);
 	CHECK("missing ELF rejected",
 		  avr_host_new_from_elf("/nonexistent.elf", "atmega4809", 0) == NULL);
 }
@@ -345,8 +346,16 @@ test_threaded(void)
 	CHECK("resume", avr_host_resume(h) == 0);
 	CHECK("resume while running fails", avr_host_resume(h) == AVR_HOST_ESTATE);
 	CHECK("running", avr_host_get_state(h) == AVR_HOST_RUNNING);
+	struct timespec w0, w1;
+	clock_gettime(CLOCK_MONOTONIC, &w0);
 	CHECK("wait times out while running",
 		  avr_host_wait_stopped(h, 20) == AVR_HOST_ESTATE);
+	clock_gettime(CLOCK_MONOTONIC, &w1);
+	/* Regression: a timed wait used to re-take the batch lock and could
+	 * lose it to the sim thread for seconds. */
+	CHECK("timed wait returns on time",
+		  (w1.tv_sec - w0.tv_sec) * 1000 + (w1.tv_nsec - w0.tv_nsec) / 1000000
+		  < 500);
 
 	avr_host_cpu_t cpu;
 	CHECK("cpu locked out while running",
@@ -366,10 +375,16 @@ test_threaded(void)
 
 	CHECK("pause", avr_host_pause(h) == 0);
 	CHECK("wait stopped", avr_host_wait_stopped(h, 1000) == 0);
-	CHECK("paused", avr_host_get_state(h) == AVR_HOST_PAUSED);
-	avr_host_event_t ev;
+	/* Contract: wait_stopped() returns only after the stop's STATE event is
+	 * queued (poll straight away, no locking call in between). The race this
+	 * guards against is sub-microsecond, so this checks the contract rather
+	 * than reliably reproducing a violation. */
+	avr_host_event_t ev = { 0 };
 	count_events(h, AVR_HOST_EV_STATE, 0, &ev);
-	CHECK("pause STATE event", ev.a == AVR_HOST_PAUSED && ev.b == AVR_HOST_STOP_USER);
+	CHECK("pause STATE event queued before wait_stopped returns",
+		  ev.type == AVR_HOST_EV_STATE && ev.a == AVR_HOST_PAUSED &&
+		  ev.b == AVR_HOST_STOP_USER);
+	CHECK("paused", avr_host_get_state(h) == AVR_HOST_PAUSED);
 	p.revents = 0;
 	CHECK("event fd idle after drain", poll(&p, 1, 0) == 0);
 

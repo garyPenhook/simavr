@@ -68,8 +68,9 @@ extern "C" {
  *   the drop count is delivered when space frees up.
  *
  * - Errors: functions returning int return 0 on success or a negative
- *   AVR_HOST_E* code; avr_host_last_error() gives a human-readable
- *   message for the most recent failure on that instance.
+ *   AVR_HOST_E* code; avr_host_last_error() / avr_host_last_error_code()
+ *   describe the most recent failure on the calling thread (errno-style,
+ *   so concurrent callers never see each other's errors).
  */
 
 #define AVR_HOST_API_VERSION	0	/* 0 = draft, unstable */
@@ -109,8 +110,7 @@ avr_host_core_name(
  * (0 = core default). On modern cores the CLKCTRL model owns the CPU
  * clock: every reset re-derives it from the oscillator fuse and the reset
  * prescaler, and firmware changes it, so 'freq_hz' is overridden there.
- * Returns NULL if the core is unknown; avr_host_last_error(NULL) explains
- * (that buffer is shared, not per thread). */
+ * Returns NULL on failure; avr_host_last_error_code() / _error() say why. */
 avr_host_t *
 avr_host_new(
 		const char * mmcu,
@@ -126,14 +126,20 @@ avr_host_new_from_elf(
 		const char * fallback_mmcu,
 		uint32_t fallback_freq_hz);
 
-/* Stops the sim thread (if any), then frees everything. */
+/* Stops the sim thread (if any), then frees everything. No other thread
+ * may be inside (or later enter) an avr_host_* call on 'h'. */
 void
 avr_host_free(
 		avr_host_t * h);
 
-/* Per-instance error text; h == NULL returns the last creation error. */
+/* Message / AVR_HOST_E* code of the calling thread's most recent failure
+ * (any instance, including creation). 'h' is unused and may be NULL. Only
+ * meaningful right after a call that failed. */
 const char *
 avr_host_last_error(
+		avr_host_t * h);
+int
+avr_host_last_error_code(
 		avr_host_t * h);
 
 const char *
