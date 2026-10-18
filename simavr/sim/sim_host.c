@@ -1596,8 +1596,8 @@ avr_host_pin_get(
 		int pin,
 		avr_host_pin_t * out)
 {
-	char port;
-	int bit, res;
+	char port = 0;
+	int bit = 0, res;
 	if ((res = host_parse_pin(h, pin, &port, &bit)))
 		return res;
 	host_lock(h);
@@ -1632,8 +1632,8 @@ host_pin_set_drive(
 		int drive,
 		int level)
 {
-	char port;
-	int bit, res;
+	char port = 0;
+	int bit = 0, res;
 	if ((res = host_parse_pin(h, pin, &port, &bit)))
 		return res;
 	host_lock(h);
@@ -1776,8 +1776,8 @@ avr_host_subscribe_pin(
 		int pin,
 		uint32_t coalesce_cycles)
 {
-	char port;
-	int bit, res;
+	char port = 0;
+	int bit = 0, res;
 	if ((res = host_parse_pin(h, pin, &port, &bit)))
 		return res;
 	host_lock(h);
