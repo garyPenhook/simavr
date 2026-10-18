@@ -58,6 +58,11 @@ enum {
 	PORTM_PIN0CTRL = 0x10,	/* PIN0CTRL .. PIN7CTRL at 0x10 .. 0x17 */
 };
 
+/* PINnCTRL bits */
+#define PINCTRL_ISC	0x07
+#define PINCTRL_PULLUPEN	0x08
+#define PINCTRL_INVEN	0x80
+
 /* Offsets within a VPORT block (device header VPORT_t). */
 enum {
 	VPORTM_DIR = 0x00,

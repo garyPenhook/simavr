@@ -78,7 +78,7 @@ int read_hex_string(const char * src, uint8_t * buffer, int maxlen)
 #define ALLOCATION 512
 #define INCREMENT  512
 
-static void
+int
 read_ihex_chunks(
 		const char  * fname,
 		fw_chunk_t ** chunks_p )
@@ -88,13 +88,14 @@ read_ihex_chunks(
 	int         len, allocation = 0;
 	uint8_t     chk = 0;
 	uint8_t     bline[272];
+	int         res = 0;
 
 	if (!fname || !chunks_p)
-		return;
+		return -1;
 	FILE * f = fopen(fname, "r");
 	if (!f) {
 		perror(fname);
-		return;
+		return -1;
 	}
 	uint32_t segment = 0;	// segment address
 
@@ -107,6 +108,7 @@ read_ihex_chunks(
 		if (line[0] != ':') {
 			fprintf(stderr, "AVR: '%s' invalid ihex format (%.4s)\n",
 					fname, line);
+			res = -1;
 			break;
 		}
 
@@ -126,6 +128,7 @@ read_ihex_chunks(
 		if (chk != bline[len-1]) {
 			fprintf(stderr, "%s: %s, invalid checksum %02x/%02x\n",
 					__FUNCTION__, fname, chk, bline[len-1]);
+			res = -1;
 			break;
 		}
 
@@ -183,6 +186,7 @@ read_ihex_chunks(
 		chunk->fill_size = chunk->size;
 	}
 	fclose(f);
+	return res;
 }
 
 uint8_t *

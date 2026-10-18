@@ -421,6 +421,28 @@ static inline uint8_t _avr_get_ram(avr_t * avr, uint16_t addr)
 }
 
 /*
+ * Out-of-line data-space accessors with full instruction semantics (IO
+ * read/write callbacks, low-I/O redirect, flash mapping), for hosts such as
+ * sim_host.c that need "as if the firmware did it" access.
+ */
+uint8_t
+avr_core_data_read(
+		avr_t * avr,
+		uint16_t addr)
+{
+	return _avr_get_ram(avr, addr);
+}
+
+void
+avr_core_data_write(
+		avr_t * avr,
+		uint16_t addr,
+		uint8_t v)
+{
+	_avr_set_ram(avr, addr, v);
+}
+
+/*
  * Stack push accessors.
  */
 static inline void _avr_push8(avr_t * avr, uint16_t v)

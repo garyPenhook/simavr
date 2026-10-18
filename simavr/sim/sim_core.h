@@ -44,6 +44,12 @@ extern struct text_colors simavr_font;
 avr_flashaddr_t avr_run_one(avr_t * avr);
 
 /*
+ * Data-space access with the same side effects as an LD/ST instruction.
+ */
+uint8_t avr_core_data_read(avr_t * avr, uint16_t addr);
+void avr_core_data_write(avr_t * avr, uint16_t addr, uint8_t v);
+
+/*
  * These are for internal access to the stack (for interrupts)
  */
 uint16_t _avr_sp_get(avr_t * avr);

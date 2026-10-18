@@ -1,0 +1,175 @@
+# Python GUI simulator TODO
+
+Separate roadmap for a Python-first GUI frontend for modern AVR simulation.
+This is intentionally distinct from `modern_support_todo.md`, which tracks
+simulation-core fidelity gaps in the C engine. The assumption here is:
+
+* keep the MCU execution + peripheral models in native code
+* expose a stable host/control API
+* build the interactive GUI in Python
+
+Headless support is optional; GUI usability is the priority.
+
+Verified against the current tree on 2026-06-08.
+
+## Goals
+
+* Replace the ad-hoc GLUT/OpenGL example-board UI style with a richer desktop UI
+  that is easier to extend.
+* Make modern AVR boards easier to inspect visually: pins, registers, buses,
+  breakpoints, framebuffers, virtual LEDs, buttons, and serial consoles.
+* Keep simulator correctness work in the native core; do not re-implement AVRxt
+  execution or peripheral timing in Python.
+
+## Recommended shape
+
+* **Core:** existing `simavr/sim` engine remains native.
+* **Bindings/API:** add a narrow host-facing API for lifecycle, stepping,
+  breakpoints, memory/register access, IRQ wiring, and trace subscription.
+* **GUI toolkit:** prefer **PySide6 / Qt** over Tkinter, GLUT, or browser-first
+  shells.
+* **Board models:** Python-side composition of virtual widgets around the native
+  MCU instance.
+
+## Phase 1 — host API extraction
+
+**Status (2026-10-18): first cut landed** as
+[`simavr/sim/sim_host.h`](../simavr/sim/sim_host.h) /
+[`sim_host.c`](../simavr/sim/sim_host.c), covered by the host-only
+[`tests/test_sim_host.c`](../tests/test_sim_host.c). Decisions taken:
+
+* one library-owned sim thread per instance; an instance lock serialises all
+  `avr_t` access (accessors wait at most one batch), and `pause` is lock-free
+* events go into a bounded queue drained by `avr_host_poll_events()`, with a
+  pollable fd; no callbacks into the GUI thread (avoids GIL / foreign-thread
+  issues for Python), per-pin coalescing for fast signals
+* only the `avr_host_*` functions and the public `AVR_IOCTL_*` IRQ ids are the
+  contract; `avr_host_raw_avr()` is an explicitly unstable escape hatch for
+  existing C parts
+
+Implemented: lifecycle, ELF/HEX/raw load (incl. modern EEPROM records),
+run/pause/step/run-cycles, speed throttle, breakpoints, memory + CPU access,
+pins by name with external drive, USART TX/RX, pin/USART/raw-IRQ events.
+
+Still `AVR_HOST_ENOTSUP`: register/peripheral metadata table (needs a per-core
+table generated from the avr-libc headers), ELF symbols, watchpoints, analog
+pin voltages, interrupt-taken events, log text, VCD. Open item: pin down AVRxt
+single-step semantics (multi-cycle instructions, CPUINT level-1 preemption).
+
+1. Define a stable C API for:
+   * create/destroy MCU instances
+   * load ELF / HEX
+   * run / pause / single-step / reset
+   * register + SRAM + flash reads/writes
+   * subscribe to pin/IRQ/bus events
+   * inject GPIO/input events from the GUI
+2. Stop depending on example-board host code as the primary integration surface.
+   The current `examples/parts` and board runners are useful references, but not
+   a clean API boundary.
+3. Decide event transport:
+   * callback-based C API for low-latency UI updates
+   * optional polling snapshots for simpler widgets
+4. Mark which existing internals are private so bindings do not couple to
+   unstable structures.
+
+## Phase 2 — Python bindings
+
+1. Choose the binding layer:
+   * `cffi` for fast iteration and a plain C ABI
+   * `pybind11` only if the host API becomes C++
+   * avoid `ctypes` as the long-term primary interface
+2. Build a small Python package layout:
+   * `simavr_py.core`
+   * `simavr_py.bindings`
+   * `simavr_py.widgets`
+   * `simavr_py.boards`
+3. Provide Python wrappers for:
+   * MCU session lifecycle
+   * stepping/clock control
+   * register file and named peripheral views
+   * trace subscriptions
+   * bus attachments for UART/SPI/TWI-backed virtual devices
+4. Add smoke tests that load a known modern target such as `attiny3217` or
+   `atmega4809` and verify basic control/readback from Python.
+
+## Phase 3 — GUI shell
+
+1. Build a Qt desktop shell with:
+   * board canvas
+   * register inspector
+   * memory viewer
+   * UART console
+   * trace/watch pane
+   * run/pause/step toolbar
+2. Separate simulation time from repaint cadence so the GUI stays responsive
+   under high simulated clock rates.
+3. Add a signal/slot bridge that coalesces high-rate pin changes instead of
+   repainting every transition.
+4. Support session save/restore for window layout, watched registers, and board
+   wiring.
+
+## Phase 4 — modern-board widgets
+
+1. Recreate the current visual demos in Python:
+   * LED ramp
+   * SSD1306 / SH1106 OLED
+   * HD44780 LCD
+   * buttons / rotary encoder
+2. Add modern-AVR-specific inspection widgets:
+   * PORT/VPORT live state by physical pin
+   * PORTMUX routing view
+   * TCA/TCB/TCD waveform state
+   * EVSYS channel/user routing
+   * ADC/VREF/AC analog state summaries
+3. Make widget wiring declarative so a board definition is mostly data, not
+   custom glue code.
+
+## Phase 5 — debugger-quality UX
+
+1. Breakpoints:
+   * PC breakpoints
+   * data watchpoints if the core can surface them cheaply
+   * peripheral-register change triggers
+2. Add disassembly and source correlation from ELF/DWARF where available.
+3. Show interrupt activity:
+   * pending/active sources
+   * vector taken
+   * CPUINT state for modern AVR
+4. Add timeline views for selected pins, timers, and bus traffic without forcing
+   the user into VCD/GTKWave for every task.
+
+## Native-core prerequisites
+
+These are not Python tasks, but they strongly affect GUI usefulness:
+
+* pin-level peripheral routing through `PORTMUX` instead of only dedicated IRQ
+  endpoints
+* better line-level USART/SPI visibility
+* stable hooks for trace/event subscription
+* documented stepping semantics for AVRxt timing and interrupt delivery
+* a supported way to query named registers/peripherals without scraping internal
+  structs
+
+## Non-goals
+
+* Rewriting the AVR execution engine in Python
+* Making headless/CI the primary design center
+* Building a web app before the native desktop API is stable
+
+## Suggested work order
+
+1. Define the native host API.
+2. Prove it with a minimal Python binding and one modern target.
+3. Build a Qt shell with run/pause/step, UART, and GPIO views.
+4. Port one existing board demo end-to-end, preferably `board_atmega4809_oled`
+   or `board_attiny3217_leds`.
+5. Add richer inspector widgets only after the API boundary holds.
+
+## Open questions
+
+* Should the Python layer own board composition entirely, or should some virtual
+  parts remain native for reuse across C and Python hosts?
+* Is the first-class abstraction an MCU, a board, or a simulation session
+  containing multiple devices?
+* Should waveform capture be a native service exposed to Python, or a pure
+  Python consumer over trace callbacks?

@@ -56,6 +56,16 @@ read_ihex_file(
 		uint32_t * dsize,
 		uint32_t * start);
 
+// reads IHEX file 'fname' into a newly allocated list of firmware chunks
+// at *chunks_p; chunk types are not classified. Returns 0, or -1 if the
+// file can't be opened or a record is malformed / fails its checksum
+// (chunks read before the bad record are still returned, caller frees)
+struct fw_chunk;
+int
+read_ihex_chunks(
+		const char * fname,
+		struct fw_chunk ** chunks_p);
+
 // hex dump from pointer 'b' for 'l' bytes with string prefix 'w'
 void
 hdump(

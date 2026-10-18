@@ -146,6 +146,20 @@ board in that directory targets a classic AVR):
 Each board's Makefile gates the firmware build on a modern `avr-gcc` (12+), so a
 plain `make` across `examples/` still succeeds on older toolchains.
 
+**Host API for GUIs and bindings (draft).**
+[`simavr/sim/sim_host.h`](simavr/sim/sim_host.h) is a plain-C embedding API
+that keeps `avr_t` internals out of the interface: opaque handles, a
+library-owned simulation thread with run/pause/step/run-for-N-cycles and a
+real-time throttle, breakpoints, memory and CPU access, pins by name (`"PA3"`)
+with external drive, USART send/receive, and a bounded event queue with a
+pollable fd (for `QSocketNotifier`/`select`) instead of foreign-thread
+callbacks. It is the Phase 1 boundary for the planned Python GUI
+([`doc/python_gui_todo.md`](doc/python_gui_todo.md)) and is **not ABI-stable
+yet** (`AVR_HOST_API_VERSION` 0). Register metadata, symbols, watchpoints,
+analog input, interrupt events and VCD return `AVR_HOST_ENOTSUP` for now.
+[`tests/test_sim_host.c`](tests/test_sim_host.c) is a host-only test
+(no `avr-gcc`); build instructions are in its header.
+
 Installation
 ------------
 

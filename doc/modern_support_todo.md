@@ -5,6 +5,9 @@ Every top-level peripheral block on these parts is *present and functional*; the
 items below are **feature-depth gaps inside existing models**, not missing blocks.
 A gap applies to a micro only if that micro fits the instance.
 
+For a separate roadmap for a Python GUI frontend layered on the native simulator,
+see [`python_gui_todo.md`](python_gui_todo.md).
+
 Verified 2026-06-07 against the in-tree models, the README backlog, and the
 ATtiny3216/17 datasheet (DS40002205A). Source of truth for "fitted instances" is
 each device's avr-libc header as evaluated by the core templates

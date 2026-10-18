@@ -37,11 +37,6 @@
 #include <string.h>
 #include "avr_port_modern.h"
 
-/* PINnCTRL bits */
-#define PINCTRL_ISC	0x07
-#define PINCTRL_PULLUPEN	0x08
-#define PINCTRL_INVEN	0x80
-
 /* ISC (input/sense configuration) values */
 #define ISC_INTDISABLE	0
 #define ISC_BOTHEDGES	1
