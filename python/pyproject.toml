@@ -1,0 +1,21 @@
+[project]
+name = "simavr-py"
+version = "0.1.0"
+description = "Python bindings for simavr's host API (modern AVR simulation)"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.15"
+dependencies = ["cffi>=2.1"]
+
+[dependency-groups]
+dev = ["pytest>=9"]
+
+[build-system]
+requires = ["uv_build>=0.10,<0.11"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "simavr_py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -158,7 +158,8 @@ callbacks. It is the Phase 1 boundary for the planned Python GUI
 yet** (`AVR_HOST_API_VERSION` 0). Register metadata, symbols, watchpoints,
 analog input, interrupt events and VCD return `AVR_HOST_ENOTSUP` for now.
 [`tests/test_sim_host.c`](tests/test_sim_host.c) is a host-only test
-(no `avr-gcc`); build instructions are in its header.
+(no `avr-gcc`); build instructions are in its header. Python bindings
+(cffi, Python 3.15, free-threading capable) live in [`python/`](python).
 
 Installation
 ------------

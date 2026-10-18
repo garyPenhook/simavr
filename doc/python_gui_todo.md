@@ -74,6 +74,23 @@ single-step semantics (multi-cycle instructions, CPUINT level-1 preemption).
 
 ## Phase 2 — Python bindings
 
+**Status (2026-10-18): first cut landed** as [`python/`](../python)
+(`simavr-py`, package `simavr_py`). Decisions taken:
+
+* cffi in ABI mode (`ffi.dlopen` of `libsimavr.so`): no compiler at install
+  time; the hand-written cdef is checked against `sim_host.h` (function list)
+  and against `cc` (struct layouts) by the tests, so drift fails loudly
+* targets the project's Python 3.15 env only (`requires-python >= 3.15`) and
+  uses its features: lazy imports (cheap `import simavr_py`), `frozendict`
+  (pin and error tables), `type` aliases, `match` event decoding
+* free-threaded 3.15t verified: the suite passes and the GIL stays disabled
+  after cffi + libsimavr load; calls run GIL-free and rely on the C lock
+* events surface as typed frozen dataclasses (`PinEvent`, `UartTxEvent`,
+  `StateEvent`, ...); `Simulator.fileno()` plugs into `select` /
+  `QSocketNotifier`
+
+Not wrapped yet: the C calls that still return `AVR_HOST_ENOTSUP`.
+
 1. Choose the binding layer:
    * `cffi` for fast iteration and a plain C ABI
    * `pybind11` only if the host API becomes C++
