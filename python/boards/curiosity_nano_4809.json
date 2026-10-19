@@ -1,0 +1,9 @@
+{
+  "name": "ATmega4809 Curiosity Nano (DM320115)",
+  "mmcu": "atmega4809",
+  "freq": 3333333,
+  "widgets": [
+    {"type": "led", "pin": "PF5", "label": "LED0", "color": "yellow", "active_low": true},
+    {"type": "button", "pin": "PF6", "label": "SW0 (needs internal pull-up)"}
+  ]
+}

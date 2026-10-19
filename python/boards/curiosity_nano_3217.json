@@ -1,0 +1,9 @@
+{
+  "name": "ATtiny3217 Curiosity Nano (EV50J96A)",
+  "mmcu": "attiny3217",
+  "freq": 3333333,
+  "widgets": [
+    {"type": "led", "pin": "PA3", "label": "LED0", "color": "yellow", "active_low": true},
+    {"type": "button", "pin": "PB7", "label": "SW0 (needs internal pull-up)"}
+  ]
+}
