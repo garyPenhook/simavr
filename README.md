@@ -4,8 +4,8 @@ simavr - a lean and mean Atmel AVR simulator for linux
 [![CI](https://github.com/garyPenhook/simavr/actions/workflows/ci.yml/badge.svg)](https://github.com/garyPenhook/simavr/actions/workflows/ci.yml)
 
 > **This is a fork** that adds modern AVR (AVRxt) support — working cores for the
-> **entire tinyAVR® 1-series** (15 devices) and **megaAVR® 0-series** (8 devices,
-> incl. the ATmega4809). It is **not**
+> **entire tinyAVR® 0-series** (11 devices), **tinyAVR® 1-series** (15 devices) and
+> **megaAVR® 0-series** (8 devices, incl. the ATmega4809). It is **not**
 > the same as upstream or the distro packages;
 > see [Modern AVR (AVRxt) support](#modern-avr-avrxt--tinyavr-1-series--megaavr-0-series-support--this-fork)
 > below, and note that **`apt`/`brew` install upstream simavr, not this fork** — you
@@ -30,12 +30,22 @@ Modern AVR (AVRxt) / tinyAVR® 1-series + megaAVR® 0-series support — *this f
 ------------------------------------------------------------------------------
 
 This fork adds **modern AVR (AVRxt)** cores to _simavr_: the **entire
-tinyAVR® 1-series** and the **entire megaAVR® 0-series** (including the popular
+tinyAVR® 0-series**, the **entire tinyAVR® 1-series** and the **entire megaAVR® 0-series** (including the popular
 **ATmega4809**). Every stock _simavr_ target is a classic AVRe/AVRe+ part;
 the tinyAVR / megaAVR‑0 / AVR‑Dx families use the AVRxt core with a completely
 different, register‑block peripheral architecture, so this needed engine work as
 well as new peripheral models. The full design notes and implementation log are
 in [`doc/attiny3217_design.md`](doc/attiny3217_design.md).
+
+**Supported tinyAVR 0-series parts** (11 devices; no DAC, TCD or PTC, a single
+TCB/AC/ADC — see AN2636):
+
+| Flash | 8-pin | 14-pin | 20-pin | 24-pin |
+|------:|:-----:|:------:|:------:|:------:|
+| 2 KB  | ATtiny202 | ATtiny204 | — | — |
+| 4 KB  | ATtiny402 | ATtiny404 | ATtiny406 | — |
+| 8 KB  | — | ATtiny804 | ATtiny806 | ATtiny807 |
+| 16 KB | — | ATtiny1604 | ATtiny1606 | ATtiny1607 |
 
 **Supported 1-series parts** (15 devices, all 8/14/20/24-pin variants):
 
@@ -138,10 +148,10 @@ board in that directory targets a classic AVR):
 * [`board_attiny3217`](examples/board_attiny3217) — the tinyAVR-1 sibling, same
   structure on the other modern family.
 * [`board_modern_avr`](examples/board_modern_avr) — a **coverage** board: one
-  device-agnostic firmware is built for *every* supported modern core (all 15
-  tinyAVR 1-series + 8 megaAVR-0) and the host runner boots each and checks that
+  device-agnostic firmware is built for *every* supported modern core (all 11
+  tinyAVR 0-series + 15 tinyAVR 1-series + 8 megaAVR-0) and the host runner boots each and checks that
   seven core peripherals respond — PORT, TCA0, TCB0, RTC, ADC0, SPI0 and TWI0
-  (plus USART0 as the result transport). `make run` reports `23/23 cores PASSED`.
+  (plus USART0 as the result transport). `make run` reports `34/34 cores PASSED`.
 
 Each board's Makefile gates the firmware build on a modern `avr-gcc` (12+), so a
 plain `make` across `examples/` still succeeds on older toolchains.
@@ -217,6 +227,7 @@ Emulated Cores (very easy to add new ones!)
 --------------
 
 **Modern AVR (AVRxt) — *this fork*:**
++ tinyAVR® 0-series: ATtiny202 / 402 (8-pin); 204 / 404 / 804 / 1604 (14-pin); 406 / 806 / 1606 (20-pin); 807 / 1607 (24-pin)
 + tinyAVR® 1-series: ATtiny212 / 412 (8-pin); 214 / 414 / 814 / 1614 / 3214 (14-pin); 416 / 816 / 1616 / 3216 (20-pin); 417 / 817 / 1617 / 3217 (24-pin)
 + megaAVR® 0-series: ATmega808 / 1608 / 3208 / 4808 (28/32-pin); ATmega809 / 1609 / 3209 / 4809 (40/48-pin)
 + see [Modern AVR (AVRxt) support](#modern-avr-avrxt--tinyavr-1-series--megaavr-0-series-support--this-fork)

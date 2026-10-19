@@ -25,7 +25,7 @@ def test_known_addresses_attiny3217():
 
 
 def test_every_modern_core_has_a_table():
-    assert len(MODERN) == 23                 # 15 tinyAVR 1-series + 8 megaAVR-0
+    assert len(MODERN) == 34     # 11 tinyAVR 0-series + 15 tinyAVR 1-series + 8 megaAVR-0
     for c in MODERN:
         regs = registers(c)
         assert len({(r.name) for r in regs}) == len(regs), c      # names unique

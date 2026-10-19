@@ -55,6 +55,32 @@
 #define SIM_VECTOR_SIZE	2
 #endif
 
+/*
+ * The tinyAVR 0-series fits no DAC and no TCD (Migration Between tinyAVR
+ * 1-series and 0-series, AN2636 table 2-1; DS40002312A). The device header
+ * only defines DAC0 / TCD0_OVF_vect_num on parts that have them.
+ */
+#ifdef DAC0_CTRLA
+#define SIM_HAS_DAC0	1
+#endif
+#ifdef TCD0_OVF_vect_num
+#define SIM_HAS_TCD0	1
+#endif
+
+/*
+ * AC0/DAC0 are not at one address across the family: the 2/4/8 KB 1-series
+ * parts and ATtiny202-406 put AC0 at 0x0670 (DAC0 at 0x0680), the 16/32 KB
+ * 1-series parts and ATtiny804-1607 put it at 0x0680 (DAC0 at 0x06A0)
+ * (DS40002287A / DS40002318A / DS40002312A memory maps). Take them from the
+ * device header while its identity _SFR_MEM8 is still in effect.
+ */
+enum {
+	SIM_AC0_BASE = AC0_CTRLA,
+#ifdef DAC0_CTRLA
+	SIM_DAC0_BASE = DAC0_CTRLA,
+#endif
+};
+
 /* EEPROM size from the device's mapped EEPROM window. */
 #define SIM_EE_SIZE	(E2END - EEPROM_START + 1)
 
@@ -133,7 +159,9 @@ struct mcu_t {
 #ifdef AC2_AC_vect_num
 	avr_ac_t			ac2;
 #endif
+#ifdef SIM_HAS_DAC0
 	avr_dac_t			dac0;
+#endif
 #ifdef AC1_AC_vect_num
 	avr_dac_t			dac1;	/* feeds AC1's DAC input (no output pin) */
 #endif
@@ -144,7 +172,9 @@ struct mcu_t {
 	avr_evsys_t			evsys;
 	avr_portmux_t		portmux;
 	avr_vref_t			vref;
+#ifdef SIM_HAS_TCD0
 	avr_tcd_t			tcd0;
+#endif
 	avr_wdt_modern_t	wdt;
 	avr_crcscan_t		crcscan;
 	avr_slpctrl_t		slpctrl;
@@ -158,6 +188,7 @@ struct mcu_t {
  * On-chip routing: the DAC0 output feeds AC0's "DAC" negative input. Mirror that
  * by updating AC0's DAC reference whenever DAC0's output (millivolts) changes.
  */
+#ifdef SIM_HAS_DAC0
 static void
 tinyx1_dac_to_ac(struct avr_irq_t * irq, uint32_t value, void * param)
 {
@@ -165,6 +196,7 @@ tinyx1_dac_to_ac(struct avr_irq_t * irq, uint32_t value, void * param)
 	(void)irq;
 	avr_ac_set_refs(ac, ac->vref_mv, value);
 }
+#endif
 
 /*
  * VREF.CTRLA.DAC0REFSEL selects the internal reference shared by DAC0 and AC0;
@@ -176,7 +208,11 @@ tinyx1_vref_to_dac_ac(struct avr_irq_t * irq, uint32_t value, void * param)
 {
 	struct mcu_t * mcu = (struct mcu_t *)param;
 	(void)irq;
+#ifdef SIM_HAS_DAC0
 	avr_dac_set_vref(&mcu->dac0, value);
+#endif
+	/* 0-series: DAC0REFSEL is the AC0 reference select (DS40002312A ch.18 VREF);
+	 * MUXNEG offers only AINN0/AINN1/VREF, so there is no DAC level. */
 	avr_ac_set_refs(&mcu->ac0, value, mcu->ac0.dacref_mv);
 }
 
@@ -374,8 +410,8 @@ tinyx1_init(struct avr_t * avr)
 	/* SPI0 at 0x0820: single SPI0_INT vector (normal mode). */
 	avr_spi_modern_init(avr, &mcu->spi0, 0x0820, SPI0_INT_vect_num, '0');
 
-	/* AC0 at 0x0680; AC1/AC2 at 0x0688/0x0690 on the larger parts. */
-	avr_ac_init(avr, &mcu->ac0, 0x0680, AC0_AC_vect_num, '0');
+	/* AC0 (SIM_AC0_BASE); AC1/AC2 at 0x0688/0x0690 on the larger parts. */
+	avr_ac_init(avr, &mcu->ac0, SIM_AC0_BASE, AC0_AC_vect_num, '0');
 #ifdef AC1_AC_vect_num
 	avr_ac_init(avr, &mcu->ac1, 0x0688, AC1_AC_vect_num, '1');
 #endif
@@ -383,15 +419,17 @@ tinyx1_init(struct avr_t * avr)
 	avr_ac_init(avr, &mcu->ac2, 0x0690, AC2_AC_vect_num, '2');
 #endif
 
-	/* DAC0 (8-bit) at 0x06A0; output feeds AC0's DAC input and ADC0's DAC0
+	/* DAC0 (8-bit) at SIM_DAC0_BASE; output feeds AC0's DAC input and ADC0's DAC0
 	 * internal channel (MUXPOS 0x1C). */
-	avr_dac_init(avr, &mcu->dac0, 0x06a0, '0');
+#ifdef SIM_HAS_DAC0
+	avr_dac_init(avr, &mcu->dac0, SIM_DAC0_BASE, '0');
 	avr_irq_register_notify(
 			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
 			tinyx1_dac_to_ac, &mcu->ac0);
 	avr_connect_irq(
 			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
 			avr_io_getirq(avr, AVR_IOCTL_ADCM_GETIRQ('0'), AVR_ADCM_CH_DAC0));
+#endif
 
 #ifdef AC1_AC_vect_num
 	/* DAC1 (8-bit) at 0x06A8; the 16K/32K parts fit it (Table 7-1). It has no
@@ -496,6 +534,7 @@ tinyx1_init(struct avr_t * avr)
 			tinyx1_vref_to_dac2_ac2, mcu);
 #endif
 
+#ifdef SIM_HAS_TCD0
 	/* TCD0 (12-bit timer type D) at 0x0A80: periodic OVF vector.
 	 * OSCCFG fuse index 2 resolves the OSC20M base for CLKSEL=OSC20M. */
 	avr_tcd_init(avr, &mcu->tcd0, 0x0a80, TCD0_OVF_vect_num, 2, '0');
@@ -510,6 +549,7 @@ tinyx1_init(struct avr_t * avr)
 			avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOB),
 			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
 						  AVR_CCL_IRQ_SRC_2LUT(AVR_CCL_SRC_TCD0_WOB)));
+#endif
 
 	/* TCA0 WO0/WO1/WO2 feed CCL INSEL 0x8 (DS40002205A p.413-415: WOn on
 	 * INn), so a single-slope PWM channel can drive a LUT directly. */

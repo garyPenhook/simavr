@@ -1,6 +1,11 @@
 # Modern-AVR support TODO — per-micro module gaps
 
-Audit of the 23 modern cores in this fork (15 tinyAVR® 1-series + 8 megaAVR® 0-series).
+Audit of the 23 modern cores in this fork (15 tinyAVR® 1-series + 8 megaAVR® 0-series),
+plus the 11 tinyAVR® 0-series cores added 2026-10-19 (ATtiny202/204/402/404/406/804/806/807/
+1604/1606/1607). The 0-series reuses `sim_tinyx1.h` and fits a strict subset of the 1-series
+blocks (no DAC, TCD, PTC; one TCB/AC/ADC — AN2636 table 2-1, DS40002312A/DS40002318A); its
+VREF.CTRLA.DAC0REFSEL is the AC0 reference. The "all 23" counts below predate it and apply to
+those 23 cores; each 0-series part inherits the gaps of the blocks it fits.
 Every top-level peripheral block on these parts is *present and functional*; the
 items below are **feature-depth gaps inside existing models**, not missing blocks.
 A gap applies to a micro only if that micro fits the instance.

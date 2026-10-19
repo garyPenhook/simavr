@@ -29,9 +29,13 @@ IPATH += ${simavr}/simavr/sim
 
 VPATH = .
 
-# Every modern core this fork supports: 15 tinyAVR 1-series + 8 megaAVR 0-series.
+# Every modern core this fork supports: 11 tinyAVR 0-series + 15 tinyAVR
+# 1-series + 8 megaAVR 0-series.
 # Keep in sync with simavr/cores/sim_{tiny,mega}*.c (the sim_tinyx1.h / sim_megax08.h users).
-TINY_MCUS = attiny212 attiny214 attiny412 attiny414 attiny416 attiny417 \
+TINY_MCUS = attiny202 attiny204 attiny402 attiny404 attiny406 \
+            attiny804 attiny806 attiny807 \
+            attiny1604 attiny1606 attiny1607 \
+            attiny212 attiny214 attiny412 attiny414 attiny416 attiny417 \
             attiny814 attiny816 attiny817 \
             attiny1614 attiny1616 attiny1617 \
             attiny3214 attiny3216 attiny3217

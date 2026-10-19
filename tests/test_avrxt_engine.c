@@ -3804,6 +3804,71 @@ int main(void)
 		check("SIGROW.OSC20ERR3V = 0 (no error)", cpu_read(m, SIG + 0x24), 0x00);
 	}
 
+	printf("== tinyAVR 0-series cores + per-device AC0/DAC0 bases ==\n");
+	{
+		/* Address -> "has an IO write handler" probe. */
+#define HAS_W(m, a) (!!(m)->io[AVR_DATA_TO_IO(a)].w.c)
+
+		/* ATtiny202 (DS40002318A): AC0 at 0x0670; no DAC0, no TCD0. */
+		avr_t *m = avr_make_mcu_by_name("attiny202");
+		if (!m) { printf("cannot make attiny202 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		check("attiny202 is MODERN", !!(m->arch.flags & AVR_ARCH_F_MODERN), 1);
+		check("attiny202 signature 1E 91 23",
+			  (m->signature[0] << 16) | (m->signature[1] << 8) | m->signature[2], 0x1e9123);
+		check("attiny202 vector_size 2 (2 KB flash)", m->vector_size, 2);
+		check("attiny202 AC0 handler at 0x0670", HAS_W(m, 0x0670 + ACR_MUXCTRLA), 1);
+		check("attiny202 nothing at 0x0680 (no DAC0)", HAS_W(m, 0x0680), 0);
+		check("attiny202 no TCD0 at 0x0A80", HAS_W(m, 0x0a80), 0);
+		check("attiny202 TCB0 present", HAS_W(m, 0x0a40), 1);
+		check("attiny202 no TCB1", HAS_W(m, 0x0a50), 0);
+
+		/* ATtiny414 (DS40002287A): AC0 0x0670, DAC0 0x0680 -- the 2/4/8 KB
+		 * 1-series parts, previously mapped at the 16/32 KB addresses. */
+		m = avr_make_mcu_by_name("attiny414");
+		if (!m) { printf("cannot make attiny414 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		check("attiny414 AC0 handler at 0x0670", HAS_W(m, 0x0670 + ACR_MUXCTRLA), 1);
+		check("attiny414 DAC0 handler at 0x0680", HAS_W(m, 0x0680), 1);
+		check("attiny414 nothing at 0x0682 (no AC0 shadow)", HAS_W(m, 0x0680 + ACR_MUXCTRLA), 0);
+		check("attiny414 TCD0 present", HAS_W(m, 0x0a80), 1);
+
+		/* ATtiny3217 keeps AC0 0x0680 / DAC0 0x06A0. */
+		m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		check("attiny3217 AC0 handler at 0x0680", HAS_W(m, 0x0680 + ACR_MUXCTRLA), 1);
+		check("attiny3217 DAC0 handler at 0x06A0", HAS_W(m, 0x06a0), 1);
+
+		/* ATtiny1607 (DS40002312A): AC0 0x0680, 16 KB, three ports, no DAC/TCD/
+		 * TCB1; VREF.CTRLA.DAC0REFSEL is the AC0 reference. */
+		m = avr_make_mcu_by_name("attiny1607");
+		if (!m) { printf("cannot make attiny1607 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		check("attiny1607 signature 1E 94 23",
+			  (m->signature[0] << 16) | (m->signature[1] << 8) | m->signature[2], 0x1e9423);
+		check("attiny1607 vector_size 4 (16 KB flash)", m->vector_size, 4);
+		check("attiny1607 AC0 handler at 0x0680", HAS_W(m, 0x0680 + ACR_MUXCTRLA), 1);
+		check("attiny1607 no DAC0 at 0x06A0", HAS_W(m, 0x06a0), 0);
+		check("attiny1607 no TCD0 at 0x0A80", HAS_W(m, 0x0a80), 0);
+		check("attiny1607 PORTC present", HAS_W(m, 0x0440 + 0x01), 1);
+
+		const avr_io_addr_t C = 0x680, V = 0x0a0;
+		avr_irq_t *ainp0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0);
+		cpu_write(m, V + VREFR_CTRLA, 0x02);		/* DAC0REFSEL = 2.5 V */
+		cpu_write(m, C + ACR_MUXCTRLA, 0x02);		/* MUXNEG = VREF */
+		cpu_write(m, C + ACR_CTRLA, 0x01);
+		avr_raise_irq(ainp0, 2000);
+		check("1607 AC0 vs VREF 2.5V: 2000 mV is below", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+		avr_raise_irq(ainp0, 3000);
+		check("1607 AC0 vs VREF 2.5V: 3000 mV is above", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+#undef HAS_W
+	}
+
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 			failures, failures == 1 ? "" : "s");
 	return failures ? 1 : 0;
