@@ -152,9 +152,16 @@ brightness is the lit fraction of simulated time between repaints, from pin
 events coalesced to ~0.5 ms, so PWM ramps read as ramps; released buttons let
 go of the pin (firmware pull-up decides) unless `pull` models an external
 resistor; an encoder detent plays its four quadrature phases 3 ms apart in
-wall-clock time. Not done: HD44780 (pin-event decoder) and SSD1306/SH1106
-(need a bus-attach in the host API or a Python SPI/TWI decoder), and the
-inspection widgets (blocked on the register metadata table).
+wall-clock time. **Slice 2 (2026-10-18): HD44780 LCD** (`lcd` board widget,
+`widgets.LcdModel`, `LcdWidget`). A pure-Python decoder over uncoalesced pin
+events: latches on E's falling edge, 4- and 8-bit buses (a 4-bit wiring powers
+up in 8-bit mode with D0-D3 floating, so the standard `3,3,3,2` start-up
+works), DDRAM/CGRAM, entry mode, display/cursor shift, blink, 1/2/4 rows. Write
+only: no busy flag or read-back (firmware must use fixed delays) and no
+execution timing. Pin-queue overflow marks the display "events lost" until the
+next clear. Not done: SSD1306/SH1106 (need a bus-attach in the host API or a
+Python SPI/TWI decoder), and the inspection widgets (blocked on the register
+metadata table).
 
 1. Recreate the current visual demos in Python:
    * LED ramp

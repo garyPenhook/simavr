@@ -5,7 +5,12 @@ virtual parts wired to MCU pins, not glue code.
      "widgets": [
        {"type": "led",     "pin": "PA0", "label": "LED", "color": "red"},
        {"type": "button",  "pin": "PB2", "label": "SW1", "active_low": true},
-       {"type": "encoder", "pin_a": "PC0", "pin_b": "PC1", "label": "ENC"}]}
+       {"type": "encoder", "pin_a": "PC0", "pin_b": "PC1", "label": "ENC"},
+       {"type": "lcd", "rs": "PD0", "e": "PD1", "data": ["PD4", "PD5", "PD6", "PD7"],
+        "cols": 16, "rows": 2}]}
+
+An HD44780 `lcd` lists `data` as D4..D7 (4-bit) or D0..D7 (8-bit); `rw` is
+optional and, when wired, a pulse with RW high is ignored (writes only).
 """
 
 import json
@@ -13,7 +18,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .widgets import ButtonModel, EncoderModel, LedModel, Write
+lazy from .core import OverflowEvent
+from .widgets import ButtonModel, EncoderModel, LcdModel, LedModel, Write
 
 
 class BoardError(ValueError):
@@ -45,7 +51,27 @@ class EncoderSpec:
     active_low: bool = True
 
 
-type WidgetSpec = LedSpec | ButtonSpec | EncoderSpec
+@dataclass(frozen=True, slots=True)
+class LcdSpec:
+    rs: str
+    e: str
+    data: tuple[str, ...]           # D4..D7 or D0..D7
+    rw: str = ""
+    cols: int = 16
+    rows: int = 2
+    label: str = ""
+
+    def roles(self) -> dict[str, str]:
+        """MCU pin -> LCD signal name, as `LcdModel.on_pin` takes it."""
+        first = 8 - len(self.data)
+        out = {self.rs: "rs", self.e: "e"}
+        if self.rw:
+            out[self.rw] = "rw"
+        out.update({p: f"d{first + i}" for i, p in enumerate(self.data)})
+        return out
+
+
+type WidgetSpec = LedSpec | ButtonSpec | EncoderSpec | LcdSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +89,8 @@ class Board:
                     out.append(p)
                 case EncoderSpec(pin_a=a, pin_b=b):
                     out += [a, b]
+                case LcdSpec(rs=rs, e=e, rw=rw, data=data):
+                    out += [rs, e, *([rw] if rw else []), *data]   # raw: dups must show
         return out
 
     def missing_pins(self, available) -> list[str]:
@@ -76,8 +104,12 @@ _KINDS: dict[str, tuple[type, dict[str, type]]] = {
                             "latch": bool, "pull": bool}),
     "encoder": (EncoderSpec, {"pin_a": str, "pin_b": str, "label": str,
                               "active_low": bool}),
+    "lcd": (LcdSpec, {"rs": str, "e": str, "rw": str, "data": list,
+                      "cols": int, "rows": int, "label": str}),
 }
-_PIN_FIELDS = {"pin", "pin_a", "pin_b"}
+_PIN_FIELDS = {"pin", "pin_a", "pin_b", "rs", "e", "rw"}
+_REQUIRED = {"led": ("pin",), "button": ("pin",), "encoder": ("pin_a", "pin_b"),
+             "lcd": ("rs", "e", "data")}
 
 
 def _widget(d, index: int) -> WidgetSpec:
@@ -92,14 +124,29 @@ def _widget(d, index: int) -> WidgetSpec:
     for key, value in d.items():
         if key not in fields:
             raise BoardError(f"{where}: unknown key {key!r} for a {kind}")
-        if not isinstance(value, fields[key]):
+        if not isinstance(value, fields[key]) or (
+                fields[key] is int and isinstance(value, bool)):
             raise BoardError(f"{where}: {key!r} must be {fields[key].__name__}")
         if key in _PIN_FIELDS:
             d[key] = value.strip().upper()
-    required = [f for f in fields if f.startswith("pin")]
-    if missing := [f for f in required if f not in d]:
+    if missing := [f for f in _REQUIRED[kind] if f not in d]:
         raise BoardError(f"{where}: a {kind} needs {', '.join(missing)}")
+    if kind == "lcd":
+        _check_lcd(d, where)
     return cls(**d)
+
+
+def _check_lcd(d: dict, where: str) -> None:
+    data = d["data"]
+    if len(data) not in (4, 8) or not all(isinstance(p, str) for p in data):
+        raise BoardError(f"{where}: 'data' must list 4 (D4..D7) or 8 (D0..D7) pins")
+    d["data"] = tuple(p.strip().upper() for p in data)
+    if not 1 <= d.get("cols", 16) <= 40:
+        raise BoardError(f"{where}: 'cols' must be 1..40")
+    if d.get("rows", 2) not in (1, 2, 4):
+        raise BoardError(f"{where}: 'rows' must be 1, 2 or 4")
+    if d.get("rw") == "":
+        del d["rw"]
 
 
 def board_from_dict(d) -> Board:
@@ -148,7 +195,9 @@ class BoardRuntime:
     leds: dict[int, LedModel] = field(default_factory=dict)   # widget index
     buttons: dict[int, ButtonModel] = field(default_factory=dict)
     encoders: dict[int, EncoderModel] = field(default_factory=dict)
+    lcds: dict[int, LcdModel] = field(default_factory=dict)
     _by_pin: dict[int, list[LedModel]] = field(default_factory=dict)
+    _lcd_pins: dict[int, list[tuple[LcdModel, str]]] = field(default_factory=dict)
     _subs: list[int] = field(default_factory=list)
 
     # An LED edge closer than this to the last is folded into it by the host;
@@ -182,11 +231,26 @@ class BoardRuntime:
                     self.apply(m.idle())
                 case EncoderSpec(pin_a=a, pin_b=b, active_low=al):
                     self.encoders[i] = EncoderModel(a, b, al)
+                case LcdSpec(cols=cols, rows=rows):
+                    self.lcds[i] = m = LcdModel(cols, rows)
+                    for pin, role in w.roles().items():
+                        m.init_pin(role, sim.pin_state(pin).level)
+                        self._lcd_pins.setdefault(sim.pin(pin), []).append((m, role))
+                        # every edge: the decoder latches on E's falling edge
+                        self._subs.append(sim.subscribe_pin(pin, 0))
 
     def dispatch(self, ev) -> None:
-        """Feed one event; only PinEvents for a wired LED pin matter."""
-        for m in self._by_pin.get(getattr(ev, "pin", -1), ()):
+        """Feed one event; only PinEvents for a wired LED or LCD pin matter."""
+        if isinstance(ev, OverflowEvent):       # pin edges were dropped
+            for i, m in self.lcds.items():
+                roles = self.board.widgets[i].roles()
+                m.resync({r: self.sim.pin_state(p).level for p, r in roles.items()})
+            return
+        pin = getattr(ev, "pin", -1)
+        for m in self._by_pin.get(pin, ()):
             m.on_pin(ev.cycle, ev.level)
+        for m, role in self._lcd_pins.get(pin, ()):
+            m.on_pin(role, ev.level)
 
     def brightness(self, index: int, cycle: int | None = None) -> float:
         """LED brightness; pass one `cycle` to sample every LED at the same instant."""

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from ..boards import BoardError, load_board
 from ..core import (
-    PinEvent, Simulator, SimavrError, Space, State, StateEvent, UartTxEvent,
+    OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent, UartTxEvent,
 )
 from .board import BoardCanvas
 
@@ -503,7 +503,7 @@ class MainWindow(QMainWindow):
             match ev:
                 case UartTxEvent(index=0, byte=b):
                     tx.append(b)
-                case PinEvent():
+                case PinEvent() | OverflowEvent():
                     self.board.dispatch(ev)
                 case StateEvent():
                     self._update_actions()

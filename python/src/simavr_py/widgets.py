@@ -1,4 +1,4 @@
-"""Qt-free logic of the virtual board widgets: LED, button, rotary encoder.
+"""Qt-free logic of the virtual board widgets: LED, button, rotary encoder, LCD.
 
 Each model turns pin activity into what a widget shows (LED brightness) or a
 widget's user input into pin writes (button, encoder). A write is
@@ -6,7 +6,7 @@ widget's user input into pin writes (button, encoder). A write is
 decides. Nothing here touches the simulator, which keeps it unit-testable.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 type Write = tuple[str, bool | None]
 
@@ -126,3 +126,168 @@ class EncoderModel:
             self.phase = (self.phase + step) % 4
             out.append(self._writes())
         return out
+
+
+# Glyphs of the A00 character ROM that differ from ASCII (or that we can name).
+_LCD_ROM = {0x5C: "¥", 0x7E: "→", 0x7F: "←", 0xA0: " ", 0xDF: "°", 0xE4: "µ",
+            0xF7: "π", 0xFF: "█"}
+
+
+def lcd_glyph(code: int) -> str:
+    """Text for a character code; 0..7 (and 8..15) are the custom CGRAM glyphs,
+    which the caller draws from `LcdModel.cgram`, so they come back as '▯'."""
+    if code in _LCD_ROM:
+        return _LCD_ROM[code]
+    if 0x20 <= code < 0x7E:
+        return chr(code)
+    return "▯"
+
+
+@dataclass(slots=True)
+class LcdModel:
+    """HD44780 character LCD, decoded from its pins.
+
+    Feed it every edge of the wired pins with `on_pin(role, level)`; roles are
+    "rs", "e", "rw" and "d0".."d7" (a 4-bit wiring only has d4..d7). Data is
+    latched on the falling edge of E, like the chip. Writes only: the busy flag
+    and read-back are not modelled (firmware that polls BF reads the pins as
+    inputs; use fixed delays), and a pulse with RW high is ignored. Execution
+    times are not modelled either. `version` bumps whenever what the display
+    shows changes.
+    """
+
+    cols: int = 16
+    rows: int = 2
+    ddram: bytearray = field(default_factory=lambda: bytearray(b" " * 0x80))
+    cgram: bytearray = field(default_factory=lambda: bytearray(64))
+    ac: int = 0                     # address counter
+    in_cgram: bool = False
+    shift: int = 0                  # display shift, in columns to the left
+    inc: bool = True                # entry mode I/D
+    entry_shift: bool = False       # entry mode S
+    display_on: bool = False
+    cursor_on: bool = False
+    blink_on: bool = False
+    eight_bit: bool = True          # interface length DL; the chip powers up 8-bit
+    two_line: bool = False          # N
+    version: int = 0
+    lost: bool = False              # host dropped pin events: state may be wrong
+    _pins: dict = field(default_factory=dict)
+    _high: int | None = None        # high nibble waiting for its low half
+
+    def init_pin(self, role: str, level: bool) -> None:
+        """Record a pin's level at bind time without it counting as an edge."""
+        self._pins[role] = level
+
+    def resync(self, levels: dict[str, bool]) -> None:
+        """After dropped events: adopt the pins' current levels and forget a
+        half-received byte (the 4-bit pairing can't be trusted any more)."""
+        self._pins.update(levels)
+        self._high = None
+        self.lost = True
+        self.version += 1
+
+    def on_pin(self, role: str, level: bool) -> None:
+        was = self._pins.get(role, False)
+        self._pins[role] = level
+        if role == "e" and was and not level:
+            self._strobe()
+
+    # -- bus -----------------------------------------------------------------
+
+    def _bits(self, lo: int, hi: int) -> int:
+        return sum(1 << (i - lo) for i in range(lo, hi)
+                   if self._pins.get(f"d{i}", False))
+
+    def _strobe(self) -> None:
+        if self._pins.get("rw", False):
+            return
+        if self.eight_bit:
+            # A 4-bit wiring leaves d0..d3 unconnected: they read as 0.
+            self._execute(self._bits(0, 8))
+        elif self._high is None:
+            self._high = self._bits(4, 8)
+        else:
+            value = (self._high << 4) | self._bits(4, 8)
+            self._high = None
+            self._execute(value)
+
+    # -- instruction set -----------------------------------------------------
+
+    def _step(self, forward: bool) -> None:
+        if self.in_cgram:
+            self.ac = (self.ac + (1 if forward else -1)) & 0x3F
+        elif forward:
+            self.ac = 0 if (not self.two_line and self.ac >= 0x4F) else (self.ac + 1) & 0x7F
+        else:
+            self.ac = (0x4F if not self.two_line else 0x67) if self.ac == 0 else self.ac - 1
+
+    def _execute(self, v: int) -> None:
+        self.version += 1
+        if self._pins.get("rs", False):
+            if self.in_cgram:
+                self.cgram[self.ac] = v
+            else:
+                self.ddram[self.ac] = v
+                if self.entry_shift:
+                    self.shift += 1 if self.inc else -1
+            self._step(self.inc)
+            return
+        if v & 0x80:                        # set DDRAM address
+            self.in_cgram, self.ac = False, v & 0x7F
+        elif v & 0x40:                      # set CGRAM address
+            self.in_cgram, self.ac = True, v & 0x3F
+        elif v & 0x20:                      # function set
+            self.eight_bit, self.two_line = bool(v & 0x10), bool(v & 0x08)
+            self._high = None
+        elif v & 0x10:                      # cursor / display shift
+            right = bool(v & 0x04)
+            if v & 0x08:
+                self.shift += -1 if right else 1
+            else:
+                self._step(right)
+        elif v & 0x08:                      # display on/off
+            self.display_on, self.cursor_on, self.blink_on = (
+                bool(v & 0x04), bool(v & 0x02), bool(v & 0x01))
+        elif v & 0x04:                      # entry mode
+            self.inc, self.entry_shift = bool(v & 0x02), bool(v & 0x01)
+        elif v & 0x02:                      # return home
+            self.in_cgram, self.ac, self.shift = False, 0, 0
+        elif v & 0x01:                      # clear display
+            self.ddram[:] = b" " * 0x80
+            self.lost = False
+            self.in_cgram, self.ac, self.shift, self.inc = False, 0, 0, True
+
+    # -- what's on the glass -------------------------------------------------
+
+    def _addr(self, row: int, col: int) -> int:
+        """DDRAM address shown at a screen position, with the shift applied."""
+        base = (0, 0x40, self.cols, 0x40 + self.cols)[row] if self.rows > 1 else 0
+        if not self.two_line:
+            return (base + col + self.shift) % 80
+        seg = base & 0x40
+        return seg + (base - seg + col + self.shift) % 40
+
+    def codes(self) -> list[list[int]]:
+        """Character codes per screen row; blank while the display is off."""
+        blank = 0x20
+        return [[self.ddram[self._addr(r, c)] if self.display_on else blank
+                 for c in range(self.cols)] for r in range(self.rows)]
+
+    def lines(self) -> list[str]:
+        return ["".join(lcd_glyph(c) for c in row) for row in self.codes()]
+
+    def cursor_pos(self) -> tuple[int, int] | None:
+        """(row, col) of the cursor, or None if it is off-screen / in CGRAM."""
+        if self.in_cgram or not self.display_on:
+            return None
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self._addr(r, c) == self.ac:
+                    return r, c
+        return None
+
+    def glyph_rows(self, code: int) -> list[int]:
+        """The 8 rows (5 bits each) of custom character `code` (0..7, 8..15)."""
+        i = (code & 7) * 8
+        return [b & 0x1F for b in self.cgram[i:i + 8]]

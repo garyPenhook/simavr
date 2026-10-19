@@ -196,3 +196,70 @@ def test_board_canvas_end_to_end(tmp_path):
     r = subprocess.run([sys.executable, "-c", BOARD_SCRIPT, str(elf), board], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+LCD_FIRMWARE = r"""
+#include <avr/io.h>
+/* HD44780 on PORTD: RS=PD0 E=PD1 D4..D7=PD4..PD7, write-only (no delays needed). */
+static void nib(unsigned char n, unsigned char rs) {
+    PORTD.OUT = (n << 4) | rs;
+    PORTD.OUT = (n << 4) | rs | 2;          /* E high */
+    PORTD.OUT = (n << 4) | rs;              /* E falling edge latches */
+}
+static void send(unsigned char b, unsigned char rs) { nib(b >> 4, rs); nib(b & 15, rs); }
+int main(void) {
+    PORTD.DIRSET = 0xF3;
+    nib(3, 0); nib(3, 0); nib(3, 0); nib(2, 0);
+    send(0x28, 0); send(0x0C, 0); send(0x06, 0); send(0x01, 0);
+    send(0x40, 0);                                          /* CGRAM 0: a heart */
+    static const unsigned char heart[8] = {0, 10, 31, 31, 14, 4, 0, 0};
+    for (int i = 0; i < 8; i++) send(heart[i], 1);
+    send(0x80, 0);
+    for (const char *s = "Hi \0" "x"; *s; s++) send(*s, 1);
+    send(0, 1);                                             /* custom glyph 0 */
+    send(0xC0, 0);
+    for (const char *s = "simavr"; *s; s++) send(*s, 1);
+    for (;;) ;
+}
+"""
+
+LCD_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow(None, 0, speed=0)
+win.load_board(sys.argv[2])
+win.load(sys.argv[1])
+lcd = win.board._runtime.lcds[6]            # the LCD is widget 6 of the demo board
+win.run()
+for _ in range(200):
+    app.processEvents(); win._drain(); win.refresh()
+    if lcd.lines()[1].startswith("simavr"):
+        break
+    time.sleep(0.02)
+assert lcd.lines()[0].startswith("Hi ") and lcd.codes()[0][3] == 0, lcd.lines()
+assert lcd.lines()[1] == "simavr".ljust(16)
+assert not lcd.lost and lcd.glyph_rows(0)[1] == 10
+assert win.board._lcds[6]._seen[0] == lcd.version      # widget repainted for it
+pix = win.board._lcds[6].grab()                         # paints without error
+assert not pix.isNull()
+win.close()
+"""
+
+
+def test_lcd_end_to_end(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(LCD_FIRMWARE)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    board = os.path.join(os.path.dirname(__file__), "..", "boards", "demo_4809.json")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", LCD_SCRIPT, str(elf), board], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
