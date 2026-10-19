@@ -51,9 +51,11 @@ Implemented: lifecycle, ELF/HEX/raw load (incl. modern EEPROM records),
 run/pause/step/run-cycles, speed throttle, breakpoints, memory + CPU access,
 pins by name with external drive, USART TX/RX, pin/USART/raw-IRQ events.
 
+Also implemented since: data/peripheral watchpoints and interrupt-taken events.
 Still `AVR_HOST_ENOTSUP`: register/peripheral metadata table (needs a per-core
-table generated from the avr-libc headers), ELF symbols, watchpoints, analog
-pin voltages, interrupt-taken events, log text, VCD. Open item: pin down AVRxt
+table generated from the avr-libc headers), ELF symbols (the Python side reads
+the ELF itself: `simavr_py.symbols`/`lines`), analog pin voltages, log text, VCD
+(the GUI timeline writes its own VCD). Open item: pin down AVRxt
 single-step semantics (multi-cycle instructions, CPUINT level-1 preemption).
 
 1. Define a stable C API for:
@@ -183,8 +185,9 @@ metadata table).
 (`BreakpointPane`) lists flash byte addresses, arms them on every (re)loaded
 simulator, highlights the one that stopped the run, and saves them in the
 session (format version 3). Addresses beyond the device's flash stay listed but
-show unarmed. Data watchpoints are blocked on the native `avr_host_watch_add`
-(not implemented); disassembly landed (below); source correlation is not started.
+show unarmed. Later slices (below) added data watchpoints (slice 6, native
+`avr_host_watch_add` is implemented), disassembly, symbols, source correlation,
+stepping, interrupts and the pin timeline.
 
 **Disassembly (slice 2, 2026-10-19):** `simavr_py.disasm` (Qt-free) decodes the
 AVRe+/AVRxt set and is checked opcode-for-opcode against `avr-objdump` (all
@@ -327,6 +330,13 @@ byte that reaches the USART's input (typed into the UART dock, sent with
 cycle the firmware reads it. Labels are the character, or hex if unprintable. An
 end-to-end test (real firmware with RXEN set, a byte fed in) checks the RX lane;
 the TX lanes of USART1-3 are covered by injected events only.
+
+**Vector names (slice 18, 2026-10-19):** the Interrupts pane shows `N NAME` and the
+IRQ lane labels with the name (`TCA0_OVF`), taken from the `<NAME>_vect_num`
+defines of the device's avr-libc header (`simavr/cores/avr/` in this checkout,
+else `$AVR_INCLUDE` / the avr-gcc install; `simavr_py.vectors`). Vector 0 is
+`RESET`. No header found (or a non-tiny/mega device) falls back to the bare
+number; the VCD still carries the number.
 
 1. Breakpoints:
    * PC breakpoints

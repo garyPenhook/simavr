@@ -40,8 +40,9 @@ the free-threaded (no-GIL) 3.15 build. Don't call `close()` while another
 thread is still using the instance. `fileno()` is readable whenever events
 are pending, so it can drive `select` or Qt's `QSocketNotifier` directly.
 
-Calls that the C API doesn't implement yet (register table, symbols,
-watchpoints, analog input, interrupt events, VCD) aren't wrapped.
+Calls that the C API doesn't implement yet (register table, symbols, analog
+input, log text, VCD) aren't wrapped. Watchpoints and interrupt events are
+(`add_watchpoint`, `subscribe_interrupts`).
 
 ## GUI
 
@@ -56,3 +57,9 @@ uv pip install --python .venv/bin/python -e 'python[gui]'
 Boards: `--board python/boards/demo_4809.json` shows virtual LEDs, buttons,
 a rotary encoder and an HD44780 LCD (write-only, 4- or 8-bit) wired to pins
 by a JSON/TOML file (see `simavr_py.boards`).
+
+Debugger docks: PC breakpoints, data watchpoints and peripheral-register
+triggers, disassembly and source views (ELF symbols and DWARF lines), step /
+next line / step out, an interrupts table with vector names (from the device's
+avr-libc header), and a pin/timer/bus timeline with cursors and VCD export.
+Details and limits per feature: [`doc/python_gui_todo.md`](../doc/python_gui_todo.md).

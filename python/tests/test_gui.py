@@ -682,6 +682,7 @@ st = win.irqs.stats
 assert len(st) == 1, st
 (vec, (level, count, cycle)), = st.items()
 assert vec > 0 and level == 0 and count == 3 and cycle > 0, st
+assert win.irqs._table.item(0, 0).text() == f"{vec} USART0_RXC"
 assert win.irqs._table.item(0, 1).text() == "LVL0" and win.irqs._table.item(0, 2).text() == "3"
 win.irqs.clear()
 assert win.irqs.stats == {} and win.irqs._table.rowCount() == 0

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
+from ..vectors import vector_label, vector_names
 from ..boards import BoardError, load_board
 from ..core import (
     InterruptEvent, IrqEvent, OverflowEvent, PinEvent, Simulator, SimavrError, Space, State,
@@ -850,6 +851,7 @@ class InterruptPane(QWidget):
     def __init__(self):
         super().__init__()
         self._stats: dict[int, list[int]] = {}      # vector -> [level, count, last cycle]
+        self._names: dict[int, str] = {}
         self._dirty = False
         clear = QPushButton("Clear")
         clear.clicked.connect(self.clear)
@@ -865,6 +867,11 @@ class InterruptPane(QWidget):
         lay = QGridLayout(self)
         lay.addLayout(top, 0, 0)
         lay.addWidget(self._table, 1, 0)
+
+    def set_names(self, names: dict[int, str]):
+        self._names = names
+        self._dirty = True
+        self.refresh()
 
     def record(self, ev: InterruptEvent):
         row = self._stats.setdefault(ev.vector, [ev.level, 0, 0])
@@ -889,7 +896,7 @@ class InterruptPane(QWidget):
         self._table.setRowCount(len(rows))
         for i, (vec, (level, count, cycle)) in enumerate(rows):
             lv = self.LEVELS[level] if 0 <= level < len(self.LEVELS) else str(level)
-            for col, text in enumerate((str(vec), lv, str(count), str(cycle))):
+            for col, text in enumerate((vector_label(self._names, vec), lv, str(count), str(cycle))):
                 self._table.setItem(i, col, QTableWidgetItem(text))
 
 
@@ -1062,6 +1069,7 @@ class MainWindow(QMainWindow):
         self.uart.set_sim(sim)
         self.board.set_sim(sim)
         self.timeline.set_sim(sim)
+        self.irqs.set_names(vector_names(sim.mmcu))
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()

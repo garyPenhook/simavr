@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton, QWidget,
 )
 
+from ..vectors import vector_names
 from ..core import (
     InterruptEvent, IrqEvent, PinEvent, SimavrError, Simulator, UartTxEvent, ioctl_def,
 )
@@ -132,6 +133,7 @@ class TimelineView(QWidget):
         self.show_uart = True
         self.show_irq = True
         self._uart: list[tuple[int, int]] = []  # (cycle, byte) of USART0 TX
+        self.vector_names: dict[int, str] = {}
         self._vectors: list[tuple[int, int]] = []   # (cycle, vector number) of interrupts taken
         self.buses: list[str] = []              # SPI/TWI lanes, e.g. "SPI0"
         self._bus_subs: dict[int, tuple[str, int]] = {}     # sub id -> (lane, direction row)
@@ -189,6 +191,7 @@ class TimelineView(QWidget):
         self._end = None
         self._uart = []
         self._vectors = []
+        self.vector_names = vector_names(sim.mmcu) if sim else {}
         self.cursors = [None, None]
         self._update_info()
         self._follow.setChecked(True)
@@ -335,7 +338,7 @@ class TimelineView(QWidget):
                           [(c, chr(b) if 32 <= b < 127 else f"{b:02X}")
                            for c, b in self.uart_bytes(t0, t1)]))
         if self.show_irq:
-            lanes.append(("IRQ", "#7b4fa8", [(c, str(v)) for c, v in self.vectors(t0, t1)]))
+            lanes.append(("IRQ", "#7b4fa8", [(c, self.vector_names.get(v, str(v))) for c, v in self.vectors(t0, t1)]))
         for name in self.buses:
             tag, _, dirs = bus_lane(name)
             for row, (direction, _) in enumerate(dirs):
