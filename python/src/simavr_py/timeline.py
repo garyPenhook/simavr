@@ -66,6 +66,38 @@ def timer_output(name: str) -> tuple[str, str, int] | None:
     return None
 
 
+# SPI/TWI wire IRQs (SPI_IRQ_INPUT/OUTPUT = 0/1, TWI_IRQ_INPUT/OUTPUT = 0/1): one
+# lane per direction, "out" being what this MCU sends.
+_BUS = (
+    (re.compile(r"SPI(\d)"), "spi", (("out", 1), ("in", 0))),
+    (re.compile(r"TWI(\d)"), "twi", (("out", 1), ("in", 0))),
+)
+
+
+def bus_lane(name: str) -> tuple[str, str, tuple[tuple[str, int], ...]] | None:
+    """'SPI0' / 'TWI0' -> (ioctl tag, instance char, ((direction, IRQ index), ...))."""
+    for rx, tag, dirs in _BUS:
+        if m := rx.fullmatch(name):
+            return tag, m[1], dirs
+    return None
+
+
+_TWI_COND = ((0x01, "S"), (0x02, "P"), (0x04, "ADDR"), (0x08, "ACK"), (0x10, "W"), (0x20, "R"))
+
+
+def describe_bus(tag: str, value: int) -> str:
+    """Short label for one wire message. SPI: the byte. TWI: simavr's message word
+    (bits 8-15 TWI_COND_* flags, 16-23 address, 24-31 data), e.g. 'S A0', 'W 3C', 'R', 'P'."""
+    if tag == "spi":
+        return f"{value & 0xFF:02X}"
+    cond, addr, data = (value >> 8) & 0xFF, (value >> 16) & 0xFF, (value >> 24) & 0xFF
+    names = [n for bit, n in _TWI_COND if cond & bit]
+    if not names:
+        return f"?{cond:02X}"
+    arg = {"S": f" {addr:02X}", "W": f" {data:02X}", "ACK": f" {data:X}"}
+    return " ".join(n + arg.get(n, "") for n in names)
+
+
 def format_time(cycles: float, frequency: int) -> str:
     """'12.5 µs' style label for a cycle count at `frequency` Hz."""
     if frequency <= 0:
@@ -93,13 +125,16 @@ def measure(a: int | None, b: int | None, frequency: int) -> str:
 
 def write_vcd(path: str, traces: dict[str, "PinTrace"], frequency: int, end: int,
               uart: list[tuple[int, int]] | None = None,
-              vectors: list[tuple[int, int]] | None = None) -> None:
+              vectors: list[tuple[int, int]] | None = None,
+              extra: dict[str, tuple[int, list[tuple[int, int]]]] | None = None) -> None:
     """Dump pin traces (and optionally UART TX bytes, interrupt vectors) as a 1 ns-resolution VCD.
     Without a known frequency the timescale is one cycle per tick (reported as 1 ns)."""
     ns = (lambda c: round(c * 1e9 / frequency)) if frequency > 0 else (lambda c: c)
     ids = {name: chr(33 + i) for i, name in enumerate(traces)}
     uart_id = chr(33 + len(traces)) if uart is not None else None
     vec_id = chr(34 + len(traces)) if vectors is not None else None
+    extra = extra or {}
+    extra_ids = {n: chr(35 + len(traces) + i) for i, n in enumerate(extra)}
     changes: list[tuple[int, int, str]] = []        # (time, order, line)
     for name, tr in traces.items():
         for c, lv in zip(tr._cycles, tr._levels):
@@ -108,6 +143,9 @@ def write_vcd(path: str, traces: dict[str, "PinTrace"], frequency: int, end: int
         changes.append((ns(c), 1, f"b{byte:08b} {uart_id}"))
     for c, vec in vectors or ():
         changes.append((ns(c), 1, f"b{vec:08b} {vec_id}"))
+    for n, (width, events) in extra.items():
+        for c, val in events:
+            changes.append((ns(c), 1, f"b{val & ((1 << width) - 1):0{width}b} {extra_ids[n]}"))
     changes.sort(key=lambda t: (t[0], t[1]))
     with open(path, "w", encoding="utf-8") as f:
         f.write("$timescale 1 ns $end\n$scope module simavr $end\n")
@@ -117,6 +155,8 @@ def write_vcd(path: str, traces: dict[str, "PinTrace"], frequency: int, end: int
             f.write(f"$var wire 8 {uart_id} uart0_tx $end\n")
         if vec_id:
             f.write(f"$var wire 8 {vec_id} irq_vector $end\n")
+        for n, (width, _) in extra.items():
+            f.write(f"$var wire {width} {extra_ids[n]} {n} $end\n")
         f.write("$upscope $end\n$enddefinitions $end\n")
         last = None
         for t, _, line in changes:

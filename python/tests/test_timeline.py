@@ -1,4 +1,6 @@
-from simavr_py.timeline import PinTrace, format_time, measure, timer_output, write_vcd
+from simavr_py.timeline import (
+    PinTrace, bus_lane, describe_bus, format_time, measure, timer_output, write_vcd,
+)
 
 
 def test_trace_records_edges_only():
@@ -71,3 +73,30 @@ def test_vcd_interrupt_vector(tmp_path):
     write_vcd(str(out), {}, 1_000_000, 10, vectors=[(5, 3)])
     text = out.read_text(encoding="utf-8")
     assert "$var wire 8 \" irq_vector $end" in text and "b00000011 \"" in text
+
+
+def test_bus_lane_names():
+    assert bus_lane("SPI0") == ("spi", "0", (("out", 1), ("in", 0)))
+    assert bus_lane("TWI1")[:2] == ("twi", "1")
+    for bad in ("SPI", "SPI10", "PA0", "UART0", "TWI0.X"):
+        assert bus_lane(bad) is None
+
+
+def test_describe_bus():
+    assert describe_bus("spi", 0x1A5) == "A5"
+    msg = lambda cond, addr, data: (cond << 8) | (addr << 16) | (data << 24)
+    assert describe_bus("twi", msg(0x01, 0xA0, 0)) == "S A0"
+    assert describe_bus("twi", msg(0x10, 0xA0, 0x3C)) == "W 3C"
+    assert describe_bus("twi", msg(0x20, 0xA0, 0)) == "R"
+    assert describe_bus("twi", msg(0x02, 0xA0, 1)) == "P"
+    assert describe_bus("twi", msg(0x08, 0xA0, 1)) == "ACK 1"
+    assert describe_bus("twi", msg(0x00, 0, 0)) == "?00"
+
+
+def test_vcd_extra_signals(tmp_path):
+    out = tmp_path / "e.vcd"
+    write_vcd(str(out), {}, 1_000_000, 10, extra={"spi0_out": (8, [(2, 0xA5)]),
+                                                  "twi0_in": (32, [(3, 1 << 8)])})
+    text = out.read_text(encoding="utf-8")
+    assert "$var wire 8 # spi0_out $end" in text and "$var wire 32 $ twi0_in $end" in text
+    assert "b10100101 #" in text and "b" + format(1 << 8, "032b") + " $" in text

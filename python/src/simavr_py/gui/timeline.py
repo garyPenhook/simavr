@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
 from ..core import (
     InterruptEvent, IrqEvent, PinEvent, SimavrError, Simulator, UartTxEvent, ioctl_def,
 )
-from ..timeline import PinTrace, format_time, measure, timer_output, write_vcd
+from ..timeline import (
+    PinTrace, bus_lane, describe_bus, format_time, measure, timer_output, write_vcd,
+)
 
 SPANS = (("10 µs", 10e-6), ("100 µs", 100e-6), ("1 ms", 1e-3), ("10 ms", 10e-3),
          ("100 ms", 100e-3), ("1 s", 1.0))
@@ -55,38 +57,25 @@ class _Canvas(QWidget):
                 p.drawLine(QPointF(x(start), y), QPointF(x(end), y))
                 prev = y
         rows = len(v.names)
-        if v.show_uart:
+        fm = p.fontMetrics()
+        for label, color, marks in v.event_lanes(t0, t1):
             top = rows * ROW_H
             p.setPen(fg)
-            p.drawText(QRectF(2, top, LABEL_W - 6, ROW_H), Qt.AlignmentFlag.AlignVCenter, "UART0 TX")
+            p.drawText(QRectF(2, top, LABEL_W - 6, ROW_H), Qt.AlignmentFlag.AlignVCenter, label)
             p.setPen(QPen(dim, 1, Qt.PenStyle.DotLine))
             p.drawLine(LABEL_W, int(top + ROW_H - 1), self.width(), int(top + ROW_H - 1))
-            p.setPen(QPen(QColor("#b5651d"), 1))
-            last_x = -1e9
-            for c, byte in v.uart_bytes(t0, t1):
+            p.setPen(QPen(QColor(color), 1))
+            free_from = -1e9                        # x where the last label ended
+            for c, text in marks:
                 bx = x(c)
-                if bx - last_x < 14:                # too dense to label: mark only
+                width = fm.horizontalAdvance(text) + 6
+                if bx < free_from:                  # no room for a label: tick only
                     p.drawLine(QPointF(bx, top + 6), QPointF(bx, top + ROW_H - 6))
                     continue
-                last_x = bx
-                text = chr(byte) if 32 <= byte < 127 else f"{byte:02X}"
-                p.drawRect(QRectF(bx, top + 4, 14, ROW_H - 10))
-                p.drawText(QRectF(bx, top + 4, 14, ROW_H - 10), Qt.AlignmentFlag.AlignCenter, text)
-            rows += 1
-        if v.show_irq:
-            top = rows * ROW_H
-            p.setPen(fg)
-            p.drawText(QRectF(2, top, LABEL_W - 6, ROW_H), Qt.AlignmentFlag.AlignVCenter, "IRQ")
-            p.setPen(QPen(dim, 1, Qt.PenStyle.DotLine))
-            p.drawLine(LABEL_W, int(top + ROW_H - 1), self.width(), int(top + ROW_H - 1))
-            p.setPen(QPen(QColor("#7b4fa8"), 1))
-            last_x = -1e9
-            for c, vec in v.vectors(t0, t1):
-                bx = x(c)
-                p.drawLine(QPointF(bx, top + 6), QPointF(bx, top + ROW_H - 6))
-                if bx - last_x >= 20:
-                    last_x = bx
-                    p.drawText(QPointF(bx + 2, top + ROW_H - 8), str(vec))
+                free_from = bx + width + 2
+                box = QRectF(bx, top + 4, width, ROW_H - 10)
+                p.drawRect(box)
+                p.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
             rows += 1
         for c, color in zip(v.cursors, ("#d62728", "#1f77b4")):
             if c is not None and t0 <= c <= t1:
@@ -144,8 +133,11 @@ class TimelineView(QWidget):
         self.show_irq = True
         self._uart: list[tuple[int, int]] = []  # (cycle, byte) of USART0 TX
         self._vectors: list[tuple[int, int]] = []   # (cycle, vector number) of interrupts taken
+        self.buses: list[str] = []              # SPI/TWI lanes, e.g. "SPI0"
+        self._bus_subs: dict[int, tuple[str, int]] = {}     # sub id -> (lane, direction row)
+        self._bus_events: dict[str, list[tuple[int, int, int]]] = {}  # lane -> (cycle, row, value)
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("pin or timer output: PA0, TCA0.WO1, TCB0.WO, TCD0.WOA")
+        self._edit.setPlaceholderText("pin, timer output or bus: PA0, TCA0.WO1, SPI0, TWI0")
         self._edit.returnPressed.connect(self._add_from_edit)
         self._span = QComboBox()
         for label, _ in SPANS:
@@ -183,12 +175,12 @@ class TimelineView(QWidget):
         self._resubscribe()
 
     def _unsubscribe_all(self):
-        for sub in self._subs:
+        for sub in (*self._subs, *self._bus_subs):
             try:
                 self._sim.unsubscribe(sub)      # else the board would see the edges twice
             except (SimavrError, AttributeError):
                 pass
-        self._subs = {}
+        self._subs, self._bus_subs = {}, {}
 
     def set_sim(self, sim: Simulator | None):
         self._unsubscribe_all()
@@ -204,6 +196,7 @@ class TimelineView(QWidget):
 
     def _resubscribe(self):
         self.names, self.traces, self._subs = [], {}, {}
+        self.buses, self._bus_subs, self._bus_events = [], {}, {}
         sim = self._sim
         if sim is not None:
             for name in self._wanted:
@@ -212,10 +205,32 @@ class TimelineView(QWidget):
         self._canvas.update()
 
     def _resize_canvas(self):
-        rows = len(self.names) + (1 if self.show_uart else 0) + (1 if self.show_irq else 0)
+        rows = (len(self.names) + (1 if self.show_uart else 0) + (1 if self.show_irq else 0)
+                + 2 * len(self.buses))
         self._canvas.setMinimumHeight(max(1, rows) * ROW_H + AXIS_H)
 
+    def _start_bus(self, sim: Simulator, name: str, spec) -> bool:
+        tag, inst, dirs = spec
+        subs = []
+        try:
+            for row, (_, index) in enumerate(dirs):
+                subs.append((sim.subscribe_irq(ioctl_def(tag, inst), index), row))
+        except (SimavrError, KeyError, ValueError, TypeError):
+            for sub, _ in subs:                 # all or nothing: this device lacks it
+                try:
+                    sim.unsubscribe(sub)
+                except SimavrError:
+                    pass
+            return False
+        self.buses.append(name)
+        self._bus_events[name] = []
+        for sub, row in subs:
+            self._bus_subs[sub] = (name, row)
+        return True
+
     def _start(self, sim: Simulator, name: str) -> bool:
+        if (spec := bus_lane(name)) is not None:
+            return self._start_bus(sim, name, spec)
         try:
             if (t := timer_output(name)) is not None:
                 level = False           # no way to read a timer output: assume low until it moves
@@ -252,6 +267,16 @@ class TimelineView(QWidget):
                     self._sim.unsubscribe(sub)
                 except (SimavrError, AttributeError):
                     pass
+        for sub, (lane, _) in list(self._bus_subs.items()):
+            if lane == name:
+                del self._bus_subs[sub]
+                try:
+                    self._sim.unsubscribe(sub)
+                except (SimavrError, AttributeError):
+                    pass
+        if name in self.buses:
+            self.buses.remove(name)
+            del self._bus_events[name]
         if name in self.names:
             self.names.remove(name)
             del self.traces[name]
@@ -263,6 +288,7 @@ class TimelineView(QWidget):
         sim = self._sim
         self._uart = []
         self._vectors = []
+        self._bus_events = {name: [] for name in self.buses}
         if sim is None:
             return
         for name in self.names:
@@ -294,10 +320,37 @@ class TimelineView(QWidget):
     def uart_bytes(self, t0: int, t1: int) -> list[tuple[int, int]]:
         return [(c, b) for c, b in self._uart if t0 <= c <= t1]
 
+    def record_bus(self, ev: IrqEvent):
+        lane, row = self._bus_subs[ev.sub]
+        events = self._bus_events[lane]
+        events.append((ev.cycle, row, ev.value))
+        if len(events) > 40_000:
+            del events[:4_000]
+
+    def event_lanes(self, t0: int, t1: int):
+        """(label, colour, [(cycle, text)]) for each marker lane, in drawing order."""
+        lanes = []
+        if self.show_uart:
+            lanes.append(("UART0 TX", "#b5651d",
+                          [(c, chr(b) if 32 <= b < 127 else f"{b:02X}")
+                           for c, b in self.uart_bytes(t0, t1)]))
+        if self.show_irq:
+            lanes.append(("IRQ", "#7b4fa8", [(c, str(v)) for c, v in self.vectors(t0, t1)]))
+        for name in self.buses:
+            tag, _, dirs = bus_lane(name)
+            for row, (direction, _) in enumerate(dirs):
+                lanes.append((f"{name} {direction}", "#1f77b4" if row == 0 else "#2a9d8f",
+                              [(c, describe_bus(tag, v)) for c, r, v in self._bus_events[name]
+                               if r == row and t0 <= c <= t1]))
+        return lanes
+
     def owns(self, sub: int) -> bool:
-        return sub in self._subs
+        return sub in self._subs or sub in self._bus_subs
 
     def record(self, ev: PinEvent | IrqEvent):
+        if ev.sub in self._bus_subs:
+            self.record_bus(ev)
+            return
         name = self._subs.get(ev.sub)
         if name is not None:
             level = ev.level if isinstance(ev, PinEvent) else bool(ev.value)
@@ -358,9 +411,16 @@ class TimelineView(QWidget):
 
     def export_vcd(self, path: str):
         end = self.window()[1]
+        extra = {}
+        for name in self.buses:
+            _, _, dirs = bus_lane(name)
+            for row, (direction, _) in enumerate(dirs):
+                extra[f"{name}_{direction}".lower()] = (
+                    32 if name.startswith("TWI") else 8,
+                    [(c, v) for c, r, v in self._bus_events[name] if r == row])
         write_vcd(path, self.traces, self.frequency, end,
                   self._uart if self.show_uart else None,
-                  self._vectors if self.show_irq else None)
+                  self._vectors if self.show_irq else None, extra)
 
     def _follow_toggled(self, on: bool):
         self._end = None if on else self.window()[1]

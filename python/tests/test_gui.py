@@ -564,6 +564,21 @@ tl.record_interrupt(InterruptEvent(sub=0, cycle=7, vector=5, level=0))
 assert tl.vectors(0, 100) == [(7, 5)]
 assert tl.grab().width() > 0
 tl.remove("TCA0.WO0"); tl.remove("TCB1.WO")
+assert tl.add("spi0") and tl.add("TWI0") and tl.buses == ["SPI0", "TWI0"]
+assert not tl.add("SPI5") and not tl.add("TWI9") and tl.buses == ["SPI0", "TWI0"]
+sub_out = next(s for s, (lane, row) in tl._bus_subs.items() if lane == "SPI0" and row == 0)
+tl.record(IrqEvent(sub=sub_out, cycle=win._sim.cycle, index=1, value=0xA5))
+twi_in = next(s for s, (lane, row) in tl._bus_subs.items() if lane == "TWI0" and row == 1)
+tl.record(IrqEvent(sub=twi_in, cycle=win._sim.cycle, index=0, value=(0x01 << 8) | (0x50 << 16)))
+lanes = {l: m for l, _, m in tl.event_lanes(0, 1 << 62)}
+assert [t for _, t in lanes["SPI0 out"]] == ["A5"] and lanes["SPI0 in"] == []
+assert [t for _, t in lanes["TWI0 in"]] == ["S 50"]
+assert tl.owns(sub_out) and tl.grab().width() > 0
+tl.export_vcd(sys.argv[1] + ".bus.vcd")
+assert "spi0_out" in open(sys.argv[1] + ".bus.vcd").read()
+d = win.session_dict(); assert d["timeline"] == ["PA0", "SPI0", "TWI0"], d["timeline"]
+tl.remove("SPI0"); tl.remove("TWI0"); assert tl.buses == [] and tl._bus_subs == {}
+assert tl.wanted == ["PA0"]
 tl.place_cursor(0, 100, 500); tl.place_cursor(1, 300, 500)
 assert None not in tl.cursors and tl.cursors[1] > tl.cursors[0] and "Δ" in tl._info.text()
 tl.export_vcd(sys.argv[1] + ".vcd")

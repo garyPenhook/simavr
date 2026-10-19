@@ -291,8 +291,8 @@ cursor B; the status line shows both times, Δ and 1/Δ (`measure`). A "UART0 TX
 lane marks each byte USART0 sent (labelled when there is room; the cycle is when
 the byte left the simulated shifter). "Export VCD…" writes the traced pins plus
 the UART lane (`uart0_tx`, 8-bit) at 1 ns resolution (`write_vcd`), for GTKWave.
-Not done: SPI/TWI/USART1-3 lanes, RX bytes, analog values, exporting a cycle
-range only (the export is the whole retained history).
+Not done: USART1-3 lanes, RX bytes, analog values, exporting a cycle range only
+(the export is the whole retained history).
 
 **Timer lanes (slice 15, 2026-10-19):** the pin box also takes timer waveform
 outputs: `TCA0.WO0-2`, `TCB0-3.WO`, `TCD0.WOA/WOB`. They subscribe to the timer's
@@ -304,6 +304,20 @@ value can't be read back). A new "IRQ" lane marks every interrupt vector taken
 interrupts appear, and is included in the VCD (`irq_vector`). Tests check the
 name mapping, that the subscriptions are accepted/rejected per device, and the
 drawing; they do not drive a firmware-configured timer end to end.
+
+**SPI and TWI lanes (slice 16, 2026-10-19):** `SPI0` / `TWI0` in the pin box add
+two marker lanes each, `out` (what this MCU puts on the wire) and `in` (what a
+connected part sends back), from the peripheral's wire IRQs (the ones attached
+parts use: SPI input/output, TWI input/output). SPI labels are the byte; TWI
+labels decode simavr's message word (`S A0` start+address byte, `W 3C` data
+written, `R` read request, `P` stop, `ACK n`). The lanes show the *messages*
+simavr passes, one per byte/condition, not clock/data waveforms, and a TWI
+address label is the raw address byte as the model passes it. They are in the
+VCD as `spi0_out`/`spi0_in` (8-bit) and `twi0_out`/`twi0_in` (32-bit raw
+message word) and in the session. The marker lanes now share one drawing path
+(labels that don't fit collapse to ticks). A device without the peripheral
+rejects the name. Tests inject wire events (decoding, lanes, VCD, session,
+paint); no firmware-driven SPI/TWI transfer is run end to end.
 
 1. Breakpoints:
    * PC breakpoints
