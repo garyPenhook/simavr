@@ -405,7 +405,7 @@ def test_disassembly_dock(tmp_path):
 NEXT_FIRMWARE = r"""
 #include <avr/io.h>
 volatile unsigned x;
-__attribute__((noinline)) void foo(void) { x++; x++; }
+__attribute__((noinline)) void bar(void) { x++; } __attribute__((noinline)) void foo(void) { bar(); x++; }
 int main(void) {
     x = 1;
     foo();
@@ -466,6 +466,37 @@ assert win._next is None and sim.wait_stopped(5) and line() == 9
 win.close()
 """
 
+OUT_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+from simavr_py.symbols import read_elf_symbols
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+sim = win._sim
+syms = read_elf_symbols(sys.argv[1])
+foo, bar, main = (syms.lookup(n).addr for n in ("foo", "bar", "main"))
+
+def settle():
+    end = time.time() + 5
+    while win._next is not None and time.time() < end:
+        app.processEvents()
+        time.sleep(0.001)
+    assert win._next is None, "step-out never finished"
+    assert sim.wait_stopped(5)
+
+win.breaks.add(foo)
+win.run(); assert sim.wait_stopped(5)
+assert sim.cpu.pc == foo
+sp_in = sim.cpu.sp
+win.step_out(); settle()                # runs over bar(), stops after foo's RET
+pc = sim.cpu.pc
+assert pc >= main and sim.cpu.sp > sp_in, (hex(pc), hex(main))
+win.close()
+"""
+
 
 def _build(tmp_path, source):
     src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
@@ -483,6 +514,16 @@ def test_step_over_line(tmp_path):
     elf = _build(tmp_path, NEXT_FIRMWARE)
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     r = subprocess.run([sys.executable, "-c", NEXT_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+
+def test_step_out(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    elf = _build(tmp_path, NEXT_FIRMWARE)
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", OUT_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
 

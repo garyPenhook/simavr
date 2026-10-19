@@ -255,7 +255,15 @@ never ends (`for(;;);`); Run, Step, Reset, a user breakpoint, a watchpoint or
 program exit also cancel it. Without line info it is a plain Step. Limits: a
 line that re-enters itself by recursion can stop in the inner frame (the return
 breakpoint is not frame-checked); an interrupt taken mid-line stops in the ISR if
-it has line info; no step-into/step-out yet.
+it has line info.
+
+**Step out (slice 11, 2026-10-19):** a "Step out" action reuses the same machine:
+it steps (over calls) until a RET/RETI executes with SP above its value at the
+start, i.e. the current function's own return, and stops just after it in the
+caller. No debug info needed. An ISR taken meanwhile is stepped through and its
+RETI doesn't count (it restores SP to at most the starting value). Step *into* is
+just Step. The "running" state event produced by our own resume is now ignored
+rather than treated as a foreign stop (it could cancel a step over a call).
 
 1. Breakpoints:
    * PC breakpoints

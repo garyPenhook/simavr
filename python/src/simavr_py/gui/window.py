@@ -929,12 +929,18 @@ class UartConsole(QWidget):
 _CALLS = {"call", "rcall", "icall", "eicall"}
 
 
-class _NextLine:
-    """A step-over-line in progress: single-steps until the source line changes,
-    running over calls with a temporary breakpoint at the return address."""
+_RETS = {"ret", "reti"}
 
-    def __init__(self, file: str, line: int):
+
+class _NextLine:
+    """A step-over-line (or step-out) in progress: single-steps until the source
+    line changes (or the function returns), running over calls with a temporary
+    breakpoint at the return address."""
+
+    def __init__(self, file: str | None = None, line: int = 0, sp: int | None = None):
         self.file, self.line = file, line
+        self.sp = sp                        # step-out: SP at the start; None = step-over-line
+        self.was_ret = False                # step-out: the instruction just stepped was a RET
         self.steps = 0
         self.tmp: int | None = None         # id of the return-address breakpoint
 
@@ -994,7 +1000,8 @@ class MainWindow(QMainWindow):
         for key, label, slot in (("open", "Open…", self.open_dialog),
                                  ("run", "Run", self.run), ("pause", "Pause", self.pause),
                                  ("step", "Step", self.step),
-                                 ("next", "Next line", self.step_line), ("reset", "Reset", self.reset)):
+                                 ("next", "Next line", self.step_line),
+                                 ("out", "Step out", self.step_out), ("reset", "Reset", self.reset)):
             act = QAction(label, self)
             act.triggered.connect(slot)
             tb.addAction(act)
@@ -1272,10 +1279,26 @@ class MainWindow(QMainWindow):
         if start is None:
             self.step()
             return
+        self._begin(_NextLine(start.file, start.line))
+
+    def step_out(self):
+        """Run until the current function returns (stops just after the RET)."""
+        sim = self._sim
+        if sim is None or self._next is not None or sim.state in (
+                State.RUNNING, State.SLEEPING, State.DONE, State.CRASHED):
+            return
+        self._drain()
+        try:
+            sp = sim.cpu.sp
+        except SimavrError:
+            return
+        self._begin(_NextLine(sp=sp))
+
+    def _begin(self, nx: _NextLine):
         self.breaks.clear_hit()
         self.databreaks.clear_hit()
-        self._next = _NextLine(start.file, start.line)
-        self._next_advance(self._next)
+        self._next = nx
+        self._next_advance(nx)
         self._update_actions()
 
     def _cancel_next(self):
@@ -1290,6 +1313,8 @@ class MainWindow(QMainWindow):
     def _next_event(self, ev: StateEvent) -> bool:
         """True if `ev` is one of our own stops (and the next move is scheduled)."""
         nx = self._next
+        if ev.state in (State.RUNNING, State.SLEEPING):
+            return True             # our own resume/step starting: wait for the stop
         ours = (ev.reason == StopReason.STEP and nx.tmp is None) or (
             ev.reason == StopReason.BREAKPOINT and nx.tmp is not None and ev.id == nx.tmp)
         if not ours:
@@ -1309,9 +1334,16 @@ class MainWindow(QMainWindow):
             if sim.state in (State.DONE, State.CRASHED):
                 self._next = None
                 return
-            pc = sim.cpu.pc
+            cpu = sim.cpu
+            pc = cpu.pc
             here = self._line_table.find(pc)
-            if nx.steps and here is not None and (here.file, here.line) != (nx.file, nx.line):
+            if nx.sp is not None:
+                # A RET that leaves our frame ends with SP above where we started
+                # (an ISR's RETI restores SP to at most that, so it doesn't count).
+                if nx.was_ret and cpu.sp > nx.sp:
+                    self._next = None
+                    return
+            elif nx.steps and here is not None and (here.file, here.line) != (nx.file, nx.line):
                 self._next = None
                 return
             nx.steps += 1
@@ -1322,6 +1354,7 @@ class MainWindow(QMainWindow):
                 nx.tmp = sim.add_breakpoint(pc + ins.size)
                 sim.resume()
             else:
+                nx.was_ret = ins is not None and ins.text.split()[0] in _RETS
                 sim.step()
         except SimavrError as e:
             self._cancel_next()
@@ -1343,6 +1376,7 @@ class MainWindow(QMainWindow):
         # Stepping while the sim thread runs would race the run request.
         a["step"].setEnabled(live and not running)
         a["next"].setEnabled(live and not running and self._next is None)
+        a["out"].setEnabled(live and not running and self._next is None)
         a["reset"].setEnabled(sim is not None)
 
 
