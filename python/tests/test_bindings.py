@@ -190,6 +190,33 @@ def test_uart(sim):
     assert got.decode() == "héllo"
 
 
+def _irq_firmware() -> bytes:
+    """Every vector slot RJMPs to a handler that reads USART0.RXDATAL (clearing
+    the level-sensitive RXC flag) and RETIs; main enables RXC, SEI, spins."""
+    handler = 0x80
+    w = [rjmp(0x83 - 1)] + [rjmp(handler - (i + 1)) for i in range(1, handler)]
+    w += [0x9100, USART0 + U_RXDATAL, 0x9518]                      # LDS r16 ; RETI
+    w += [0xE800, 0x9300, USART0 + 0x05, 0x9478,                   # r16=0x80 ; STS CTRLA ; SEI
+          rjmp(-1)]
+    return words(*w)
+
+
+def test_interrupt_events():
+    with sa.Simulator("atmega4809") as s:
+        s.load_flash(_irq_firmware())
+        sub = s.subscribe_interrupts()
+        s.poke(USART0 + U_CTRLB, U_RXEN)
+        s.run_cycles(200)
+        assert not [e for e in s.events() if isinstance(e, sa.InterruptEvent)]
+        s.uart_send(0, "A")
+        s.run_cycles(500)
+        ints = [e for e in s.events() if isinstance(e, sa.InterruptEvent)]
+        # one dispatch only: the RETI is not reported, and the handler cleared RXC
+        assert len(ints) == 1 and ints[0].sub == sub
+        assert ints[0].vector > 0 and ints[0].level == 0
+        s.unsubscribe(sub)
+
+
 # ---------------------------------------------------------------- threaded
 
 

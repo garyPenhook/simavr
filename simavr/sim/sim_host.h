@@ -537,7 +537,8 @@ int
 avr_host_subscribe_uart(
 		avr_host_t * h,
 		int index);
-/* Not implemented yet. */
+/* One AVR_HOST_EV_INTERRUPT per vector taken (not per RETI); b is the CPUINT
+ * level (0 LVL0 / classic, 1 LVL1, 2 NMI). */
 int
 avr_host_subscribe_interrupts(
 		avr_host_t * h);

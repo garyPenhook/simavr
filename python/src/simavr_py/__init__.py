@@ -8,6 +8,7 @@ lazy from .core import (
     Cpu,
     Event,
     InvalidArgument,
+    InterruptEvent,
     IrqEvent,
     LoadError,
     NotFound,
@@ -31,7 +32,7 @@ lazy from .core import (
 )
 
 __all__ = [
-    "Cpu", "Event", "InvalidArgument", "IrqEvent", "LoadError", "NotFound",
+    "Cpu", "Event", "InterruptEvent", "InvalidArgument", "IrqEvent", "LoadError", "NotFound",
     "NotSupported", "OutOfRange", "OverflowEvent", "PinEvent", "PinState",
     "RawEvent", "Simulator", "SimavrError", "Space", "State", "StateError",
     "StateEvent", "StopReason", "UartTxEvent", "api_version", "cores",

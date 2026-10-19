@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
 
 from ..boards import BoardError, load_board
 from ..core import (
-    OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent, StopReason,
-    UartTxEvent,
+    InterruptEvent, OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent,
+    StopReason, UartTxEvent,
 )
 from ..disasm import Insn
 from ..disasm import window as disasm_window
@@ -578,6 +578,59 @@ class DisasmView(QWidget):
         self._table.resizeColumnToContents(2)
 
 
+class InterruptPane(QWidget):
+    """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
+    of the last dispatch. Fed from the host's vector-taken events (RETIs are not
+    reported), so it counts dispatches, not pending flags."""
+
+    LEVELS = ("LVL0", "LVL1", "NMI")
+
+    def __init__(self):
+        super().__init__()
+        self._stats: dict[int, list[int]] = {}      # vector -> [level, count, last cycle]
+        self._dirty = False
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self.clear)
+        self._total = QLabel("0 interrupts")
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Vector", "Level", "Count", "Last cycle"])
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setFont(_mono())
+        top = QHBoxLayout()
+        top.addWidget(self._total, 1)
+        top.addWidget(clear)
+        lay = QGridLayout(self)
+        lay.addLayout(top, 0, 0)
+        lay.addWidget(self._table, 1, 0)
+
+    def record(self, ev: InterruptEvent):
+        row = self._stats.setdefault(ev.vector, [ev.level, 0, 0])
+        row[0], row[1], row[2] = ev.level, row[1] + 1, ev.cycle
+        self._dirty = True
+
+    def clear(self):
+        self._stats.clear()
+        self._dirty = True
+        self.refresh()
+
+    @property
+    def stats(self) -> dict[int, tuple[int, int, int]]:
+        return {v: tuple(r) for v, r in self._stats.items()}
+
+    def refresh(self):
+        if not self._dirty:
+            return
+        self._dirty = False
+        rows = sorted(self._stats.items())
+        self._total.setText(f"{sum(r[1] for _, r in rows)} interrupts")
+        self._table.setRowCount(len(rows))
+        for i, (vec, (level, count, cycle)) in enumerate(rows):
+            lv = self.LEVELS[level] if 0 <= level < len(self.LEVELS) else str(level)
+            for col, text in enumerate((str(vec), lv, str(count), str(cycle))):
+                self._table.setItem(i, col, QTableWidgetItem(text))
+
+
 class UartConsole(QWidget):
     def __init__(self):
         super().__init__()
@@ -632,6 +685,7 @@ class MainWindow(QMainWindow):
         self.breaks = BreakpointPane()
         self.disasm = DisasmView(self.breaks)
         self.uart = UartConsole()
+        self.irqs = InterruptPane()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
         self._board_path: str | None = None
@@ -642,6 +696,7 @@ class MainWindow(QMainWindow):
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Disassembly", self.disasm, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Breakpoints", self.breaks, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Interrupts", self.irqs, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
             dock = QDockWidget(title, self)
@@ -702,6 +757,11 @@ class MainWindow(QMainWindow):
             sim.subscribe_uart(0)       # the console shows and feeds USART0 only
         except SimavrError:
             pass
+        try:
+            sim.subscribe_interrupts()
+        except SimavrError:
+            pass
+        self.irqs.clear()
         self._notifier = QSocketNotifier(sim.fileno(), QSocketNotifier.Type.Read, self)
         self._notifier.activated.connect(self._drain)
         self._firmware = path
@@ -755,6 +815,8 @@ class MainWindow(QMainWindow):
             match ev:
                 case UartTxEvent(index=0, byte=b):
                     tx.append(b)
+                case InterruptEvent():
+                    self.irqs.record(ev)
                 case PinEvent() | OverflowEvent():
                     self.board.dispatch(ev)
                 case StateEvent(reason=StopReason.BREAKPOINT, id=bp):
@@ -776,6 +838,7 @@ class MainWindow(QMainWindow):
         self.disasm.refresh(sim)
         self.mem.refresh(sim)
         self.watch.refresh(sim)
+        self.irqs.refresh()
         self._update_actions()
 
     # -- board ---------------------------------------------------------------

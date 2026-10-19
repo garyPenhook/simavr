@@ -382,3 +382,54 @@ def test_disassembly_dock(tmp_path):
     r = subprocess.run([sys.executable, "-c", DISASM_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+IRQ_FIRMWARE = r"""
+#include <avr/io.h>
+#include <avr/interrupt.h>
+ISR(USART0_RXC_vect) { (void)USART0.RXDATAL; }
+int main(void) {
+    USART0.CTRLB = USART_RXEN_bm;
+    USART0.CTRLA = USART_RXCIE_bm;
+    sei();
+    for (;;) ;
+}
+"""
+
+IRQ_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+win.run(); time.sleep(0.2)
+for _ in range(3):
+    win._sim.uart_send(0, "A"); time.sleep(0.2)
+win.pause(); assert win._sim.wait_stopped(5)
+win._drain(); win.irqs.refresh()
+st = win.irqs.stats
+assert len(st) == 1, st
+(vec, (level, count, cycle)), = st.items()
+assert vec > 0 and level == 0 and count == 3 and cycle > 0, st
+assert win.irqs._table.item(0, 1).text() == "LVL0" and win.irqs._table.item(0, 2).text() == "3"
+win.irqs.clear()
+assert win.irqs.stats == {} and win.irqs._table.rowCount() == 0
+win.close()
+"""
+
+
+def test_interrupt_pane(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(IRQ_FIRMWARE)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", IRQ_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr

@@ -183,6 +183,12 @@ class IrqEvent(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class InterruptEvent(Event):
+    vector: int
+    level: int          # CPUINT level: 0 LVL0 (and every classic core), 1 LVL1, 2 NMI
+
+
+@dataclass(frozen=True, slots=True)
 class OverflowEvent(Event):
     dropped: int
 
@@ -205,6 +211,8 @@ def _event(e) -> Event:
             return UartTxEvent(e.sub, e.cycle, e.a, e.b)
         case _Ev.IRQ:
             return IrqEvent(e.sub, e.cycle, e.a, e.b)
+        case _Ev.INTERRUPT:
+            return InterruptEvent(e.sub, e.cycle, e.a, e.b)
         case _Ev.OVERFLOW:
             return OverflowEvent(e.sub, e.cycle, e.a)
         case other:
@@ -478,6 +486,9 @@ class Simulator:
 
     def subscribe_uart(self, index: int) -> int:
         return self._check(self._L.avr_host_subscribe_uart(self._handle(), index))
+
+    def subscribe_interrupts(self) -> int:
+        return self._check(self._L.avr_host_subscribe_interrupts(self._handle()))
 
     def subscribe_irq(self, ioctl: int, irq_index: int) -> int:
         return self._check(self._L.avr_host_subscribe_irq(self._handle(), ioctl,

@@ -208,6 +208,16 @@ symbol (`main`) or `name+hexoffset`; an exact symbol name wins over a bare hex
 reading (`0xadd` forces the address). The pane still stores plain addresses, so
 sessions are unchanged.
 
+**Interrupt activity (slice 5, 2026-10-19):** `avr_host_subscribe_interrupts` is
+now implemented (it returned ENOTSUP): one `AVR_HOST_EV_INTERRUPT` per vector
+*taken* (a=vector, b=CPUINT level 0/1/2; RETIs are filtered out), hooked on the
+interrupt table's RUNNING IRQ. Python: `Simulator.subscribe_interrupts()` /
+`InterruptEvent`; GUI: an "Interrupts" dock with per-vector level, dispatch
+count and last cycle (Clear button; resets on load). Not done: pending/enabled
+state, vector names (blocked on the register metadata table), a timeline, and
+test coverage of LVL1/NMI levels and nested-return filtering (only LVL0 is
+exercised).
+
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints if the core can surface them cheaply

@@ -59,7 +59,7 @@ extern avr_kind_t * avr_kind[];
 #define HOST_MAX_PORTS	8		/* PORTA .. PORTH */
 #define HOST_MAX_PINS	(HOST_MAX_PORTS * 8)
 
-enum { SUB_PIN = 1, SUB_UART, SUB_IRQ };
+enum { SUB_PIN = 1, SUB_UART, SUB_IRQ, SUB_INT };
 
 typedef struct host_sub_t {
 	struct host_sub_t *	next;
@@ -1467,13 +1467,6 @@ avr_host_pin_set_mv(
 }
 
 int
-avr_host_subscribe_interrupts(
-		avr_host_t * h)
-{
-	return host_error(h, AVR_HOST_ENOTSUP, "interrupt events not implemented");
-}
-
-int
 avr_host_poll_text(
 		avr_host_t * h,
 		char * buf,
@@ -1742,6 +1735,22 @@ host_sub_notify(
 		case SUB_IRQ:
 			host_push(h, AVR_HOST_EV_IRQ, s->id, cycle, s->arg, value, 0);
 			break;
+		case SUB_INT: {
+			/* The table IRQ carries the running vector on dispatch and the
+			 * vector being returned to (or 0) on RETI. Dispatch notifies
+			 * before the vector is pushed on running[]; RETI after the pop,
+			 * so a notify naming the top of the stack is a return. */
+			avr_int_table_t * t = &h->avr->interrupts;
+			if (!value || (t->running_ptr && t->running[t->running_ptr - 1]->vector == value))
+				break;
+			uint32_t level = 0;
+			if (t->cpuint_status & AVR_CPUINT_NMIEX)
+				level = 2;
+			else if (t->cpuint_status & AVR_CPUINT_LVL1EX)
+				level = 1;
+			host_push(h, AVR_HOST_EV_INTERRUPT, s->id, cycle, value, level, 0);
+			break;
+		}
 	}
 }
 
@@ -1799,6 +1808,17 @@ avr_host_subscribe_uart(
 	host_lock(h);
 	res = host_subscribe(h, SUB_UART,
 			h->uart[index].io->irq + UART_IRQ_OUTPUT, index, 0);
+	host_unlock(h);
+	return res;
+}
+
+int
+avr_host_subscribe_interrupts(
+		avr_host_t * h)
+{
+	int res;
+	host_lock(h);
+	res = host_subscribe(h, SUB_INT, h->avr->interrupts.irq + AVR_INT_IRQ_RUNNING, 0, 0);
 	host_unlock(h);
 	return res;
 }
