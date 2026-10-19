@@ -55,9 +55,9 @@ uv pip install --python .venv/bin/python -e 'python[gui]'
 .venv/bin/python -m simavr_py.gui -f 3333333 blink.elf   # --speed 0 = unthrottled
 ```
 
-Boards: `--board python/boards/demo_4809.json` shows virtual LEDs, buttons,
+Boards (optional; toolbar **Board…** or `--board`): `--board python/boards/demo_4809.json` shows virtual LEDs, buttons,
 a rotary encoder and an HD44780 LCD (write-only, 4- or 8-bit) wired to pins
-by a JSON/TOML file (see `simavr_py.boards`).
+by a JSON/TOML file (see `simavr_py.boards`). Try `examples/demo_4809.elf` with `boards/demo_4809.json`: LED0/LED1 follow PA0/PA1.
 
 Debugger docks: PC breakpoints, data watchpoints and peripheral-register
 triggers, disassembly and source views (ELF symbols and DWARF lines), step /

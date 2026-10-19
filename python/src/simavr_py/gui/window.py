@@ -1,6 +1,7 @@
 """Main window: toolbar, board canvas, pin panel, CPU view, memory viewer, watch pane, UART console."""
 
 import argparse
+from pathlib import Path
 import base64
 import json
 import os
@@ -978,11 +979,15 @@ class _NextLine:
         self.tmp: int | None = None         # id of the return-address breakpoint
 
 
+BOARD_DIR = str(Path(__file__).resolve().parents[3] / "boards")   # shipped examples
+
+
 class MainWindow(QMainWindow):
     def __init__(self, mmcu: str | None, freq: int, speed: float = 1.0):
         super().__init__()
         self.setWindowTitle("simavr")
-        self.resize(1100, 700)
+        self.resize(1500, 950)
+        self.setMinimumSize(900, 600)
         self._sim: Simulator | None = None
         self._notifier: QSocketNotifier | None = None
         self._mmcu, self._freq, self._speed = mmcu, freq, speed
@@ -1005,6 +1010,7 @@ class MainWindow(QMainWindow):
         self._board_path: str | None = None
         self._firmware: str | None = None
         self.setCentralWidget(self.pins)
+        self._docks: dict[str, QDockWidget] = {}
         for title, w, area in (("Board", self.board, Qt.DockWidgetArea.TopDockWidgetArea),
                                ("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
@@ -1021,6 +1027,8 @@ class MainWindow(QMainWindow):
             dock.setObjectName(title)       # saveState() keys docks by object name
             dock.setWidget(w)
             self.addDockWidget(area, dock)
+            self._docks[title] = dock
+        self._arrange_docks()
 
         menu = self.menuBar().addMenu("&Session")
         for label, slot in (("Open &board…", self.open_board_dialog),
@@ -1033,6 +1041,7 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Run")
         self._acts = {}
         for key, label, slot in (("open", "Open…", self.open_dialog),
+                                 ("board", "Board…", self.open_board_dialog),
                                  ("run", "Run", self.run), ("pause", "Pause", self.pause),
                                  ("step", "Step", self.step),
                                  ("next", "Next line", self.step_line),
@@ -1048,6 +1057,21 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(REFRESH_MS)
+
+    def _arrange_docks(self):
+        """Default layout: related panes share tab groups so each gets room."""
+        d = self._docks
+        right = ("Disassembly", "Source", "Watch", "Breakpoints", "Data Breakpoints", "Interrupts")
+        for other in right[1:]:
+            self.tabifyDockWidget(d[right[0]], d[other])
+        d[right[0]].raise_()
+        self.tabifyDockWidget(d["Memory"], d["UART"])
+        d["Memory"].raise_()
+        for corner in (Qt.Corner.TopRightCorner, Qt.Corner.BottomRightCorner):
+            self.setCorner(corner, Qt.DockWidgetArea.RightDockWidgetArea)   # right column full height
+        self.resizeDocks([d["Board"], d["Timeline"]], [300, 170], Qt.Orientation.Vertical)
+        self.resizeDocks([d["CPU"]], [480], Qt.Orientation.Horizontal)
+        self.resizeDocks([d["Timeline"], d["Memory"]], [600, 600], Qt.Orientation.Horizontal)
 
     # -- target selection ----------------------------------------------------
 
@@ -1247,7 +1271,7 @@ class MainWindow(QMainWindow):
             self.board.set_sim(self._sim)
 
     def open_board_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open board", "",
+        path, _ = QFileDialog.getOpenFileName(self, "Open board", BOARD_DIR,
                                               "Board (*.json *.toml)")
         if path:
             self.load_board(path)

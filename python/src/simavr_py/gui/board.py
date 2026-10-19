@@ -123,6 +123,9 @@ class LcdWidget(QWidget):
                        "events lost")
 
 
+NO_BOARD = "No board loaded (optional). Click Board… in the toolbar to add virtual LEDs, buttons and an LCD wired to pins."
+
+
 class BoardCanvas(QWidget):
     """Lays the widgets of a Board out in a grid and wires them to a runtime."""
 
@@ -139,7 +142,7 @@ class BoardCanvas(QWidget):
         self._player.setInterval(ENCODER_STEP_MS)
         self._player.timeout.connect(self._play_step)
         self._outer = QVBoxLayout(self)
-        self._title = QLabel("No board loaded (--board FILE)")
+        self._title = QLabel(NO_BOARD)
         self._outer.addWidget(self._title)
         self._host = QWidget()
         self._outer.addWidget(self._host, 1)
@@ -175,10 +178,11 @@ class BoardCanvas(QWidget):
         self._lcds.clear()
         old, self._host = self._host, QWidget()
         self._outer.replaceWidget(old, self._host)
+        old.hide()                  # deleteLater is deferred; don't show both meanwhile
         old.deleteLater()
         board = self._board
         self._title.setText(f"Board: {board.name}" if board else
-                            "No board loaded (--board FILE)")
+                            NO_BOARD)
         if board is None:
             return
         grid = QGridLayout(self._host)
