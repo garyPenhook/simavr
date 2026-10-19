@@ -344,11 +344,6 @@ against DS40002205A 13.5.2), innermost level first (`NMI > LVL1 > LVL0`, or `non
 It is read on each refresh while stopped and left as-is while running. Not done:
 pending (flag-set but not yet taken) sources, which need per-peripheral INTFLAGS.
 
-**Launch UX (2026-10-19):** toolbar MCU and clock pickers (every compiled core; changing
-one reloads the loaded firmware), a toolbar **Board…** button, `*.axf` in the Open
-filter, tabbed full-height dock layout, and remembered layout/MCU/clock/last folder via
-`QSettings` (opt-in through `MainWindow.enable_settings`, enabled only by `main()`).
-
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints and peripheral-register change triggers
