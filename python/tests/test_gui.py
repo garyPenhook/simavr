@@ -126,3 +126,73 @@ def test_watch_pane_and_session_roundtrip(tmp_path):
     r = subprocess.run([sys.executable, "-c", SESSION_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+BOARD_FIRMWARE = r"""
+#include <avr/io.h>
+int main(void) {
+    PORTA.DIRSET = 3;
+    PORTA.OUTSET = 1;                       /* PA0 lit */
+    PORTB.PIN2CTRL = PORT_PULLUPEN_bm;      /* SW0 to ground, internal pull-up */
+    for (;;) {
+        if (PORTB.IN & 4) PORTA.OUTCLR = 2; else PORTA.OUTSET = 2;   /* PA1 = SW0 pressed */
+    }
+}
+"""
+
+BOARD_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow(None, 0, speed=0)
+win.load_board(sys.argv[2])
+assert win.board.board.name == "ATmega4809 demo"
+assert win._mmcu == "atmega4809" and win._freq == 3333333
+win.load(sys.argv[1])
+rt = win.board._runtime
+assert rt is not None, "board did not bind"
+assert len(win.board._leds) == 3
+win.run()
+
+def settle(pred, what):
+    for _ in range(200):
+        app.processEvents(); win._drain(); win.refresh()
+        if pred():
+            return
+        time.sleep(0.02)
+    raise AssertionError(what)
+
+sim = win._sim
+settle(lambda: win.board._leds[0]._level == 1.0, "LED0 never lit")
+assert win.board._leds[2]._level == 1.0          # active-low LED2: PA2 low => lit
+assert not sim.pin_state("PA1").out
+win.board._button(3, True)                        # press SW0
+settle(lambda: sim.pin_state("PA1").out, "press not seen by firmware")
+settle(lambda: win.board._leds[1]._level == 1.0, "LED1 never lit")
+win.board._button(3, False)                       # release
+settle(lambda: not sim.pin_state("PA1").out, "release not seen by firmware")
+
+win.board._turn(5, +1)                        # encoder is widget 5
+assert win.board._pending
+settle(lambda: not win.board._pending, "encoder detent never played out")
+win.close()
+assert win._sim is None and win.board._runtime is None
+"""
+
+
+def test_board_canvas_end_to_end(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(BOARD_FIRMWARE)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    board = os.path.join(os.path.dirname(__file__), "..", "boards", "demo_4809.json")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", BOARD_SCRIPT, str(elf), board], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr

@@ -1,8 +1,9 @@
-"""Main window: toolbar, pin panel, CPU view, memory viewer, watch pane, UART console."""
+"""Main window: toolbar, board canvas, pin panel, CPU view, memory viewer, watch pane, UART console."""
 
 import argparse
 import base64
 import json
+import os
 import re
 
 from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer
@@ -13,11 +14,13 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QWidget,
 )
 
+from ..boards import BoardError, load_board
 from ..core import (
-    Simulator, SimavrError, Space, State, StateEvent, UartTxEvent,
+    PinEvent, Simulator, SimavrError, Space, State, StateEvent, UartTxEvent,
 )
+from .board import BoardCanvas
 
-SESSION_VERSION = 1
+SESSION_VERSION = 2          # 2 added "board"; 1 files still load
 REFRESH_MS = 50          # repaint cadence, independent of simulated time
 DRAIN_LIMIT = 1024
 
@@ -384,9 +387,13 @@ class MainWindow(QMainWindow):
         self.mem = MemoryView()
         self.watch = WatchPane()
         self.uart = UartConsole()
+        self.board = BoardCanvas()
+        self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
+        self._board_path: str | None = None
         self._firmware: str | None = None
         self.setCentralWidget(self.pins)
-        for title, w, area in (("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
+        for title, w, area in (("Board", self.board, Qt.DockWidgetArea.TopDockWidgetArea),
+                               ("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -396,7 +403,8 @@ class MainWindow(QMainWindow):
             self.addDockWidget(area, dock)
 
         menu = self.menuBar().addMenu("&Session")
-        for label, slot in (("&Save session…", self.save_session_dialog),
+        for label, slot in (("Open &board…", self.open_board_dialog),
+                            ("&Save session…", self.save_session_dialog),
                             ("&Load session…", self.load_session_dialog)):
             act = QAction(label, self)
             act.triggered.connect(slot)
@@ -453,6 +461,7 @@ class MainWindow(QMainWindow):
         self.watch.set_watches(self.watch.watches)   # drop stale change baselines
         self.pins.set_sim(sim)
         self.uart.set_sim(sim)
+        self.board.set_sim(sim)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
         self.refresh()
@@ -466,6 +475,7 @@ class MainWindow(QMainWindow):
             self._notifier = None
         self.pins.set_sim(None)
         self.uart.set_sim(None)
+        self.board.set_sim(None)     # releases held pins while the sim is still open
         if sim is not None:
             try:
                 sim.pause()
@@ -493,6 +503,8 @@ class MainWindow(QMainWindow):
             match ev:
                 case UartTxEvent(index=0, byte=b):
                     tx.append(b)
+                case PinEvent():
+                    self.board.dispatch(ev)
                 case StateEvent():
                     self._update_actions()
         if tx:
@@ -501,10 +513,35 @@ class MainWindow(QMainWindow):
     def refresh(self):
         sim = self._sim
         self.pins.refresh()
+        self.board.refresh()
         self.cpu.refresh(sim)
         self.mem.refresh(sim)
         self.watch.refresh(sim)
         self._update_actions()
+
+    # -- board ---------------------------------------------------------------
+
+    def load_board(self, path: str, rebind: bool = True):
+        """Show the board in `path`; with a running sim, rewire it to that."""
+        try:
+            board = load_board(path)
+        except BoardError as e:
+            QMessageBox.warning(self, "Board", str(e))
+            return
+        self._board_path = os.path.abspath(path)
+        if board.mmcu and not self._mmcu:
+            self._mmcu = board.mmcu
+        if board.freq and not self._freq:
+            self._freq = board.freq
+        self.board.set_board(board)
+        if rebind:
+            self.board.set_sim(self._sim)
+
+    def open_board_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Open board", "",
+                                              "Board (*.json *.toml)")
+        if path:
+            self.load_board(path)
 
     # -- session save/restore ------------------------------------------------
 
@@ -513,6 +550,7 @@ class MainWindow(QMainWindow):
         return {
             "version": SESSION_VERSION,
             "firmware": self._firmware,
+            "board": self._board_path,
             "mmcu": self._sim.mmcu if self._sim else self._mmcu,
             "freq": self._freq,
             "speed": self._speed,
@@ -524,7 +562,7 @@ class MainWindow(QMainWindow):
 
     def apply_session(self, d: dict, load_firmware: bool = True):
         """Restore a session dict. Raises ValueError on a file we can't read."""
-        if not isinstance(d, dict) or d.get("version") != SESSION_VERSION:
+        if not isinstance(d, dict) or d.get("version") not in (1, SESSION_VERSION):
             raise ValueError("not a simavr session file (or unsupported version)")
         self._mmcu = d.get("mmcu") or self._mmcu
         self._freq = int(d.get("freq", self._freq))
@@ -533,6 +571,8 @@ class MainWindow(QMainWindow):
         for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
             if d.get(key):
                 restore(QByteArray(base64.b64decode(d[key])))
+        if d.get("board"):
+            self.load_board(d["board"])
         fw = d.get("firmware")
         if load_firmware and fw:
             self.load(fw)       # builds a fresh pin panel, so drives go after
@@ -610,6 +650,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("firmware", nargs="?", help="ELF or HEX image")
     ap.add_argument("-m", "--mmcu", help="MCU name (needed for HEX / ELF without .mmcu)")
     ap.add_argument("-f", "--freq", type=int, default=0, help="clock frequency in Hz")
+    ap.add_argument("--board", help="board definition (.json / .toml)")
     ap.add_argument("--session", help="restore a saved session (.json)")
     ap.add_argument("--speed", type=float, default=1.0,
                     help="1.0 = real time (default), 0 = unthrottled")
@@ -617,8 +658,12 @@ def main(argv: list[str]) -> int:
     app = QApplication([argv[0], *qt_args])
     win = MainWindow(args.mmcu, args.freq, args.speed)
     win.show()
+    if args.board:
+        win.load_board(args.board)  # before the firmware, so its mmcu/freq apply
     if args.firmware:
         win.load(args.firmware)     # an explicit image wins over the session's
     if args.session:
         win.load_session(args.session, load_firmware=not args.firmware)
+    if args.board:
+        win.load_board(args.board)  # likewise explicit over the session's
     return app.exec()

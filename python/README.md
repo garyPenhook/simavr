@@ -49,3 +49,6 @@ watchpoints, analog input, interrupt events, VCD) aren't wrapped.
 uv pip install --python .venv/bin/python -e 'python[gui]'
 .venv/bin/python -m simavr_py.gui -f 3333333 blink.elf   # --speed 0 = unthrottled
 ```
+
+Boards: `--board python/boards/demo_4809.json` shows virtual LEDs, buttons and
+a rotary encoder wired to pins by a JSON/TOML file (see `simavr_py.boards`).

@@ -143,6 +143,19 @@ imports (use `from simavr_py.core import ...` alongside PySide6).
 
 ## Phase 4 — modern-board widgets
 
+**Status (2026-10-18): slice 1 landed.** `simavr_py.boards` (declarative
+JSON/TOML board files, strict validation, `BoardRuntime` binding a board to a
+`Simulator`), `simavr_py.widgets` (Qt-free LED / button / rotary-encoder
+models) and a "Board" dock in the GUI (`--board FILE`, Session > Open board,
+saved in sessions). Example: `python/boards/demo_4809.json`. Decisions: LED
+brightness is the lit fraction of simulated time between repaints, from pin
+events coalesced to ~0.5 ms, so PWM ramps read as ramps; released buttons let
+go of the pin (firmware pull-up decides) unless `pull` models an external
+resistor; an encoder detent plays its four quadrature phases 3 ms apart in
+wall-clock time. Not done: HD44780 (pin-event decoder) and SSD1306/SH1106
+(need a bus-attach in the host API or a Python SPI/TWI decoder), and the
+inspection widgets (blocked on the register metadata table).
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
