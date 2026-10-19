@@ -46,21 +46,75 @@ input, log text, VCD) aren't wrapped. Watchpoints and interrupt events are
 
 ## GUI
 
-From the repo root, `./simavr-gui [-f hz] [--board file] [firmware.elf]` does everything
-below (builds the library and sets up `.venv` on first use) and works from any directory. With no arguments it opens an empty window: pick the MCU
-and clock in the toolbar, then **Open…** an ELF/HEX (changing the MCU reloads it).
+A desktop front-end (PySide6/Qt) for loading firmware, running it, poking pins and
+debugging, with no VCD/GTKWave step needed for everyday work.
+
+### Starting it
+
+From the repo root:
 
 ```sh
-uv pip install --python .venv/bin/python -e 'python[gui]'
-.venv/bin/python -m simavr_py.gui -f 3333333 blink.elf   # --speed 0 = unthrottled
+./simavr-gui                              # empty window; pick MCU, then Open…
+./simavr-gui firmware.elf                 # load straight away (MCU comes from the ELF)
+./simavr-gui -m attiny3217 -f 3333333 firmware.hex
+./simavr-gui --board python/boards/demo_4809.json python/examples/demo_4809.elf
 ```
 
-Boards (optional; toolbar **Board…** or `--board`): `--board python/boards/demo_4809.json` shows virtual LEDs, buttons,
-a rotary encoder and an HD44780 LCD (write-only, 4- or 8-bit) wired to pins
-by a JSON/TOML file (see `simavr_py.boards`). Try `examples/demo_4809.elf` with `boards/demo_4809.json`: LED0/LED1 follow PA0/PA1.
+The launcher builds `libsimavr` and creates `.venv` with PySide6 on first use, and
+works from any directory (symlink it onto your `PATH` if you like). Options:
 
-Debugger docks: PC breakpoints, data watchpoints and peripheral-register
-triggers, disassembly and source views (ELF symbols and DWARF lines), step /
-next line / step out, an interrupts table with vector names (from the device's
-avr-libc header), and a pin/timer/bus timeline with cursors and VCD export.
-Details and limits per feature: [`doc/python_gui_todo.md`](../doc/python_gui_todo.md).
+| Option | Meaning |
+|---|---|
+| `firmware` | ELF (`.elf`/`.axf`) or HEX image |
+| `-m, --mmcu` | MCU name; needed for HEX or an ELF without an `.mmcu` section |
+| `-f, --freq` | clock in Hz (0 = from the ELF / device default) |
+| `--board FILE` | virtual board (`.json`/`.toml`) |
+| `--session FILE` | restore a saved session |
+| `--speed N` | 1.0 = real time (default), 0 = unthrottled |
+
+Manual install instead of the launcher:
+`uv pip install --python .venv/bin/python -e 'python[gui]'` then
+`.venv/bin/python -m simavr_py.gui ...`.
+
+Quick try: **Open…** `python/examples/demo_4809.elf` (it embeds its MCU, ATmega4809),
+then **Board…** `python/boards/demo_4809.json`, then **Run**. LED0/LED1 follow PA0/PA1,
+the LCD shows a counter, and the UART dock prints `hello N ticks`.
+Build your own firmware with a modern `avr-gcc`, e.g.
+`avr-gcc -mmcu=atmega4809 -Os -g -o fw.elf fw.c` (`-g` gives source view and line stepping).
+Pick `.axf`/`.elf` files that are *AVR* binaries; a host program such as a board's
+`oled.elf` under `obj-*/` will fail with "cannot read ELF".
+
+### Using it
+
+**Toolbar:** `Open…` load firmware · MCU box (every compiled core; `(from ELF)` uses
+the ELF's own; changing it reloads the loaded firmware) · clock box (Hz, `auto` = default) ·
+`Board…` · `Run` · `Pause` · `Step` (one instruction) · `Next line` (step over a source
+line or call) · `Step out` (run to the current function's return) · `Reset`.
+Run controls are disabled while they can't apply (e.g. Step while running).
+
+**Central pin panel:** one cell per pin showing level and direction (`OUT 1`, `Z 0`
+= input/high-Z). Tick **drive** to drive an input pin from outside, **H** for the level.
+
+**Board dock (optional):** virtual parts wired to pins: LEDs, push buttons (latching
+or momentary), a rotary encoder and an HD44780 LCD. Define your own in JSON/TOML
+(see `boards/demo_4809.json` and `simavr_py.boards`).
+
+**Docks** (drag to rearrange; related ones share tabs, the default is right column =
+CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
+- **CPU**: state, cycle, time, PC/SP/SREG and r0-r31 (refreshed while paused; shown stale while running).
+- **Disassembly**: instructions around PC with symbols and source lines; double-click a row to toggle a breakpoint.
+- **Source**: the C source with the current line (needs `-g`).
+- **Watch**: `[label=]hexaddr[:width]`, e.g. `porta_out=0x0405`, live data-space values.
+- **Breakpoints**: hex address or symbol (`main`, `main+0x4`); `0xadd` forces an address over a symbol.
+- **Data Breakpoints**: `hexaddr[:len] [r|w|rw|c|p]` (read/write/either/change/any peripheral-register change), e.g. `0x0400`, `3f:2 rw`.
+- **Interrupts**: per-vector count, level and last cycle, vector names, and which CPUINT level is executing.
+- **Timeline**: type a pin (`PA0`), timer output (`TCA0.WO1`) or bus (`SPI0`, `TWI0`, `USART1`) + Enter; wheel zooms, drag pans, click/right-click set cursors A/B, `Export VCD…` writes a GTKWave file. Also shows UART0 TX and interrupt vectors.
+- **Memory**: data / flash / eeprom hex view at an address.
+- **UART**: console for USART0; type a line + Enter to send it to the firmware.
+
+**Sessions** (`Session` menu): save and load breakpoints, watches, board, pins, layout,
+firmware and MCU. The window layout, MCU, clock and last firmware folder are also
+remembered automatically between launches (`~/.config/simavr/simavr-gui.conf`);
+explicit command-line flags win.
+
+Limits and per-feature details: [`doc/python_gui_todo.md`](../doc/python_gui_todo.md).

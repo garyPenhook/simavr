@@ -800,3 +800,36 @@ def test_target_picker(tmp_path):
     r = subprocess.run([sys.executable, "-c", TARGET_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+SETTINGS_SCRIPT = """
+import sys
+from PySide6.QtCore import QSettings
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+ini = sys.argv[1]
+w = MainWindow(None, 0, speed=0)
+w.enable_settings(QSettings(ini, QSettings.Format.IniFormat))
+assert w._mmcu is None
+w._mcu_box.setCurrentIndex(w._mcu_box.findData("attiny3217")); w._target_changed()
+w._freq_box.setValue(4000000); w._target_changed()
+w.resize(1234, 777)
+w.close()
+w2 = MainWindow(None, 0, speed=0)
+w2.enable_settings(QSettings(ini, QSettings.Format.IniFormat))
+assert w2._mmcu == "attiny3217" and w2._freq == 4000000, (w2._mmcu, w2._freq)
+assert w2._mcu_box.currentData() == "attiny3217" and w2._freq_box.value() == 4000000
+w3 = MainWindow("atmega4809", 0, speed=0)           # explicit value beats the remembered one
+w3.enable_settings(QSettings(ini, QSettings.Format.IniFormat))
+assert w3._mmcu == "atmega4809"
+for x in (w2, w3): x.close()
+"""
+
+
+def test_settings_remembered(tmp_path):
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", SETTINGS_SCRIPT, str(tmp_path / "s.ini")],
+                       env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

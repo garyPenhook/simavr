@@ -7,7 +7,7 @@ import json
 import os
 import re
 
-from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QSettings, QSocketNotifier, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
@@ -1009,6 +1009,8 @@ class MainWindow(QMainWindow):
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
         self._board_path: str | None = None
         self._firmware: str | None = None
+        self._settings: QSettings | None = None
+        self._last_dir = ""
         self.setCentralWidget(self.pins)
         self._docks: dict[str, QDockWidget] = {}
         for title, w, area in (("Board", self.board, Qt.DockWidgetArea.TopDockWidgetArea),
@@ -1192,7 +1194,37 @@ class MainWindow(QMainWindow):
             sim.close()
         self._update_actions()
 
+    def enable_settings(self, settings: QSettings):
+        """Remember window layout, MCU/clock and the last firmware folder across launches.
+        Opt-in so tests and embedders never touch the user's config; explicit
+        constructor/command-line values win over the remembered ones."""
+        self._settings = settings
+        for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
+            blob = settings.value(key)
+            if isinstance(blob, QByteArray) and not blob.isEmpty():
+                restore(blob)
+        if not self._mmcu:
+            self._mmcu = str(settings.value("mmcu", "")) or None
+        if not self._freq:
+            try:
+                self._freq = int(settings.value("freq", 0))
+            except (TypeError, ValueError):
+                self._freq = 0
+        self._last_dir = str(settings.value("last_dir", ""))
+        self._sync_target(self._mmcu, self._freq)
+
+    def _save_settings(self):
+        st = self._settings
+        if st is None:
+            return
+        st.setValue("geometry", self.saveGeometry())
+        st.setValue("layout", self.saveState())
+        st.setValue("mmcu", self._mmcu or "")
+        st.setValue("freq", self._freq)
+        st.sync()
+
     def closeEvent(self, ev):
+        self._save_settings()
         self._timer.stop()
         self._teardown()
         super().closeEvent(ev)
@@ -1352,9 +1384,13 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     def open_dialog(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Open firmware", "",
+        path, _ = QFileDialog.getOpenFileName(self, "Open firmware",
+                                              self._last_dir,
                                               "Firmware (*.elf *.axf *.hex);;All files (*)")
         if path:
+            self._last_dir = os.path.dirname(path)
+            if self._settings is not None:
+                self._settings.setValue("last_dir", self._last_dir)
             self.load(path)
 
     def run(self):
@@ -1507,6 +1543,7 @@ def main(argv: list[str]) -> int:
     args, qt_args = ap.parse_known_args(argv[1:])
     app = QApplication([argv[0], *qt_args])
     win = MainWindow(args.mmcu, args.freq, args.speed)
+    win.enable_settings(QSettings("simavr", "simavr-gui"))
     win.show()
     if args.board:
         win.load_board(args.board)  # before the firmware, so its mmcu/freq apply
