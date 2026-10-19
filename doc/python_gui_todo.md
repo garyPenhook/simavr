@@ -239,13 +239,23 @@ info (`.debug_info`), compressed or 64-bit DWARF.
 **Source view (slice 8, 2026-10-19):** a "Source" dock shows the source file
 (read from the path recorded in the ELF, +/-200 lines) with the PC's line
 highlighted, refreshed on each stop; it reports "no source line" for code without
-debug info and "file not found" if the path is gone. Read-only: no step-over-line.
+debug info and "file not found" if the path is gone. Read-only apart from the breakpoint toggle below.
 
 **Source breakpoints (slice 9, 2026-10-19):** double-clicking a line in the Source
 dock toggles a PC breakpoint at the line's lowest address (`LineTable.address_of`;
 a line with no code resolves to the next later line that has some). Lines whose
 address holds a breakpoint show a ● marker. Only lines near the PC are shown, so
 breakpoints elsewhere in a file still need the address/symbol box.
+
+**Step over line (slice 10, 2026-10-19):** a "Next line" toolbar action steps
+until the source line changes, running over `call/rcall/icall/eicall` with a
+temporary breakpoint at the return address. It is driven by stop events from the
+GUI thread (never blocks), so Pause (enabled while it works) cancels a line that
+never ends (`for(;;);`); Run, Step, Reset, a user breakpoint, a watchpoint or
+program exit also cancel it. Without line info it is a plain Step. Limits: a
+line that re-enters itself by recursion can stop in the inner frame (the return
+breakpoint is not frame-checked); an interrupt taken mid-line stops in the ISR if
+it has line info; no step-into/step-out yet.
 
 1. Breakpoints:
    * PC breakpoints

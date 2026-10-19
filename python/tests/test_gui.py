@@ -402,6 +402,91 @@ def test_disassembly_dock(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+NEXT_FIRMWARE = r"""
+#include <avr/io.h>
+volatile unsigned x;
+__attribute__((noinline)) void foo(void) { x++; x++; }
+int main(void) {
+    x = 1;
+    foo();
+    x = 2;
+    for (;;) ;
+}
+"""
+
+NEXT_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+from simavr_py.symbols import read_elf_symbols
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+sim = win._sim
+
+def line():
+    h = win._line_table.find(sim.cpu.pc)
+    return h.line if h else None
+
+def settle():
+    assert sim.wait_stopped(5)
+    end = time.time() + 5
+    while win._next is not None and time.time() < end:
+        app.processEvents()
+        time.sleep(0.001)
+    assert win._next is None, "step-over-line never finished"
+    assert sim.wait_stopped(5)
+
+win.breaks.add(read_elf_symbols(sys.argv[1]).lookup("main").addr)
+win.run()
+assert sim.wait_stopped(5)
+for _ in range(10):                     # main's prologue
+    if line() == 5:
+        break
+    win.step_line(); settle()
+assert line() == 5, line()
+win.step_line(); settle()
+assert line() == 6, line()
+win.step_line(); settle()
+assert line() == 7, line()              # at the call to foo()
+win.step_line(); settle()
+assert line() == 8, line()              # ran over foo()
+win.refresh()
+assert win._acts["next"].isEnabled() is True
+win.step_line(); settle()
+assert line() == 9, line()
+win.step_line()                         # `for(;;);` never leaves its line: Pause cancels it
+for _ in range(50):
+    app.processEvents(); time.sleep(0.001)
+win.refresh()
+assert win._next is not None and win._acts["pause"].isEnabled()
+win.pause()
+assert win._next is None and sim.wait_stopped(5) and line() == 9
+win.close()
+"""
+
+
+def _build(tmp_path, source):
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(source)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-O0", "-g", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    return elf
+
+
+def test_step_over_line(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    elf = _build(tmp_path, NEXT_FIRMWARE)
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", NEXT_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+
 IRQ_FIRMWARE = r"""
 #include <avr/io.h>
 #include <avr/interrupt.h>

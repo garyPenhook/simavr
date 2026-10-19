@@ -926,6 +926,19 @@ class UartConsole(QWidget):
         self._in.clear()
 
 
+_CALLS = {"call", "rcall", "icall", "eicall"}
+
+
+class _NextLine:
+    """A step-over-line in progress: single-steps until the source line changes,
+    running over calls with a temporary breakpoint at the return address."""
+
+    def __init__(self, file: str, line: int):
+        self.file, self.line = file, line
+        self.steps = 0
+        self.tmp: int | None = None         # id of the return-address breakpoint
+
+
 class MainWindow(QMainWindow):
     def __init__(self, mmcu: str | None, freq: int, speed: float = 1.0):
         super().__init__()
@@ -934,6 +947,8 @@ class MainWindow(QMainWindow):
         self._sim: Simulator | None = None
         self._notifier: QSocketNotifier | None = None
         self._mmcu, self._freq, self._speed = mmcu, freq, speed
+        self._line_table = LineTable()
+        self._next: _NextLine | None = None
 
         self.pins = PinPanel()
         self.cpu = CpuView()
@@ -978,7 +993,8 @@ class MainWindow(QMainWindow):
         self._acts = {}
         for key, label, slot in (("open", "Open…", self.open_dialog),
                                  ("run", "Run", self.run), ("pause", "Pause", self.pause),
-                                 ("step", "Step", self.step), ("reset", "Reset", self.reset)):
+                                 ("step", "Step", self.step),
+                                 ("next", "Next line", self.step_line), ("reset", "Reset", self.reset)):
             act = QAction(label, self)
             act.triggered.connect(slot)
             tb.addAction(act)
@@ -1035,6 +1051,7 @@ class MainWindow(QMainWindow):
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
         lines = read_elf_lines(path) if is_elf else LineTable()
+        self._line_table = lines
         self.disasm.set_symbols(symbols, lines)
         self.source.set_lines(lines)
         self.breaks.set_symbols(symbols)
@@ -1043,6 +1060,7 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def _teardown(self):
+        self._cancel_next()
         # Drop every reference first so no timer/notifier touches a closed handle.
         sim, self._sim = self._sim, None
         if self._notifier is not None:
@@ -1078,6 +1096,8 @@ class MainWindow(QMainWindow):
         # the fd stays readable while events remain, so the rest comes next time.
         tx = bytearray()
         for ev in sim.events(limit=DRAIN_LIMIT):
+            if isinstance(ev, StateEvent) and self._next is not None and self._next_event(ev):
+                continue
             match ev:
                 case UartTxEvent(index=0, byte=b):
                     tx.append(b)
@@ -1216,6 +1236,7 @@ class MainWindow(QMainWindow):
             self.load(path)
 
     def run(self):
+        self._cancel_next()
         if self._sim:
             self._guard(self._sim.resume)
             if self._sim.state in (State.RUNNING, State.SLEEPING):
@@ -1223,16 +1244,91 @@ class MainWindow(QMainWindow):
                 self.databreaks.clear_hit()
 
     def pause(self):
-        if self._sim:
+        self._cancel_next()
+        if self._sim and self._sim.state in (State.RUNNING, State.SLEEPING):
             self._guard(self._sim.pause)
+        self._update_actions()
 
     def step(self):
+        self._cancel_next()
         if self._sim:
             self._guard(self._sim.step)
             self.breaks.clear_hit()
             self.databreaks.clear_hit()
 
+    # -- step over line ------------------------------------------------------
+
+    def step_line(self):
+        """Run to the next source line, over calls. Without line info: one step."""
+        sim = self._sim
+        if sim is None or self._next is not None or sim.state in (
+                State.RUNNING, State.SLEEPING, State.DONE, State.CRASHED):
+            return
+        self._drain()       # a stop event still queued must not be mistaken for ours
+        try:
+            start = self._line_table.find(sim.cpu.pc)
+        except SimavrError:
+            return
+        if start is None:
+            self.step()
+            return
+        self.breaks.clear_hit()
+        self.databreaks.clear_hit()
+        self._next = _NextLine(start.file, start.line)
+        self._next_advance(self._next)
+        self._update_actions()
+
+    def _cancel_next(self):
+        nx, self._next = self._next, None
+        if nx is not None and nx.tmp is not None and self._sim is not None:
+            try:
+                self._sim.remove_breakpoint(nx.tmp)
+            except SimavrError:
+                pass
+            nx.tmp = None
+
+    def _next_event(self, ev: StateEvent) -> bool:
+        """True if `ev` is one of our own stops (and the next move is scheduled)."""
+        nx = self._next
+        ours = (ev.reason == StopReason.STEP and nx.tmp is None) or (
+            ev.reason == StopReason.BREAKPOINT and nx.tmp is not None and ev.id == nx.tmp)
+        if not ours:
+            self._cancel_next()     # user breakpoint, watchpoint, pause, exit: stay put
+            return False
+        QTimer.singleShot(0, lambda: self._next_advance(nx))
+        return True
+
+    def _next_advance(self, nx: _NextLine):
+        sim = self._sim
+        if sim is None or self._next is not nx or sim.state in (State.RUNNING, State.SLEEPING):
+            return                  # cancelled, replaced, or still moving: a stop event re-enters
+        try:
+            if nx.tmp is not None:
+                sim.remove_breakpoint(nx.tmp)
+                nx.tmp = None
+            if sim.state in (State.DONE, State.CRASHED):
+                self._next = None
+                return
+            pc = sim.cpu.pc
+            here = self._line_table.find(pc)
+            if nx.steps and here is not None and (here.file, here.line) != (nx.file, nx.line):
+                self._next = None
+                return
+            nx.steps += 1
+            ins = next((i for i in disasm_window(lambda a, n: sim.read(Space.FLASH, a, n), pc,
+                                                 sim.mem_size(Space.FLASH), 0, 1)
+                        if i.addr == pc), None)
+            if ins is not None and ins.text.split()[0] in _CALLS:
+                nx.tmp = sim.add_breakpoint(pc + ins.size)
+                sim.resume()
+            else:
+                sim.step()
+        except SimavrError as e:
+            self._cancel_next()
+            QMessageBox.warning(self, "simavr", str(e))
+
     def reset(self):
+        self._cancel_next()
         if self._sim:
             self._guard(self._sim.reset)
 
@@ -1243,9 +1339,10 @@ class MainWindow(QMainWindow):
         live = sim is not None and state not in (State.DONE, State.CRASHED)
         a = self._acts
         a["run"].setEnabled(live and not running)
-        a["pause"].setEnabled(live and running)
+        a["pause"].setEnabled(live and (running or self._next is not None))
         # Stepping while the sim thread runs would race the run request.
         a["step"].setEnabled(live and not running)
+        a["next"].setEnabled(live and not running and self._next is None)
         a["reset"].setEnabled(sim is not None)
 
 
