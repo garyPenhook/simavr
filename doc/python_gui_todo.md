@@ -111,6 +111,19 @@ Not wrapped yet: the C calls that still return `AVR_HOST_ENOTSUP`.
 
 ## Phase 3 — GUI shell
 
+**Status (2026-10-18): first cut landed** as `simavr_py.gui`
+(`python -m simavr_py.gui [-m MCU] [-f HZ] [--speed R] firmware.elf`, extra
+`gui` = PySide6). Done: run/pause/step/reset toolbar, pin panel (level, direction,
+click-to-drive), CPU state view, memory viewer (data/flash/EEPROM), USART0
+console with TX input. Decisions: repaint on a fixed 50 ms `QTimer`, independent
+of simulated time; events via `QSocketNotifier` on `Simulator.fileno()`, drained
+in bounded batches so a chatty firmware can't starve the event loop; the C API
+only exposes PC/SP/SREG/r[] while paused, so the CPU view keeps its last
+snapshot while running. Not done: board canvas, watch pane, session
+save/restore, per-pin edge coalescing/timeline. Known quirk: on 3.15.0a7,
+importing PySide6 stops `simavr_py.<name>` attribute access from reifying lazy
+imports (use `from simavr_py.core import ...` alongside PySide6).
+
 1. Build a Qt desktop shell with:
    * board canvas
    * register inspector

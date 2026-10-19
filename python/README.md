@@ -42,3 +42,10 @@ are pending, so it can drive `select` or Qt's `QSocketNotifier` directly.
 
 Calls that the C API doesn't implement yet (register table, symbols,
 watchpoints, analog input, interrupt events, VCD) aren't wrapped.
+
+## GUI
+
+```sh
+uv pip install --python .venv/bin/python -e 'python[gui]'
+.venv/bin/python -m simavr_py.gui -f 3333333 blink.elf   # --speed 0 = unthrottled
+```
