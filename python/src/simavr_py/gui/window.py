@@ -24,8 +24,9 @@ from ..disasm import window as disasm_window
 from ..lines import LineTable, read_elf_lines
 from ..symbols import SymbolTable, read_elf_symbols
 from .board import BoardCanvas
+from .timeline import TimelineView
 
-SESSION_VERSION = 4          # 4 added "watchpoints", 3 "breakpoints", 2 "board"; older files still load
+SESSION_VERSION = 5          # 5 added "timeline", 4 added "watchpoints", 3 "breakpoints", 2 "board"; older files still load
 REFRESH_MS = 50          # repaint cadence, independent of simulated time
 DRAIN_LIMIT = 1024
 
@@ -970,6 +971,7 @@ class MainWindow(QMainWindow):
         self.source = SourceView(self.breaks)
         self.uart = UartConsole()
         self.irqs = InterruptPane()
+        self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
         self._board_path: str | None = None
@@ -984,6 +986,7 @@ class MainWindow(QMainWindow):
                                ("Data Breakpoints", self.databreaks,
                                 Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Interrupts", self.irqs, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
             dock = QDockWidget(title, self)
@@ -1058,6 +1061,7 @@ class MainWindow(QMainWindow):
         self.pins.set_sim(sim)
         self.uart.set_sim(sim)
         self.board.set_sim(sim)
+        self.timeline.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
@@ -1082,6 +1086,7 @@ class MainWindow(QMainWindow):
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
         self.databreaks.set_sim(None)
+        self.timeline.set_sim(None)
         self.board.set_sim(None)     # releases held pins while the sim is still open
         if sim is not None:
             try:
@@ -1114,6 +1119,11 @@ class MainWindow(QMainWindow):
                     tx.append(b)
                 case InterruptEvent():
                     self.irqs.record(ev)
+                case PinEvent() if self.timeline.owns(ev.sub):
+                    self.timeline.record(ev)
+                case OverflowEvent():
+                    self.timeline.resync(ev.cycle)      # edges were dropped: re-read levels
+                    self.board.dispatch(ev)
                 case PinEvent() | OverflowEvent():
                     self.board.dispatch(ev)
                 case StateEvent(reason=StopReason.BREAKPOINT, id=bp):
@@ -1141,6 +1151,7 @@ class MainWindow(QMainWindow):
         self.mem.refresh(sim)
         self.watch.refresh(sim)
         self.irqs.refresh()
+        self.timeline.refresh()
         self._update_actions()
 
     # -- board ---------------------------------------------------------------
@@ -1184,11 +1195,12 @@ class MainWindow(QMainWindow):
             "breakpoints": self.breaks.addresses,
             "watchpoints": [[a, n, int(f)] for a, n, f in self.databreaks.items],
             "driven": self.pins.driven(),
+            "timeline": self.timeline.wanted,
         }
 
     def apply_session(self, d: dict, load_firmware: bool = True):
         """Restore a session dict. Raises ValueError on a file we can't read."""
-        if not isinstance(d, dict) or d.get("version") not in (1, 2, 3, SESSION_VERSION):
+        if not isinstance(d, dict) or d.get("version") not in (1, 2, 3, 4, SESSION_VERSION):
             raise ValueError("not a simavr session file (or unsupported version)")
         self._mmcu = d.get("mmcu") or self._mmcu
         self._freq = int(d.get("freq", self._freq))
@@ -1198,6 +1210,7 @@ class MainWindow(QMainWindow):
                                   for a in d.get("breakpoints", []))
         self.databreaks.set_items((int(a), int(n), WatchFlag(int(f)))
                                   for a, n, f in d.get("watchpoints", []))
+        self.timeline.set_wanted(d.get("timeline", []))
         for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
             if d.get(key):
                 restore(QByteArray(base64.b64decode(d[key])))

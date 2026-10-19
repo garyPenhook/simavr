@@ -275,6 +275,18 @@ instruction/cycle-timer step, a value that changes and changes back within one
 step is missed, and the stop does not say who wrote it. SREG is not covered (the
 core keeps it outside `data[]`).
 
+**Pin timeline (slice 13, 2026-10-19):** a "Timeline" dock draws digital
+waveforms of chosen pins (type `PA0` + Enter; double-click a label to remove).
+`simavr_py.timeline.PinTrace` (Qt-free) keeps each pin's edges (200k cap, oldest
+trimmed); the dock uses its own `subscribe_pin` subscriptions, routed by
+subscription id so the board's LED/LCD models never see the extra edges. Span
+10 µs-1 s, wheel zooms, drag pans, "Follow" tracks the newest cycle, Clear
+restarts the traces. Pins are saved in the session (format version 5). Limits:
+a very busy pin at unthrottled speed overflows the event queue; the trace then
+resyncs to the pin's *current* level (approximate) and follow-mode can lag the
+simulator until the queue drains. Not done: timers, bus traffic (UART/SPI/TWI),
+analog values, exporting to VCD, cursors/measurements.
+
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints and peripheral-register change triggers
@@ -283,7 +295,7 @@ core keeps it outside `data[]`).
    * pending/active sources
    * vector taken
    * CPUINT state for modern AVR
-4. Add timeline views for selected pins, timers, and bus traffic without forcing
+4. Add timeline views for selected pins (done), timers, and bus traffic without forcing
    the user into VCD/GTKWave for every task.
 
 ## Native-core prerequisites

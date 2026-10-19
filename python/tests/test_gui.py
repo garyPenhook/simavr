@@ -528,6 +528,49 @@ def test_step_out(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+TIMELINE_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+tl = win.timeline
+assert tl.add("pa0") and not tl.add("PA0") and not tl.add("nosuchpin")
+assert tl.names == ["PA0"] and tl.wanted == ["PA0"]
+win.run()
+end = time.time() + 5
+while len(tl.traces["PA0"]) < 6 and time.time() < end:
+    app.processEvents(); time.sleep(0.005)
+win.pause(); assert win._sim.wait_stopped(5)
+app.processEvents(); win.refresh()
+assert len(tl.traces["PA0"]) >= 6, len(tl.traces["PA0"])
+t0, t1 = tl.window()
+assert t1 > t0 and tl.span_cycles() == t1 - t0 or t0 == 0
+assert tl.grab().width() > 0                         # paints without error
+tl.pan(-0.5); assert not tl._follow.isChecked()
+tl.zoom(-1); tl.zoom(1)
+d = win.session_dict()
+assert d["timeline"] == ["PA0"]
+tl.clear(); assert len(tl.traces["PA0"]) == 1
+tl.remove("PA0"); assert tl.names == [] and tl.wanted == []
+win.apply_session(d, load_firmware=True)
+assert tl.names == ["PA0"]                           # restored and resubscribed on load
+win.close()
+"""
+
+
+def test_timeline_dock(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    elf = _build(tmp_path, FIRMWARE)
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", TIMELINE_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+
 IRQ_FIRMWARE = r"""
 #include <avr/io.h>
 #include <avr/interrupt.h>
