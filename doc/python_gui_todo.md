@@ -239,8 +239,13 @@ info (`.debug_info`), compressed or 64-bit DWARF.
 **Source view (slice 8, 2026-10-19):** a "Source" dock shows the source file
 (read from the path recorded in the ELF, +/-200 lines) with the PC's line
 highlighted, refreshed on each stop; it reports "no source line" for code without
-debug info and "file not found" if the path is gone. Read-only: no breakpoints
-by clicking a source line yet, no step-over-line.
+debug info and "file not found" if the path is gone. Read-only: no step-over-line.
+
+**Source breakpoints (slice 9, 2026-10-19):** double-clicking a line in the Source
+dock toggles a PC breakpoint at the line's lowest address (`LineTable.address_of`;
+a line with no code resolves to the next later line that has some). Lines whose
+address holds a breakpoint show a ● marker. Only lines near the PC are shown, so
+breakpoints elsewhere in a file still need the address/symbol box.
 
 1. Breakpoints:
    * PC breakpoints

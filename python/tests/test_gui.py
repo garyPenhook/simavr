@@ -371,6 +371,13 @@ assert src._head.text().split(":")[0].endswith("fw.c") and src._text.toPlainText
 assert src._text.extraSelections()
 cur = src._text.textCursor().block().text()
 assert cur.split(None, 1)[0] == src._head.text().rsplit(":", 1)[1], cur   # highlighted = PC line
+line = int(src._head.text().rsplit(":", 1)[1])
+src._text.lineDoubleClicked.emit(line - 1 - (src._shown[1] - 1))   # toggle via the PC's line
+assert len(win.breaks.addresses) == 1
+win.refresh()
+assert src._text.toPlainText().splitlines()[line - src._shown[1]].startswith("●")
+src._text.lineDoubleClicked.emit(line - src._shown[1])
+assert win.breaks.addresses == []
 win.run(); win.refresh()
 assert not t.isEnabled() and not src._text.isEnabled()   # PC unreadable while running
 win.pause(); assert win._sim.wait_stopped(5)

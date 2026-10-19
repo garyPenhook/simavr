@@ -21,6 +21,17 @@ def test_find_and_sequence_end():
     assert len(t) == 3
 
 
+def test_address_of_picks_lowest_address_then_next_code_line():
+    t = LineTable([(0x20, Line("a.c", 5)), (0x10, Line("a.c", 5)), (0x14, Line("a.c", 7)),
+                   (0x18, None), (0x30, Line("b.c", 6)), (0x34, None)])
+    assert t.address_of("a.c", 5) == 0x10
+    assert t.address_of("a.c", 6) == 0x14           # blank line -> next line with code
+    assert t.address_of("a.c", 8) is None
+    assert t.address_of("b.c", 1) == 0x30
+    assert t.address_of("c.c", 1) is None
+    assert t.lines_with_code("a.c") == {5, 7}
+
+
 def test_unreadable_files_give_empty_table(tmp_path):
     bad = tmp_path / "x.elf"
     bad.write_bytes(b"\x7fELF\x01\x01\x01" + b"\0" * 20)

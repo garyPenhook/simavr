@@ -40,6 +40,19 @@ class LineTable:
         i = bisect_right(self._addrs, addr) - 1
         return self._lines[i] if i >= 0 else None
 
+    def address_of(self, file: str, line: int) -> int | None:
+        """Lowest address of `line`, else of the next later line in `file` that
+        has code (what a debugger does for a click on a blank/comment line)."""
+        best = None                     # (line, addr)
+        for addr, ln in zip(self._addrs, self._lines):
+            if ln is not None and ln.file == file and ln.line >= line:
+                if best is None or (ln.line, addr) < best:
+                    best = (ln.line, addr)
+        return best[1] if best else None
+
+    def lines_with_code(self, file: str) -> set[int]:
+        return {ln.line for ln in self._lines if ln is not None and ln.file == file}
+
 
 def read_elf_lines(path: str) -> LineTable:
     try:

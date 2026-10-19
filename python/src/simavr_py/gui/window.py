@@ -6,7 +6,7 @@ import json
 import os
 import re
 
-from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer
+from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
@@ -586,19 +586,31 @@ class DisasmView(QWidget):
         self._table.resizeColumnToContents(3)
 
 
+class _SourceText(QPlainTextEdit):
+    lineDoubleClicked = Signal(int)     # 0-based block number in the shown text
+
+    def mouseDoubleClickEvent(self, ev):
+        self.lineDoubleClicked.emit(self.cursorForPosition(ev.position().toPoint()).blockNumber())
+        super().mouseDoubleClickEvent(ev)
+
+
 class SourceView(QWidget):
-    """The source file around the line the PC is in (needs `-g` debug info)."""
+    """The source file around the line the PC is in (needs `-g` debug info).
+    Double-click a line to toggle a PC breakpoint at its first instruction."""
 
     CURRENT = QColor("#b7d7f5")
     CONTEXT = 200           # lines shown each side of the current one
 
-    def __init__(self):
+    def __init__(self, breaks: BreakpointPane):
         super().__init__()
+        self._breaks = breaks
         self._lines = LineTable()
         self._files: dict[str, list[str] | None] = {}
         self._key = None
+        self._shown: tuple[str, int] | None = None     # (file, first line number shown)
         self._head = QLabel("")
-        self._text = QPlainTextEdit()
+        self._text = _SourceText()
+        self._text.lineDoubleClicked.connect(self._toggle)
         self._text.setReadOnly(True)
         self._text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._text.setFont(_mono())
@@ -610,6 +622,14 @@ class SourceView(QWidget):
         self._lines = lines
         self._files = {}                # firmware (re)loaded: sources may have changed
         self._key = None
+
+    def _toggle(self, block: int):
+        if self._shown is None:
+            return
+        file, first = self._shown
+        addr = self._lines.address_of(file, first + block)
+        if addr is not None:
+            self._breaks.toggle(addr)
 
     def _source(self, path: str) -> list[str] | None:
         if path not in self._files:
@@ -624,6 +644,8 @@ class SourceView(QWidget):
         if key == self._key:
             return
         self._key = key
+        if line is None:
+            self._shown = None
         self._head.setText(head)
         self._text.setPlainText(body)
         if line is not None:
@@ -660,8 +682,13 @@ class SourceView(QWidget):
             return
         first = max(0, hit.line - 1 - self.CONTEXT)
         last = min(len(src), hit.line + self.CONTEXT)
-        body = "\n".join(f"{n + 1:5}  {src[n]}" for n in range(first, last))
-        self._show((hit.file, hit.line), f"{hit.file}:{hit.line}", body, hit.line - 1 - first)
+        marked = {ln.line for a in self._breaks.addresses if (ln := self._lines.find(a))
+                  and ln.file == hit.file}
+        body = "\n".join(f"{'●' if n + 1 in marked else ' '}{n + 1:5}  {src[n]}"
+                         for n in range(first, last))
+        self._show((hit.file, hit.line, first, tuple(sorted(marked))),
+                   f"{hit.file}:{hit.line}", body, hit.line - 1 - first)
+        self._shown = (hit.file, first + 1)
 
 
 def parse_data_break(text: str) -> tuple[int, int, WatchFlag]:
@@ -915,7 +942,7 @@ class MainWindow(QMainWindow):
         self.breaks = BreakpointPane()
         self.databreaks = DataBreakPane()
         self.disasm = DisasmView(self.breaks)
-        self.source = SourceView()
+        self.source = SourceView(self.breaks)
         self.uart = UartConsole()
         self.irqs = InterruptPane()
         self.board = BoardCanvas()
