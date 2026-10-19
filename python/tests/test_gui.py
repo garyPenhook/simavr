@@ -351,9 +351,10 @@ win.refresh()
 t = win.disasm._table
 pc = win._sim.cpu.pc
 rows = [r for r in range(t.rowCount()) if t.item(r, 1).text() == f"0x{pc:05X}"]
-assert len(rows) == 1 and t.item(rows[0], 3).text(), "PC row missing"
+assert len(rows) == 1 and t.item(rows[0], 4).text(), "PC row missing"
 assert t.isEnabled()
 assert any(t.item(r, 2).text() for r in range(t.rowCount())), "no symbol labels"
+assert any(t.item(r, 3).text().startswith("fw.c:") for r in range(t.rowCount())), "no source lines"
 t.cellDoubleClicked.emit(rows[0], 0)                 # toggle a breakpoint on the PC row
 assert win.breaks.addresses == [pc]
 win.refresh()
@@ -374,7 +375,7 @@ def test_disassembly_dock(tmp_path):
         pytest.skip("avr-gcc not installed")
     src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
     src.write_text(FIRMWARE)
-    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-g", "-o", elf, src],
                        capture_output=True)
     if r.returncode:
         pytest.skip("avr-gcc lacks atmega4809 support")

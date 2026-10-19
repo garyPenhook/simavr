@@ -229,6 +229,13 @@ not produced. Python: `Simulator.add_watchpoint/remove_watchpoint`, `WatchFlag`;
 GUI: a "Data Breakpoints" dock (`hexaddr[:len] [r|w|rw|c]`), saved in the
 session (format version 4).
 
+**Source lines (slice 7, 2026-10-19):** `simavr_py.lines` (Qt-free) reads
+`.debug_line` (DWARF 2-5, 32-bit DWARF) from the ELF; the disassembly dock gains a
+"Source" column (`file.c:line`, full path in the tooltip). Checked against
+`avr-objdump --dwarf=decodedline` for each DWARF version. At an address shared by
+several rows the last row wins. Not done: a source-text view / source-level
+stepping, inlined-call info (`.debug_info`), compressed or 64-bit DWARF.
+
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints (CPU accesses done; peripheral-register triggers not)

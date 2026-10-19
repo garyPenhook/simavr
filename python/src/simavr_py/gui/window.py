@@ -21,6 +21,7 @@ from ..core import (
 )
 from ..disasm import Insn
 from ..disasm import window as disasm_window
+from ..lines import LineTable, read_elf_lines
 from ..symbols import SymbolTable, read_elf_symbols
 from .board import BoardCanvas
 
@@ -515,8 +516,9 @@ class DisasmView(QWidget):
         self._key = None            # what the table currently shows
         self._insns: list[Insn] = []
         self._symbols = SymbolTable()
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["", "Addr", "Symbol", "Instruction"])
+        self._lines = LineTable()
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(["", "Addr", "Symbol", "Source", "Instruction"])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
@@ -526,8 +528,9 @@ class DisasmView(QWidget):
         lay = QGridLayout(self)
         lay.addWidget(self._table, 0, 0)
 
-    def set_symbols(self, symbols: SymbolTable):
+    def set_symbols(self, symbols: SymbolTable, lines: LineTable | None = None):
         self._symbols = symbols
+        self._lines = lines or LineTable()
         self._key = None                # repaint on the next refresh
 
     def _toggle(self, row: int, _col: int):
@@ -564,9 +567,13 @@ class DisasmView(QWidget):
             asm = ins.text
             if ins.target is not None and (dest := self._symbols.describe(ins.target)):
                 asm += f"    ; {dest}"
+            src = self._lines.find(ins.addr)
+            src_text = f"{os.path.basename(src.file)}:{src.line}" if src else ""
             for col, text in enumerate(("●" if ins.addr in bps else "",
-                                        f"0x{ins.addr:05X}", label, asm)):
+                                        f"0x{ins.addr:05X}", label, src_text, asm)):
                 item = QTableWidgetItem(text)
+                if col == 3 and src:
+                    item.setToolTip(f"{src.file}:{src.line}")
                 if ins.addr == pc:
                     item.setBackground(QBrush(self.CURRENT))
                 self._table.setItem(row, col, item)
@@ -576,6 +583,7 @@ class DisasmView(QWidget):
         self._table.resizeColumnToContents(0)
         self._table.resizeColumnToContents(1)
         self._table.resizeColumnToContents(2)
+        self._table.resizeColumnToContents(3)
 
 
 def parse_data_break(text: str) -> tuple[int, int, WatchFlag]:
@@ -919,7 +927,7 @@ class MainWindow(QMainWindow):
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
-        self.disasm.set_symbols(symbols)
+        self.disasm.set_symbols(symbols, read_elf_lines(path) if is_elf else LineTable())
         self.breaks.set_symbols(symbols)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
