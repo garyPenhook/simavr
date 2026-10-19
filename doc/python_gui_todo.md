@@ -201,7 +201,12 @@ dependencies) reads the ELF `.symtab` for code symbols (FUNC/untyped labels in
 executable sections; `.L*` locals and debug labels dropped). The disassembly
 dock gains a "Symbol" column (function start) and annotates branch/call targets
 as `; name+0xN`. HEX loads have no symbols. Not done: DWARF line numbers /
-source view, symbol names accepted in the breakpoint box.
+source view.
+
+**Symbol breakpoints (slice 4, 2026-10-19):** the breakpoint box accepts an ELF
+symbol (`main`) or `name+hexoffset`; an exact symbol name wins over a bare hex
+reading (`0xadd` forces the address). The pane still stores plain addresses, so
+sessions are unchanged.
 
 1. Breakpoints:
    * PC breakpoints

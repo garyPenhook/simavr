@@ -281,6 +281,19 @@ for bad in ("zz", "121", "-2", "", "1_0"):
     else:
         raise AssertionError(bad)
 
+from simavr_py.symbols import Symbol, SymbolTable
+st = SymbolTable([Symbol(0x100, "main", 0x40), Symbol(0x200, "add", 0x10)])
+assert parse_breakpoint("main", st) == 0x100 and parse_breakpoint("main+0x4", st) == 0x104
+assert parse_breakpoint("add", st) == 0x200 and parse_breakpoint("0xade", st) == 0xADE
+assert parse_breakpoint("0x40", st) == 0x40
+for bad in ("main+1", "main+zz", "main+-2", "nosuch"):
+    try:
+        parse_breakpoint(bad, st)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(bad)
+
 app = QApplication([])
 win = MainWindow("atmega4809", 3333333, speed=0)
 win.breaks.set_addresses([0, 0xFFFFFE])      # second is beyond flash: listed, unarmed

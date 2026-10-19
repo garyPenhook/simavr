@@ -339,15 +339,34 @@ class WatchPane(QWidget):
                 item.setBackground(QBrush(self.CHANGED) if changed else QBrush())
 
 
-def parse_breakpoint(text: str) -> int:
-    """'hexaddr' -> flash byte address of an instruction (even; 0x optional)."""
+def parse_breakpoint(text: str, symbols: SymbolTable | None = None) -> int:
+    """'hexaddr' or an ELF symbol ('name' / 'name+hexoffset') -> flash byte address
+    of an instruction (even). Hex is always hex ("0b10" is 0x0B10), but an exact
+    symbol name wins over a bare hex reading of it, so a function called `add`
+    stays reachable (write `0xadd` for the address)."""
     t = text.strip()
+    if symbols is not None:
+        name, sep, off = t.partition("+")
+        sym = symbols.lookup(name.strip())
+        if sym is not None:
+            try:
+                delta = int(off, 16) if sep else 0
+            except ValueError:
+                delta = -1
+            if delta < 0 or "_" in off:
+                raise ValueError(f"bad breakpoint {text!r}: expected name+hexoffset")
+            return _even(sym.addr + delta, text)
     try:
         if "_" in t:
             raise ValueError(t)
         addr = int(t, 16)       # always hex: "0b10" is 0x0B10, not binary
     except ValueError:
-        raise ValueError(f"bad breakpoint {text!r}: expected a hex flash address") from None
+        raise ValueError(f"bad breakpoint {text!r}: expected a hex flash address"
+                         f"{' or symbol' if symbols else ''}") from None
+    return _even(addr, text)
+
+
+def _even(addr: int, text: str) -> int:
     if addr < 0 or addr & 1:
         raise ValueError(f"bad breakpoint {text!r}: must be an even byte address")
     return addr
@@ -365,8 +384,9 @@ class BreakpointPane(QWidget):
         self._addrs: list[int] = []
         self._ids: dict[int, int] = {}          # address -> host breakpoint id
         self._hit: int | None = None
+        self._symbols = SymbolTable()
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("hex flash address, e.g. 0x0120 (Enter)")
+        self._edit.setPlaceholderText("hex address or symbol, e.g. 0x0120, main+0x4 (Enter)")
         self._edit.returnPressed.connect(self._add_from_edit)
         rm = QPushButton("Remove")
         rm.clicked.connect(self._remove_selected)
@@ -386,6 +406,9 @@ class BreakpointPane(QWidget):
     @property
     def addresses(self) -> list[int]:
         return list(self._addrs)
+
+    def set_symbols(self, symbols: SymbolTable):
+        self._symbols = symbols
 
     def set_sim(self, sim: Simulator | None):
         """Attach (or detach) a simulator and arm every address on it."""
@@ -448,7 +471,7 @@ class BreakpointPane(QWidget):
 
     def _add_from_edit(self):
         try:
-            addr = parse_breakpoint(self._edit.text())
+            addr = parse_breakpoint(self._edit.text(), self._symbols)
         except ValueError as e:
             QMessageBox.warning(self, "Breakpoint", str(e))
             return
@@ -687,7 +710,9 @@ class MainWindow(QMainWindow):
         self.uart.set_sim(sim)
         self.board.set_sim(sim)
         self.breaks.set_sim(sim)
-        self.disasm.set_symbols(read_elf_symbols(path) if is_elf else SymbolTable())
+        symbols = read_elf_symbols(path) if is_elf else SymbolTable()
+        self.disasm.set_symbols(symbols)
+        self.breaks.set_symbols(symbols)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
         self.refresh()
