@@ -291,8 +291,19 @@ cursor B; the status line shows both times, Δ and 1/Δ (`measure`). A "UART0 TX
 lane marks each byte USART0 sent (labelled when there is room; the cycle is when
 the byte left the simulated shifter). "Export VCD…" writes the traced pins plus
 the UART lane (`uart0_tx`, 8-bit) at 1 ns resolution (`write_vcd`), for GTKWave.
-Not done: timers, SPI/TWI/USART1-3 lanes, RX bytes, analog values, exporting a
-cycle range only (the export is the whole retained history).
+Not done: SPI/TWI/USART1-3 lanes, RX bytes, analog values, exporting a cycle
+range only (the export is the whole retained history).
+
+**Timer lanes (slice 15, 2026-10-19):** the pin box also takes timer waveform
+outputs: `TCA0.WO0-2`, `TCB0-3.WO`, `TCD0.WOA/WOB`. They subscribe to the timer's
+output IRQ (`subscribe_irq`, same ioctl/index the engine test uses), so they show
+the timer's own output even when PORTMUX doesn't route it to a pin; they are
+saved in the session with the pins. The initial level is assumed low (an IRQ's
+value can't be read back). A new "IRQ" lane marks every interrupt vector taken
+(vector number; no names yet), which is where timer overflow/compare/capture
+interrupts appear, and is included in the VCD (`irq_vector`). Tests check the
+name mapping, that the subscriptions are accepted/rejected per device, and the
+drawing; they do not drive a firmware-configured timer end to end.
 
 1. Breakpoints:
    * PC breakpoints

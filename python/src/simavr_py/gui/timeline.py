@@ -7,8 +7,10 @@ from PySide6.QtWidgets import (
     QPushButton, QWidget,
 )
 
-from ..core import PinEvent, SimavrError, Simulator, UartTxEvent
-from ..timeline import PinTrace, format_time, measure, write_vcd
+from ..core import (
+    InterruptEvent, IrqEvent, PinEvent, SimavrError, Simulator, UartTxEvent, ioctl_def,
+)
+from ..timeline import PinTrace, format_time, measure, timer_output, write_vcd
 
 SPANS = (("10 µs", 10e-6), ("100 µs", 100e-6), ("1 ms", 1e-3), ("10 ms", 10e-3),
          ("100 ms", 100e-3), ("1 s", 1.0))
@@ -71,6 +73,21 @@ class _Canvas(QWidget):
                 p.drawRect(QRectF(bx, top + 4, 14, ROW_H - 10))
                 p.drawText(QRectF(bx, top + 4, 14, ROW_H - 10), Qt.AlignmentFlag.AlignCenter, text)
             rows += 1
+        if v.show_irq:
+            top = rows * ROW_H
+            p.setPen(fg)
+            p.drawText(QRectF(2, top, LABEL_W - 6, ROW_H), Qt.AlignmentFlag.AlignVCenter, "IRQ")
+            p.setPen(QPen(dim, 1, Qt.PenStyle.DotLine))
+            p.drawLine(LABEL_W, int(top + ROW_H - 1), self.width(), int(top + ROW_H - 1))
+            p.setPen(QPen(QColor("#7b4fa8"), 1))
+            last_x = -1e9
+            for c, vec in v.vectors(t0, t1):
+                bx = x(c)
+                p.drawLine(QPointF(bx, top + 6), QPointF(bx, top + ROW_H - 6))
+                if bx - last_x >= 20:
+                    last_x = bx
+                    p.drawText(QPointF(bx + 2, top + ROW_H - 8), str(vec))
+            rows += 1
         for c, color in zip(v.cursors, ("#d62728", "#1f77b4")):
             if c is not None and t0 <= c <= t1:
                 p.setPen(QPen(QColor(color), 1))
@@ -124,9 +141,11 @@ class TimelineView(QWidget):
         self.frequency = 0
         self.cursors: list[int | None] = [None, None]
         self.show_uart = True
+        self.show_irq = True
         self._uart: list[tuple[int, int]] = []  # (cycle, byte) of USART0 TX
+        self._vectors: list[tuple[int, int]] = []   # (cycle, vector number) of interrupts taken
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("pin to trace, e.g. PA0 (Enter)")
+        self._edit.setPlaceholderText("pin or timer output: PA0, TCA0.WO1, TCB0.WO, TCD0.WOA")
         self._edit.returnPressed.connect(self._add_from_edit)
         self._span = QComboBox()
         for label, _ in SPANS:
@@ -177,6 +196,7 @@ class TimelineView(QWidget):
         self.frequency = sim.frequency if sim else 0
         self._end = None
         self._uart = []
+        self._vectors = []
         self.cursors = [None, None]
         self._update_info()
         self._follow.setChecked(True)
@@ -192,13 +212,17 @@ class TimelineView(QWidget):
         self._canvas.update()
 
     def _resize_canvas(self):
-        rows = len(self.names) + (1 if self.show_uart else 0)
+        rows = len(self.names) + (1 if self.show_uart else 0) + (1 if self.show_irq else 0)
         self._canvas.setMinimumHeight(max(1, rows) * ROW_H + AXIS_H)
 
     def _start(self, sim: Simulator, name: str) -> bool:
         try:
-            level = sim.pin_state(name).level
-            sub = sim.subscribe_pin(name, 0)
+            if (t := timer_output(name)) is not None:
+                level = False           # no way to read a timer output: assume low until it moves
+                sub = sim.subscribe_irq(ioctl_def(t[0], t[1]), t[2])
+            else:
+                level = sim.pin_state(name).level
+                sub = sim.subscribe_pin(name, 0)
             cycle = sim.cycle
         except (SimavrError, KeyError, ValueError, TypeError):
             return False
@@ -238,11 +262,13 @@ class TimelineView(QWidget):
         """Forget the history, keeping the pins; each restarts at its current level."""
         sim = self._sim
         self._uart = []
+        self._vectors = []
         if sim is None:
             return
         for name in self.names:
             try:
-                self.traces[name] = PinTrace(sim.cycle, sim.pin_state(name).level)
+                level = False if timer_output(name) else sim.pin_state(name).level
+                self.traces[name] = PinTrace(sim.cycle, level)
             except SimavrError:
                 pass
         self._canvas.update()
@@ -252,6 +278,8 @@ class TimelineView(QWidget):
         level (the true level at `cycle` is unknown; the trace is approximate here)."""
         sim = self._sim
         for name in self.names:
+            if timer_output(name):
+                continue                # IRQ values aren't dropped by the pin queue limits
             try:
                 self.traces[name].record(cycle, sim.pin_state(name).level)
             except (SimavrError, AttributeError):
@@ -269,10 +297,19 @@ class TimelineView(QWidget):
     def owns(self, sub: int) -> bool:
         return sub in self._subs
 
-    def record(self, ev: PinEvent):
+    def record(self, ev: PinEvent | IrqEvent):
         name = self._subs.get(ev.sub)
         if name is not None:
-            self.traces[name].record(ev.cycle, ev.level)
+            level = ev.level if isinstance(ev, PinEvent) else bool(ev.value)
+            self.traces[name].record(ev.cycle, level)
+
+    def record_interrupt(self, ev: InterruptEvent):
+        self._vectors.append((ev.cycle, ev.vector))
+        if len(self._vectors) > 20_000:
+            del self._vectors[:2_000]
+
+    def vectors(self, t0: int, t1: int) -> list[tuple[int, int]]:
+        return [(c, v) for c, v in self._vectors if t0 <= c <= t1]
 
     # -- view ----------------------------------------------------------------
 
@@ -322,7 +359,8 @@ class TimelineView(QWidget):
     def export_vcd(self, path: str):
         end = self.window()[1]
         write_vcd(path, self.traces, self.frequency, end,
-                  self._uart if self.show_uart else None)
+                  self._uart if self.show_uart else None,
+                  self._vectors if self.show_irq else None)
 
     def _follow_toggled(self, on: bool):
         self._end = None if on else self.window()[1]

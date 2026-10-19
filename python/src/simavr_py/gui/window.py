@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
 
 from ..boards import BoardError, load_board
 from ..core import (
-    InterruptEvent, OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent,
-    StopReason, UartTxEvent, WatchFlag,
+    InterruptEvent, IrqEvent, OverflowEvent, PinEvent, Simulator, SimavrError, Space, State,
+    StateEvent, StopReason, UartTxEvent, WatchFlag,
 )
 from ..disasm import Insn
 from ..disasm import window as disasm_window
@@ -1120,7 +1120,8 @@ class MainWindow(QMainWindow):
                     self.timeline.record_uart(ev)
                 case InterruptEvent():
                     self.irqs.record(ev)
-                case PinEvent() if self.timeline.owns(ev.sub):
+                    self.timeline.record_interrupt(ev)
+                case PinEvent() | IrqEvent() if self.timeline.owns(ev.sub):
                     self.timeline.record(ev)
                 case OverflowEvent():
                     self.timeline.resync(ev.cycle)      # edges were dropped: re-read levels

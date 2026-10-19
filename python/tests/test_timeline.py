@@ -1,4 +1,4 @@
-from simavr_py.timeline import PinTrace, format_time, measure, write_vcd
+from simavr_py.timeline import PinTrace, format_time, measure, timer_output, write_vcd
 
 
 def test_trace_records_edges_only():
@@ -56,3 +56,18 @@ def test_write_vcd(tmp_path):
     assert "$var wire 8 # uart0_tx $end" in lines
     body = lines[lines.index("$enddefinitions $end") + 1:]
     assert body == ["#0", "0!", "1\"", "#1000000", "1!", "#2000000", "b01101000 #", "#3000000"]
+
+
+def test_timer_output_names():
+    assert timer_output("TCA0.WO1") == ("tca", "0", 1)
+    assert timer_output("TCB3.WO") == ("tcb", "3", 2)
+    assert timer_output("TCD0.WOB") == ("tcd", "0", 1)
+    for bad in ("PA0", "TCA0.WO3", "TCA0", "TCB0.WO1", "TCD0.WOC", "xTCA0.WO0"):
+        assert timer_output(bad) is None
+
+
+def test_vcd_interrupt_vector(tmp_path):
+    out = tmp_path / "v.vcd"
+    write_vcd(str(out), {}, 1_000_000, 10, vectors=[(5, 3)])
+    text = out.read_text(encoding="utf-8")
+    assert "$var wire 8 \" irq_vector $end" in text and "b00000011 \"" in text

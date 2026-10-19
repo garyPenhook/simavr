@@ -531,6 +531,7 @@ def test_step_out(tmp_path):
 TIMELINE_SCRIPT = r"""
 import sys, time
 from PySide6.QtWidgets import QApplication
+from simavr_py import InterruptEvent, IrqEvent
 from simavr_py.gui.window import MainWindow
 
 app = QApplication([])
@@ -554,6 +555,15 @@ tl.zoom(-1); tl.zoom(1)
 d = win.session_dict()
 assert d["timeline"] == ["PA0"]
 assert tl._uart and tl.uart_bytes(0, 1 << 62)[0][1] == ord("h")
+assert tl.add("tca0.wo0") and tl.add("TCB1.WO")       # timer output lanes
+assert not tl.add("TCA7.WO0") and not tl.add("TCA0.WO3")
+tl.record(IrqEvent(sub=next(s for s, n in tl._subs.items() if n == "TCA0.WO0"),
+                                           cycle=win._sim.cycle, index=0, value=1))
+assert tl.traces["TCA0.WO0"].level_at(win._sim.cycle) is True
+tl.record_interrupt(InterruptEvent(sub=0, cycle=7, vector=5, level=0))
+assert tl.vectors(0, 100) == [(7, 5)]
+assert tl.grab().width() > 0
+tl.remove("TCA0.WO0"); tl.remove("TCB1.WO")
 tl.place_cursor(0, 100, 500); tl.place_cursor(1, 300, 500)
 assert None not in tl.cursors and tl.cursors[1] > tl.cursors[0] and "Δ" in tl._info.text()
 tl.export_vcd(sys.argv[1] + ".vcd")
