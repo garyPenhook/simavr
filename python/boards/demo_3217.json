@@ -1,0 +1,14 @@
+{
+  "name": "ATtiny3217 demo",
+  "mmcu": "attiny3217",
+  "freq": 3333333,
+  "widgets": [
+    {"type": "led", "pin": "PA0", "label": "LED0", "color": "red"},
+    {"type": "led", "pin": "PA1", "label": "LED1", "color": "green"},
+    {"type": "led", "pin": "PA2", "label": "LED2 (active low)", "color": "yellow", "active_low": true},
+    {"type": "button", "pin": "PB2", "label": "SW0"},
+    {"type": "button", "pin": "PB3", "label": "SW1 (latch)", "latch": true},
+    {"type": "encoder", "pin_a": "PC0", "pin_b": "PC1", "label": "ENC"},
+    {"type": "lcd", "label": "LCD 16x2 (4-bit)", "rs": "PC2", "e": "PC3", "data": ["PB4", "PB5", "PB6", "PB7"], "cols": 16, "rows": 2}
+  ]
+}

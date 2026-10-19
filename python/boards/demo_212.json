@@ -1,0 +1,11 @@
+{
+  "name": "ATtiny212 demo",
+  "mmcu": "attiny212",
+  "freq": 3333333,
+  "widgets": [
+    {"type": "led", "pin": "PA1", "label": "LED0", "color": "red"},
+    {"type": "led", "pin": "PA2", "label": "LED1", "color": "green"},
+    {"type": "button", "pin": "PA3", "label": "SW0"},
+    {"type": "button", "pin": "PA6", "label": "SW1 (latch)", "latch": true}
+  ]
+}
