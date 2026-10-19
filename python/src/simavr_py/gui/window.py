@@ -21,6 +21,7 @@ from ..core import (
 )
 from ..disasm import Insn
 from ..disasm import window as disasm_window
+from ..symbols import SymbolTable, read_elf_symbols
 from .board import BoardCanvas
 
 SESSION_VERSION = 3          # 3 added "breakpoints", 2 "board"; older files still load
@@ -490,8 +491,9 @@ class DisasmView(QWidget):
         self._breaks = breaks
         self._key = None            # what the table currently shows
         self._insns: list[Insn] = []
-        self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["", "Addr", "Instruction"])
+        self._symbols = SymbolTable()
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["", "Addr", "Symbol", "Instruction"])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
@@ -500,6 +502,10 @@ class DisasmView(QWidget):
         self._table.cellDoubleClicked.connect(self._toggle)
         lay = QGridLayout(self)
         lay.addWidget(self._table, 0, 0)
+
+    def set_symbols(self, symbols: SymbolTable):
+        self._symbols = symbols
+        self._key = None                # repaint on the next refresh
 
     def _toggle(self, row: int, _col: int):
         if row < len(self._insns):
@@ -530,8 +536,13 @@ class DisasmView(QWidget):
         bps = set(self._breaks.addresses)
         self._table.setRowCount(len(insns))
         for row, ins in enumerate(insns):
+            hit = self._symbols.find(ins.addr)
+            label = hit[0].name if hit and hit[1] == 0 else ""
+            asm = ins.text
+            if ins.target is not None and (dest := self._symbols.describe(ins.target)):
+                asm += f"    ; {dest}"
             for col, text in enumerate(("●" if ins.addr in bps else "",
-                                        f"0x{ins.addr:05X}", ins.text)):
+                                        f"0x{ins.addr:05X}", label, asm)):
                 item = QTableWidgetItem(text)
                 if ins.addr == pc:
                     item.setBackground(QBrush(self.CURRENT))
@@ -541,6 +552,7 @@ class DisasmView(QWidget):
                                          QTableWidget.ScrollHint.PositionAtCenter)
         self._table.resizeColumnToContents(0)
         self._table.resizeColumnToContents(1)
+        self._table.resizeColumnToContents(2)
 
 
 class UartConsole(QWidget):
@@ -675,6 +687,7 @@ class MainWindow(QMainWindow):
         self.uart.set_sim(sim)
         self.board.set_sim(sim)
         self.breaks.set_sim(sim)
+        self.disasm.set_symbols(read_elf_symbols(path) if is_elf else SymbolTable())
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
         self.refresh()

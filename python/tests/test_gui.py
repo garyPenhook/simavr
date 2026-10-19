@@ -338,8 +338,9 @@ win.refresh()
 t = win.disasm._table
 pc = win._sim.cpu.pc
 rows = [r for r in range(t.rowCount()) if t.item(r, 1).text() == f"0x{pc:05X}"]
-assert len(rows) == 1 and t.item(rows[0], 2).text(), "PC row missing"
+assert len(rows) == 1 and t.item(rows[0], 3).text(), "PC row missing"
 assert t.isEnabled()
+assert any(t.item(r, 2).text() for r in range(t.rowCount())), "no symbol labels"
 t.cellDoubleClicked.emit(rows[0], 0)                 # toggle a breakpoint on the PC row
 assert win.breaks.addresses == [pc]
 win.refresh()

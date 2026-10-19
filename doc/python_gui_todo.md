@@ -196,6 +196,13 @@ can't be decoded backwards; the decoder resyncs onto the PC), rows from the PC
 on are exact. Branch/call targets are shown as absolute addresses; no symbol
 names yet (that needs the ELF symbol table, with source correlation).
 
+**Symbols (slice 3, 2026-10-19):** `simavr_py.symbols` (Qt-free, no
+dependencies) reads the ELF `.symtab` for code symbols (FUNC/untyped labels in
+executable sections; `.L*` locals and debug labels dropped). The disassembly
+dock gains a "Symbol" column (function start) and annotates branch/call targets
+as `; name+0xN`. HEX loads have no symbols. Not done: DWARF line numbers /
+source view, symbol names accepted in the breakpoint box.
+
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints if the core can surface them cheaply
