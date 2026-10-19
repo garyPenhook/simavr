@@ -833,3 +833,42 @@ def test_settings_remembered(tmp_path):
     r = subprocess.run([sys.executable, "-c", SETTINGS_SCRIPT, str(tmp_path / "s.ini")],
                        env=env, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+REGS_SCRIPT = """
+import sys
+from PySide6.QtWidgets import QApplication
+from simavr_py.core import Space
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+win.run(); win.pause(); assert win._sim.wait_stopped(5)
+win.refresh()
+rp = win.regs
+def row(name):
+    rp._edit.setText(name)
+    return [r.name for r in rp._shown].index(name)
+i = row("PORTA.DIR")
+assert rp._table.item(i, 2).text() == "0x01" and rp._table.item(i, 3).text() == "00000001"
+i = row("PORTA.OUT")
+rp._table.item(i, 2).setText("0x02")                      # edit in place (paused)
+assert win._sim.peek(0x0404) == 0x02
+i = row("TCA0.SINGLE.PER")
+assert rp._shown[i].size == 2 and rp._table.item(i, 2).text() == "0xFFFF"
+win.close()
+"""
+
+
+def test_register_pane(tmp_path):
+    src = tmp_path / "r.c"
+    src.write_text("#include <avr/io.h>\nint main(void){PORTA.DIRSET=1;for(;;);}\n")
+    elf = tmp_path / "r.elf"
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", REGS_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
+from ..registers import Register, registers
 from ..vectors import vector_label, vector_names
 from ..boards import BoardError, load_board
 from ..core import (
@@ -842,6 +843,111 @@ class DataBreakPane(QWidget):
                 self._table.setItem(row, col, item)
 
 
+class RegisterPane(QWidget):
+    """Named IO registers of the device with live values (while stopped). Type in the
+    filter to narrow the list (substring, case-insensitive; at most MAX_ROWS shown);
+    double-click a value to write it (hex, applied with IO side effects). Values that
+    changed since the previous stop are highlighted."""
+
+    MAX_ROWS = 400
+    CHANGED = QColor(255, 235, 150)
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._regs: tuple[Register, ...] = ()
+        self._shown: list[Register] = []
+        self._prev: dict[str, int] = {}
+        self._key = None                    # (cycle, filter) last refreshed for
+        self._edit = QLineEdit()
+        self._edit.setPlaceholderText("filter, e.g. TCA0, CTRLA, porta.out")
+        self._edit.textChanged.connect(self._rebuild)
+        self._note = QLabel("")
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Register", "Addr", "Value", "Binary"])
+        self._table.setFont(_mono())
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.itemChanged.connect(self._edited)
+        lay = QGridLayout(self)
+        lay.addWidget(self._edit, 0, 0)
+        lay.addWidget(self._note, 1, 0)
+        lay.addWidget(self._table, 2, 0)
+
+    def set_sim(self, sim: Simulator | None):
+        self._sim = sim
+        self._regs = registers(sim.mmcu) if sim is not None else ()
+        self._prev.clear()
+        self._rebuild()
+
+    @staticmethod
+    def format_value(value: int, size: int) -> tuple[str, str]:
+        return f"0x{value:0{size * 2}X}", f"{value:0{size * 8}b}"
+
+    def _rebuild(self, *_):
+        words = self._edit.text().lower().split()
+        match = [r for r in self._regs if all(w in r.name.lower() for w in words)]
+        self._shown = match[:self.MAX_ROWS]
+        self._note.setText(
+            f"{len(match)} of {len(self._regs)} registers"
+            + (f" (showing first {self.MAX_ROWS})" if len(match) > self.MAX_ROWS else "")
+            if self._regs else "no register table for this device")
+        self._table.blockSignals(True)
+        self._table.setRowCount(len(self._shown))
+        for i, r in enumerate(self._shown):
+            for col, text in enumerate((r.name, f"0x{r.address:04X}")):
+                item = QTableWidgetItem(text)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self._table.setItem(i, col, item)
+            self._table.setItem(i, 2, QTableWidgetItem(""))
+            bits = QTableWidgetItem("")
+            bits.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self._table.setItem(i, 3, bits)
+        self._table.blockSignals(False)
+        self._key = None
+        self.refresh(self._sim)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+            return                          # values are read only while stopped
+        key = (sim.cycle, self._edit.text())
+        if key == self._key:
+            return
+        self._key = key
+        self._table.blockSignals(True)
+        try:
+            for i, r in enumerate(self._shown):
+                try:
+                    value = int.from_bytes(sim.read(Space.DATA, r.address, r.size), "little")
+                except SimavrError:
+                    return                  # resumed meanwhile
+                hexs, bins = self.format_value(value, r.size)
+                cell = self._table.item(i, 2)
+                cell.setText(hexs)
+                cell.setBackground(QBrush(self.CHANGED if self._prev.get(r.name, value) != value
+                                          else QColor(0, 0, 0, 0)))
+                self._table.item(i, 3).setText(bins)
+                self._prev[r.name] = value
+        finally:
+            self._table.blockSignals(False)
+
+    def _edited(self, item):
+        sim = self._sim
+        if sim is None or item.column() != 2 or item.row() >= len(self._shown):
+            return
+        r = self._shown[item.row()]
+        try:
+            if sim.state in (State.RUNNING, State.SLEEPING):
+                raise ValueError("pause the simulation before writing registers")
+            value = int(item.text().strip(), 16)
+            if not 0 <= value < 1 << (8 * r.size):
+                raise ValueError(f"{r.name} takes {r.size} byte(s)")
+            sim.write(Space.DATA, r.address, value.to_bytes(r.size, "little"), side_effects=True)
+        except (ValueError, SimavrError) as e:
+            QMessageBox.warning(self, "Register", str(e))
+        self._key = None
+        self.refresh(sim)
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -1004,6 +1110,7 @@ class MainWindow(QMainWindow):
         self.source = SourceView(self.breaks)
         self.uart = UartConsole()
         self.irqs = InterruptPane()
+        self.regs = RegisterPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1022,6 +1129,7 @@ class MainWindow(QMainWindow):
                                ("Data Breakpoints", self.databreaks,
                                 Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Interrupts", self.irqs, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Registers", self.regs, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1063,7 +1171,8 @@ class MainWindow(QMainWindow):
     def _arrange_docks(self):
         """Default layout: related panes share tab groups so each gets room."""
         d = self._docks
-        right = ("Disassembly", "Source", "Watch", "Breakpoints", "Data Breakpoints", "Interrupts")
+        right = ("Disassembly", "Source", "Watch", "Breakpoints", "Data Breakpoints", "Interrupts",
+                 "Registers")
         for other in right[1:]:
             self.tabifyDockWidget(d[right[0]], d[other])
         d[right[0]].raise_()
@@ -1158,6 +1267,7 @@ class MainWindow(QMainWindow):
         self.board.set_sim(sim)
         self.timeline.set_sim(sim)
         self.irqs.set_names(vector_names(sim.mmcu))
+        self.regs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
@@ -1180,6 +1290,7 @@ class MainWindow(QMainWindow):
             self._notifier.deleteLater()
             self._notifier = None
         self.pins.set_sim(None)
+        self.regs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
         self.databreaks.set_sim(None)
@@ -1281,6 +1392,7 @@ class MainWindow(QMainWindow):
         self.watch.refresh(sim)
         self.irqs.refresh()
         self.irqs.refresh_exec(sim)
+        self.regs.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 
