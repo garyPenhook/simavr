@@ -112,6 +112,21 @@ avr_evsys_init(
 		avr_io_addr_t base,
 		char name);
 
+/*
+ * Channel/user-select EVSYS (megaAVR-0 and tinyAVR 2-series register layout):
+ * SWEVENTA/STROBE at +0x00, CHANNELn at +0x10, USERxxx at +0x20, with
+ * 'nchannels' channels and 'nusers' user registers. tinyAVR 2-series has six
+ * channels and twenty users (DS40002311B 15.4).
+ */
+void
+avr_evsys_init_xt(
+		avr_t * avr,
+		avr_evsys_t * p,
+		avr_io_addr_t base,
+		char name,
+		uint8_t nchannels,
+		uint8_t nusers);
+
 void
 avr_evsys_init_mega(
 		avr_t * avr,

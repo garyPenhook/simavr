@@ -92,6 +92,9 @@ enum {
 	AVR_VREF_IRQ_DAC1_MV,		/* CTRLC.DAC1REFSEL -> AC1 (DAC1 absent) */
 	AVR_VREF_IRQ_DAC2_MV,		/* CTRLD.DAC2REFSEL -> AC2 (DAC2 absent) */
 	AVR_VREF_IRQ_COUNT,
+	/* tinyAVR 2-series: CTRLA.AC0REFSEL is published on the DAC0 slot (there
+	 * is no DAC0; the ADC0 reference is selected inside the ADC itself). */
+	AVR_VREF_IRQ_AC0_MV = AVR_VREF_IRQ_DAC0_MV,
 };
 
 typedef struct avr_vref_t {
@@ -99,6 +102,8 @@ typedef struct avr_vref_t {
 	char		name;
 
 	avr_io_addr_t	base;
+	uint8_t		nregs;		/* CTRLx registers fitted (4, or 2 on tinyAVR-2) */
+	uint32_t	vdd_mv;		/* AC0REFSEL = VDD (tinyAVR-2 only; default 3300) */
 } avr_vref_t;
 
 /*
@@ -119,6 +124,23 @@ avr_vref_init(
 		avr_vref_t * p,
 		avr_io_addr_t base,
 		char name);
+
+/*
+ * tinyAVR 2-series VREF (DS40002311B 19.5): CTRLA holds only AC0REFSEL[2:0]
+ * and CTRLB the NVM/ADC0/AC0 force-enable bits. Writing CTRLA publishes the
+ * decoded AC0 reference (millivolts) on AVR_VREF_IRQ_AC0_MV; AC0REFSEL = VDD
+ * publishes the VDD set with avr_vref_set_vdd(). Reserved selections publish 0.
+ */
+void
+avr_vref_init_tiny2(
+		avr_t * avr,
+		avr_vref_t * p,
+		avr_io_addr_t base,
+		char name);
+
+/* Set the supply voltage (mV) published when AC0REFSEL selects VDD. */
+void
+avr_vref_set_vdd(avr_vref_t * p, uint32_t vdd_mv);
 
 #define AVR_IOCTL_VREF_GETIRQ(_name) AVR_IOCTL_DEF('v','r','f',(_name))
 

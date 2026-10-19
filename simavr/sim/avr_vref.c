@@ -99,7 +99,7 @@ avr_vref_reset(avr_io_t *io)
 {
 	avr_vref_t *p = (avr_vref_t *)io;
 	avr_t *avr = p->io.avr;
-	for (int i = 0; i < AVR_VREF_REGS; i++)
+	for (int i = 0; i < p->nregs; i++)
 		avr->data[p->base + i] = 0;	/* all CTRL registers reset to 0x00 */
 	/* No IRQ raise at reset: peripherals keep their own reference defaults
 	 * until firmware programs VREF.CTRLA. */
@@ -130,6 +130,7 @@ avr_vref_init(
 	p->io = _io;
 	p->name = name;
 	p->base = base;
+	p->nregs = AVR_VREF_REGS;
 
 	avr_register_io(avr, &p->io);
 	avr_io_setirqs(&p->io, AVR_IOCTL_VREF_GETIRQ(name), AVR_VREF_IRQ_COUNT, NULL);
@@ -138,4 +139,59 @@ avr_vref_init(
 	avr_register_io_write(avr, base + VREFR_CTRLB, avr_vref_store_write, p);
 	avr_register_io_write(avr, base + VREFR_CTRLC, avr_vref_ctrlc_write, p);
 	avr_register_io_write(avr, base + VREFR_CTRLD, avr_vref_ctrld_write, p);
+}
+
+/* tinyAVR 2-series AC0REFSEL (CTRLA[2:0], DS40002311B 19.5.1). */
+static uint32_t
+vref_tiny2_sel_to_mv(avr_vref_t *p, uint8_t sel)
+{
+	switch (sel & 0x07) {
+	case 0x0: return 1024;
+	case 0x1: return 2048;
+	case 0x2: return 2500;
+	case 0x3: return 4096;
+	case 0x7: return p->vdd_mv;
+	default:  return 0;	/* reserved */
+	}
+}
+
+static void
+avr_vref_tiny2_ctrla_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
+						   void *param)
+{
+	avr_vref_t *p = (avr_vref_t *)param;
+
+	/* Only AC0REFSEL[2:0] is implemented; bits 7:3 are reserved. */
+	v &= 0x07;
+	avr_core_watch_write(avr, addr, v);
+	avr_raise_irq(p->io.irq + AVR_VREF_IRQ_AC0_MV, vref_tiny2_sel_to_mv(p, v));
+}
+
+void
+avr_vref_set_vdd(avr_vref_t * p, uint32_t vdd_mv)
+{
+	p->vdd_mv = vdd_mv;
+}
+
+void
+avr_vref_init_tiny2(
+		avr_t * avr,
+		avr_vref_t * p,
+		avr_io_addr_t base,
+		char name)
+{
+	memset(p, 0, sizeof(*p));
+	p->io = _io;
+	p->name = name;
+	p->base = base;
+	p->nregs = 2;			/* CTRLA, CTRLB */
+	p->vdd_mv = 3300;
+
+	avr_register_io(avr, &p->io);
+	avr_io_setirqs(&p->io, AVR_IOCTL_VREF_GETIRQ(name), AVR_VREF_IRQ_COUNT, NULL);
+
+	avr_register_io_write(avr, base + VREFR_CTRLA, avr_vref_tiny2_ctrla_write, p);
+	/* CTRLB: NVMREFEN/ADC0REFEN/AC0REFEN force-enables (bits 2:0); no
+	 * behavioural effect in this ideal model. */
+	avr_register_io_write(avr, base + VREFR_CTRLB, avr_vref_store_write, p);
 }

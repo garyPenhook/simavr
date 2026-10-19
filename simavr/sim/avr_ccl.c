@@ -216,6 +216,27 @@ static uint8_t lut_visible_output(avr_ccl_t *p, int n)
 	return p->direct[n] & 1;
 }
 
+/* INTCTRL0.INTMODEn values (DS40002311B 28.5.4). */
+#define INTMODE_RISING	0x1
+#define INTMODE_FALLING	0x2
+#define INTMODE_BOTH	0x3
+
+/* LUTn output changed to 'v': flag INTn if INTMODEn senses that edge. */
+static void ccl_interrupt_edge(avr_ccl_t *p, int n, uint8_t v)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t mode = (rd(avr, p->r_intctrl) >> (2 * n)) & 0x3;
+
+	if (!p->has_irq || n >= 4 || mode == 0)
+		return;
+	if (mode == INTMODE_BOTH ||
+		(mode == INTMODE_RISING && v) || (mode == INTMODE_FALLING && !v)) {
+		avr_core_watch_write(avr, p->r_intflags,
+							 rd(avr, p->r_intflags) | (1 << n));
+		avr_raise_interrupt(avr, &p->vect);
+	}
+}
+
 static void ccl_publish(avr_ccl_t *p)
 {
 	for (int n = 0; n < p->nluts; n++) {
@@ -223,6 +244,7 @@ static void ccl_publish(avr_ccl_t *p)
 		if (v != p->pub[n]) {
 			p->pub[n] = v;
 			avr_raise_irq(p->io.irq + p->nluts * AVR_CCL_LUT_INPUTS + n, v);
+			ccl_interrupt_edge(p, n, v);
 		}
 	}
 }
@@ -646,4 +668,58 @@ avr_ccl_init_mega(
 		char name)
 {
 	ccl_init_common(avr, p, base, nluts, name, 1);
+}
+
+/* INTFLAGS is write-1-to-clear; the request drops once no flag remains. */
+static void
+avr_ccl_intflags_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
+					   void *param)
+{
+	avr_ccl_t *p = (avr_ccl_t *)param;
+	uint8_t res = avr->data[addr] & ~(v & 0x0f);
+	avr_core_watch_write(avr, addr, res);
+	if (!(res & 0x0f))
+		avr_clear_interrupt(avr, &p->vect);
+}
+
+/* Selecting an edge sense while its flag is still set re-asserts the request. */
+static void
+avr_ccl_intctrl_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
+					  void *param)
+{
+	avr_ccl_t *p = (avr_ccl_t *)param;
+	avr_core_watch_write(avr, addr, v);
+	/* Only a flag whose own INTMODEn is still non-zero re-requests. */
+	uint8_t en = 0;
+	for (int n = 0; n < 4; n++)
+		if ((v >> (2 * n)) & 0x3)
+			en |= 1 << n;
+	if (rd(avr, p->r_intflags) & en)
+		avr_raise_interrupt(avr, &p->vect);
+}
+
+void
+avr_ccl_set_interrupt(
+		avr_t * avr,
+		avr_ccl_t * p,
+		uint8_t vector)
+{
+	if (!p->is_mega || p->has_irq)
+		return;
+	p->has_irq = 1;
+	p->r_intctrl = p->base + 0x05;
+	p->r_intflags = p->base + 0x07;
+
+	/* Enabled whenever any INTMODEn is non-zero; the per-LUT flags live in
+	 * INTFLAGS and are managed above, so no 'raised' regbit (it would set all
+	 * four flags at once). */
+	p->vect.vector = vector;
+	p->vect.enable.reg = p->r_intctrl;
+	p->vect.enable.bit = 0;
+	p->vect.enable.mask = 0xff;
+	p->vect.raise_sticky = 1;
+	avr_register_vector(avr, &p->vect);
+
+	avr_register_io_write(avr, p->r_intctrl, avr_ccl_intctrl_write, p);
+	avr_register_io_write(avr, p->r_intflags, avr_ccl_intflags_write, p);
 }

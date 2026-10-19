@@ -1123,3 +1123,50 @@ they need a modern avr-gcc with ATtiny3217 support):
   back through the ADC0 internal DAC0 channel; and an EVSYS software event routed
   to the ADC0 user starting an event-triggered conversion. It reports a
   per-subtest pass bitmask in GPIOR0 that the host harness verifies.
+
+## 11. tinyAVR 2-series (added 2026-10-19)
+
+Twelve cores (ATtiny424/426/427/824/826/827/1624/1626/1627/3224/3226/3227) on a new
+template, `cores/sim_tinyx2.h`. Sources: DS40002311B (x24/x26/x27 4/8 KB), DS40002234B
+(16 KB), DS40002345B (32 KB); the three describe identical peripherals and differ only in
+memory size and signature (checked: Table 1, Table 7-6, Table 2, EVSYS register map).
+
+**Method.** The device headers were diffed register-by-register against the 1-series and
+megaAVR-0 headers (offsets relative to each block's base) to decide per block whether an
+existing model could be reused. Unchanged (same registers, new base only): CLKCTRL, NVMCTRL,
+PORT/VPORT, TCA0, TCB0/1, USART0/1, TWI0 (0x8A0), SPI0 (0x8C0), RTC, WDT, CRCSCAN, CPUINT,
+RSTCTRL, SLPCTRL, BOD, SYSCFG. Changed blocks and what was done:
+
+* **ADC0 — new model** `avr_adc_tiny2.[ch]`. Registers, modes, output formats, window
+  comparator and interrupt flags: DS40002311B 30.3-30.5. Timing is the datasheet's
+  (30.3.3.6, p.414-417): single `SAMPDUR+15` (8-bit `+11`) ADC clocks, burst
+  `(SAMPDUR+14)*N+1.5`, PGA variants `+ADCPGASAMPDUR` and, for burst,
+  `((SAMPDUR+ADCPGASAMPDUR+2)*N+14)`, plus the analog-module initialisation time of
+  Table 30-5 (10/20/35/35/60 us, parallel, removed by LOWLAT once warm). Three vectors:
+  ERROR (TRIGOVR/SAMPOVR/RESOVR), SAMPRDY and RESRDY; WCMP rides RESRDY or SAMPRDY per
+  `CTRLD.WINSRC`. The model raises a request only for an enabled, set flag and withdraws
+  it when the flag clears (W1C, or a read of RESULT/SAMPLE).
+* **AC0** — `avr_ac_init_dacref()`: `DACREF` at +0x04 (reset 0xFF), `V = DACREF*VREF/256`,
+  `MUXNEG` AINN0/1/2/DACREF. `sim_tinyx2.h` also feeds the ADC's `DACREF0` input from it.
+* **VREF** — `avr_vref_init_tiny2()`: `CTRLA.AC0REFSEL` only (the ADC selects its own
+  reference in `ADC0.CTRLC.REFSEL`).
+* **CCL** — `avr_ccl_init_mega()` with four LUTs matches the register layout and the INSEL
+  map (identical to megaAVR-0); the new `INTCTRL0`/`INTFLAGS` LUT-output interrupt is
+  `avr_ccl_set_interrupt()`.
+* **EVSYS** — `avr_evsys_init_xt(..., 6, 20)`: `SWEVENTA` +0, `CHANNELn` +0x10, `USERxxx`
+  +0x20. Note the datasheet's user table prints TCB0 CAPT as 0x11; the register map and the
+  device header put `USERTCB0CAPT` at index 16 (0x30), which is what is wired.
+* **PORTMUX** — `avr_portmux_init_n(..., 6, ...)`: six `*ROUTEA` registers at 0x05E0.
+* **PORTC** is fitted only on the x26/x27 parts (`SIM_HAS_PORTC` in the per-device file):
+  the interrupt vector table is shared by all 12 parts, so unlike the 1-series it cannot
+  identify the pin count.
+
+**Tests.** `tests/test_avrxt_engine.c` (groups "tinyAVR 2-series ...": all 12 cores' identity,
+memories, bases; PORTMUX; VREF+AC0; EVSYS+CCL interrupt; ADC single/format/timing and
+accumulation/FREERUN/trigger/window/vector/event groups). `tests/attiny3224_selftest.c` +
+`test_attiny3224_selftest.c` (`make attiny3224-selftest`): compiled firmware, 11 subtests
+including three real ISRs through the vector table; it was also run on all 12 cores.
+`examples/board_modern_avr` now boots 46 cores.
+
+**Known limitation found on the way:** GPIOR0-3 alias r28-r31 (see the TODO doc), so the
+2-series self-test reports through SRAM, not GPIOR.

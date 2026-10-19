@@ -33,6 +33,7 @@
 #include "avr_nvmctrl.h"
 #include "avr_rtc.h"
 #include "avr_adc_modern.h"
+#include "avr_adc_tiny2.h"
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
 #include "avr_dac.h"
@@ -235,6 +236,50 @@ static avr_cycle_count_t cycles_for(avr_t *avr, uint16_t op, int has_word2,
 	avr_cycle_count_t before = avr->cycle;
 	avr->pc = avr_run_one(avr);
 	return avr->cycle - before;
+}
+
+
+/* Counts rising edges seen on an EVSYS user output into *(int *)param. */
+static void evsys_count_param_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq;
+	if (value)
+		(*(int *)param)++;
+}
+
+/*
+ * tinyAVR 2-series helpers. Run NOPs (1 cycle each) until (data[addr] & mask)
+ * is set; return the cycles elapsed, or -1 on timeout.
+ */
+static long run_until_set(avr_t *m, avr_io_addr_t addr, uint8_t mask, long max)
+{
+	long t0 = (long)m->cycle;
+	for (long i = 0; i < max; i++) {
+		avr_run(m);
+		if (m->pc >= 0x1000)	/* keep the PC inside the NOP-filled flash */
+			m->pc = 0;
+		if (m->data[addr] & mask)
+			return (long)m->cycle - t0;
+	}
+	return -1;
+}
+
+/* Dispatch whatever level-0 interrupt is pending and return its vector number
+ * (-1 if none was taken); leaves the CPU out of the ISR again. SEI re-arms the
+ * dispatcher (the modern service routine disarms itself while I=0). */
+static int take_vector(avr_t *m)
+{
+	m->sreg[S_I] = 1;
+	m->interrupt_state = avr_has_pending_interrupts(m);
+	m->pc = 0x100;
+	avr_service_interrupts(m);
+	int v = -1;
+	if (m->pc != 0x100) {
+		v = m->pc / m->vector_size;
+		avr_interrupt_reti(m);
+	}
+	m->sreg[S_I] = 0;	/* later avr_run() calls must not take interrupts */
+	return v;
 }
 
 int main(void)
@@ -3867,6 +3912,915 @@ int main(void)
 		avr_raise_irq(ainp0, 3000);
 		check("1607 AC0 vs VREF 2.5V: 3000 mV is above", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
 #undef HAS_W
+	}
+
+
+	printf("== tinyAVR 2-series cores (DS40002311B / DS40002234B / DS40002345B) ==\n");
+	{
+		/* Address -> "has an IO write handler" probe. */
+#define HAS_W(m, a) (!!(m)->io[AVR_DATA_TO_IO(a)].w.c)
+		/* Datasheet Table 1 (memories), Table 7-6 (device IDs), Table 2 (ports). */
+		static const struct {
+			const char *name;
+			uint32_t sig;
+			uint16_t flash, sram, eeprom;	/* bytes */
+			int portc;
+		} dev[] = {
+			{ "attiny424",  0x1e922c,  4096,  512, 128, 0 },
+			{ "attiny426",  0x1e922b,  4096,  512, 128, 1 },
+			{ "attiny427",  0x1e922a,  4096,  512, 128, 1 },
+			{ "attiny824",  0x1e9329,  8192, 1024, 128, 0 },
+			{ "attiny826",  0x1e9328,  8192, 1024, 128, 1 },
+			{ "attiny827",  0x1e9327,  8192, 1024, 128, 1 },
+			{ "attiny1624", 0x1e942a, 16384, 2048, 256, 0 },
+			{ "attiny1626", 0x1e9429, 16384, 2048, 256, 1 },
+			{ "attiny1627", 0x1e9428, 16384, 2048, 256, 1 },
+			{ "attiny3224", 0x1e9528, 32768, 3072, 256, 0 },
+			{ "attiny3226", 0x1e9527, 32768, 3072, 256, 1 },
+			{ "attiny3227", 0x1e9526, 32768, 3072, 256, 1 },
+		};
+		for (unsigned i = 0; i < sizeof(dev) / sizeof(dev[0]); i++) {
+			char what[64];
+			avr_t *m = avr_make_mcu_by_name(dev[i].name);
+			if (!m) { printf("cannot make %s core\n", dev[i].name); return 2; }
+			m->log = LOG_ERROR;
+			avr_init(m);
+#define W(fmt) (snprintf(what, sizeof(what), "%s " fmt, dev[i].name), what)
+			check(W("is MODERN"), !!(m->arch.flags & AVR_ARCH_F_MODERN), 1);
+			check(W("signature"),
+				  (m->signature[0] << 16) | (m->signature[1] << 8) | m->signature[2],
+				  dev[i].sig);
+			check(W("flashend"), m->flashend, dev[i].flash - 1);
+			check(W("ramend 0x3FFF"), m->ramend, 0x3fff);
+			check(W("e2end"), m->e2end, 0x1400 + dev[i].eeprom - 1);
+			check(W("vector_size"), m->vector_size, dev[i].flash > 8192 ? 4 : 2);
+			check(W("flashmap 0x8000"), m->arch.flashmap_start, 0x8000);
+			check(W("SRAM start"), m->ramend - dev[i].sram + 1,
+				  0x4000 - dev[i].sram);
+			check(W("PORTA"), HAS_W(m, 0x0400 + 0x01), 1);
+			check(W("PORTB"), HAS_W(m, 0x0420 + 0x01), 1);
+			check(W("PORTC fitted"), HAS_W(m, 0x0440 + 0x01), dev[i].portc);
+			check(W("USART0 @0x800"), HAS_W(m, 0x0802), 1);
+			check(W("USART1 @0x820"), HAS_W(m, 0x0822), 1);
+			check(W("TWI0 @0x8A0"), HAS_W(m, 0x08a4), 1);
+			check(W("SPI0 @0x8C0"), HAS_W(m, 0x08c1), 1);
+			check(W("TCA0 @0xA00"), HAS_W(m, 0x0a00), 1);
+			check(W("TCB0 @0xA80"), HAS_W(m, 0x0a80), 1);
+			check(W("TCB1 @0xA90"), HAS_W(m, 0x0a90), 1);
+			check(W("PORTMUX @0x5E0"), HAS_W(m, 0x05e0), 1);
+			check(W("ADC0 @0x600"), HAS_W(m, 0x060a), 1);
+			check(W("AC0 @0x680"), HAS_W(m, 0x0680), 1);
+			check(W("no DAC0 @0x6A0"), HAS_W(m, 0x06a0), 0);
+			check(W("no TCB0 @1-series 0xA40"), HAS_W(m, 0x0a40), 0);
+			check(W("no TWI0 @1-series 0x810"), HAS_W(m, 0x0814), 0);
+		}
+#undef W
+	}
+
+	printf("== tinyAVR 2-series PORTMUX (six *ROUTEA registers) ==\n");
+	{
+		avr_t *m = avr_make_mcu_by_name("attiny3226");
+		if (!m) { printf("cannot make attiny3226 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		const avr_io_addr_t P = 0x05e0;
+		for (int i = 0; i < 6; i++)
+			cpu_write(m, P + i, 0x10 + i);
+		for (int i = 0; i < 6; i++) {
+			char w[32]; snprintf(w, sizeof(w), "PORTMUX reg %d stores", i);
+			check(w, cpu_read(m, P + i), 0x10 + i);
+		}
+		check("PORTMUX has no 7th register", HAS_W(m, P + 6), 0);
+		avr_reset(m);
+		check("PORTMUX reset clears EVSYSROUTEA", m->data[P], 0);
+		check("PORTMUX reset clears TCBROUTEA", m->data[P + 5], 0);
+	}
+
+	printf("== tinyAVR 2-series VREF + AC0 (AC0REFSEL, DACREF, AINN2, hysteresis) ==\n");
+	{
+		avr_t *m = avr_make_mcu_by_name("attiny3226");
+		if (!m) { printf("cannot make attiny3226 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		const avr_io_addr_t C = 0x680, V = 0x0a0;
+		avr_irq_t *ainp0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0);
+		avr_irq_t *ainn0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINN0);
+		avr_irq_t *ainn2 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINN2);
+		check("AC AINN2 irq exists", ainn2 != NULL, 1);
+		check("DACREF resets to 0xFF", m->data[C + ACR_DACREF], 0xff);
+
+		/* MUXNEG = DACREF (3); VREF.AC0REFSEL = 1.024 V at reset: 0xFF -> 1020 mV. */
+		cpu_write(m, C + ACR_MUXCTRLA, 0x03);
+		cpu_write(m, C + ACR_CTRLA, 0x01);
+		avr_raise_irq(ainp0, 1000);
+		check("DACREF 0xFF @1.024V = 1020mV: 1000 below", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+		avr_raise_irq(ainp0, 1040);
+		check("DACREF 0xFF @1.024V = 1020mV: 1040 above", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+
+		/* AC0REFSEL = 2.5 V (2), DACREF = 0x80 -> 1250 mV. */
+		cpu_write(m, V + VREFR_CTRLA, 0x02);
+		cpu_write(m, C + ACR_DACREF, 0x80);
+		avr_raise_irq(ainp0, 1200);
+		check("DACREF 0x80 @2.5V = 1250mV: 1200 below", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+		avr_raise_irq(ainp0, 1300);
+		check("DACREF 0x80 @2.5V = 1250mV: 1300 above", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+
+		/* The reference tracks AC0REFSEL: 4.096 V (3) -> DACREF 0x80 = 2048 mV. */
+		cpu_write(m, V + VREFR_CTRLA, 0x03);
+		check("AC0REFSEL 4.096V: 1300 now below", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+		/* AC0REFSEL = VDD (7) -> 3300 mV * 128/256 = 1650 mV. */
+		cpu_write(m, V + VREFR_CTRLA, 0x07);
+		avr_raise_irq(ainp0, 1700);
+		check("AC0REFSEL VDD: DACREF 0x80 = 1650mV, 1700 above", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+		cpu_write(m, V + VREFR_CTRLA, 0xff);	/* only [2:0] are implemented */
+		check("VREF.CTRLA keeps only AC0REFSEL[2:0]", m->data[V + VREFR_CTRLA], 0x07);
+		cpu_write(m, V + VREFR_CTRLA, 0x05);	/* reserved selection -> 0 mV ref */
+		avr_raise_irq(ainp0, 10);
+		check("reserved AC0REFSEL: DACREF output is 0", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+
+		/* MUXNEG = AINN2 (2) is a real pin on the 2-series (not VREF). */
+		cpu_write(m, C + ACR_MUXCTRLA, 0x02);
+		avr_raise_irq(ainn2, 1500);
+		avr_raise_irq(ainp0, 1400);
+		check("MUXNEG AINN2: 1400 < 1500", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+		avr_raise_irq(ainp0, 1600);
+		check("MUXNEG AINN2: 1600 > 1500", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+
+		/* HYSMODE = LARGE (3): VHYS 55 mV typ, modelled (assumption) as a +/-28 mV
+		 * half-window around the crossing. */
+		cpu_write(m, C + ACR_MUXCTRLA, 0x00);	/* AINP0 vs AINN0 */
+		avr_raise_irq(ainn0, 1000);
+		avr_raise_irq(ainp0, 900);
+		cpu_write(m, C + ACR_CTRLA, 0x01 | (3 << 1));
+		avr_raise_irq(ainp0, 1010);
+		check("hysteresis: +10 mV is inside the band, stays low", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+		avr_raise_irq(ainp0, 1040);
+		check("hysteresis: +40 mV trips high", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+		avr_raise_irq(ainp0, 990);
+		check("hysteresis: -10 mV holds high", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 1);
+		avr_raise_irq(ainp0, 960);
+		check("hysteresis: -40 mV trips low", !!(cpu_read(m, C + ACR_STATUS) & 0x10), 0);
+
+		/* Reset restores DACREF=0xFF and AC0REFSEL=1.024 V. */
+		cpu_write(m, C + ACR_DACREF, 0x10);
+		avr_reset(m);
+		check("reset: DACREF back to 0xFF", m->data[C + ACR_DACREF], 0xff);
+		check("reset: VREF.CTRLA back to 0", m->data[V + VREFR_CTRLA], 0);
+	}
+
+	printf("== tinyAVR 2-series EVSYS (6 channels, 20 users) + CCL interrupt ==\n");
+	{
+		avr_t *m = avr_make_mcu_by_name("attiny3226");
+		if (!m) { printf("cannot make attiny3226 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+		const avr_io_addr_t E = 0x180, C = 0x1c0;
+		check("EVSYS user 19 (USERTCB1COUNT) handled", HAS_W(m, E + 0x20 + 19), 1);
+		check("EVSYS has no user 20", HAS_W(m, E + 0x20 + 20), 0);
+
+		/* SWEVENTA bit n strobes channel n (0..5); users routed to it see a pulse. */
+		g_evsys_pulses = 0;
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+							AVR_EVSYS_IRQ_USER0 + 8), evsys_count_hook, NULL);
+		cpu_write(m, E + 0x28, 6);			/* USERADC0START -> CHANNEL5 (value 6) */
+		cpu_write(m, E + 0x00, 1 << 5);
+		check("SWEVENTA bit 5 pulses CHANNEL5's user", g_evsys_pulses, 1);
+		cpu_write(m, E + 0x00, 1 << 0);
+		check("SWEVENTA bit 0 does not reach a CHANNEL5 user", g_evsys_pulses, 1);
+		cpu_write(m, E + 0x28, 7);			/* value 7 would be CHANNEL6: not a channel */
+		cpu_write(m, E + 0x00, 1 << 6);
+		check("no sixth-index channel (CHANNEL6)", g_evsys_pulses, 1);
+
+		/* CCL: LUT0 follows IN0 (INSEL0=IO, TRUTH 0xAA); INTMODEn selects the edge. */
+		avr_irq_t *in0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0);
+		cpu_write(m, C + 0x09, 0x05);			/* LUT0CTRLB: INSEL0 = IO, INSEL1 = MASK */
+		cpu_write(m, C + 0x0a, 0x00);			/* LUT0CTRLC: INSEL2 = MASK */
+		cpu_write(m, C + 0x0b, 0xaa);			/* TRUTH0: out = IN0 */
+		cpu_write(m, C + 0x08, 0x01);			/* LUT0CTRLA: ENABLE */
+		cpu_write(m, C + 0x00, 0x01);			/* CTRLA: ENABLE */
+		cpu_write(m, C + 0x05, 0x01);			/* INTMODE0 = RISING */
+		avr_raise_irq(in0, 1);
+		check("CCL rising edge sets INT0", m->data[C + 0x07] & 0x01, 1);
+		check("CCL interrupt dispatches vector 5", take_vector(m), 5);
+		avr_raise_irq(in0, 0);
+		check("RISING mode: falling edge sets no extra flag", m->data[C + 0x07], 0x01);
+		cpu_write(m, C + 0x07, 0x01);			/* W1C */
+		check("INTFLAGS W1C clears INT0", m->data[C + 0x07], 0);
+		check("request dropped with the flag", take_vector(m), -1);
+
+		cpu_write(m, C + 0x05, 0x02);			/* FALLING */
+		avr_raise_irq(in0, 1);
+		check("FALLING: rising edge sets nothing", m->data[C + 0x07], 0);
+		avr_raise_irq(in0, 0);
+		check("FALLING: falling edge sets INT0", m->data[C + 0x07] & 0x01, 1);
+		check("FALLING dispatches vector 5", take_vector(m), 5);
+		cpu_write(m, C + 0x07, 0x01);
+
+		cpu_write(m, C + 0x05, 0x03);			/* BOTH */
+		avr_raise_irq(in0, 1);
+		check("BOTH: rising edge sets INT0", m->data[C + 0x07] & 0x01, 1);
+		cpu_write(m, C + 0x07, 0x01);
+		avr_raise_irq(in0, 0);
+		check("BOTH: falling edge sets INT0", m->data[C + 0x07] & 0x01, 1);
+		cpu_write(m, C + 0x07, 0x01);
+
+		cpu_write(m, C + 0x05, 0x00);			/* INTDISABLE */
+		avr_raise_irq(in0, 1);
+		check("INTDISABLE: no flag", m->data[C + 0x07], 0);
+		avr_raise_irq(in0, 0);
+
+		/* LUT2 uses INTMODE2 (bits 5:4) and INT2; the four LUTs share vector 5. */
+		avr_irq_t *l2in0 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0 + 6);
+		cpu_write(m, C + 0x11, 0x05);			/* LUT2CTRLB */
+		cpu_write(m, C + 0x12, 0x00);
+		cpu_write(m, C + 0x13, 0xaa);			/* TRUTH2 */
+		cpu_write(m, C + 0x10, 0x01);			/* LUT2CTRLA: ENABLE */
+		cpu_write(m, C + 0x05, 1 << 4);			/* INTMODE2 = RISING */
+		avr_raise_irq(l2in0, 1);
+		check("LUT2 rising edge sets INT2 only", m->data[C + 0x07], 0x04);
+		check("LUT2 dispatches the shared vector 5", take_vector(m), 5);
+		cpu_write(m, C + 0x07, 0x04);
+
+		/* Enabling an edge mode while a flag is pending re-requests (level IRQ). */
+		cpu_write(m, C + 0x05, 0x01);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0), 0);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0), 1);
+		take_vector(m);					/* service it; flag stays sticky */
+		cpu_write(m, C + 0x05, 0x00);
+		cpu_write(m, C + 0x05, 0x01);
+		check("re-enabling INTMODE with INT0 still set re-requests", take_vector(m), 5);
+		cpu_write(m, C + 0x07, 0x0f);
+
+		/* LUT output also drives EVSYS generator 0x10 (+ LUT n). */
+		g_evsys_pulses = 0;
+		cpu_write(m, E + 0x13, 0x10);			/* CHANNEL3 = CCL LUT0 */
+		cpu_write(m, E + 0x20 + 3, 4);			/* USERCCLLUT1B -> CHANNEL3 */
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+							AVR_EVSYS_IRQ_USER0 + 3), evsys_count_hook, NULL);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0), 0);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_IRQ_LUT0_IN0), 1);
+		check("LUT0 rising edge reaches EVSYS CHANNEL3 user", g_evsys_pulses, 1);
+	}
+
+	printf("== tinyAVR 2-series ADC0: Single mode, formats, timing ==\n");
+	{
+		enum { CTRLA = 0, CTRLB = 1, CTRLC = 2, CTRLD = 3, INTCTRL = 4, INTFLAGS = 5,
+			   STATUS = 6, CTRLE = 8, CTRLF = 9, COMMAND = 0x0a, PGACTRL = 0x0b,
+			   MUXPOS = 0x0c, MUXNEG = 0x0d, RESULT = 0x10, SAMPLE = 0x14,
+			   WINLT = 0x1c, WINHT = 0x1e };
+		enum { F_RES = 0x01, F_SAMP = 0x02, F_WCMP = 0x04, F_RESOVR = 0x08,
+			   F_SAMPOVR = 0x10, F_TRIGOVR = 0x20 };
+		const avr_io_addr_t A = 0x600;
+#define RES32(m) ((int32_t)((m)->data[A + RESULT] | ((m)->data[A + RESULT + 1] << 8) | \
+			((m)->data[A + RESULT + 2] << 16) | ((uint32_t)(m)->data[A + RESULT + 3] << 24)))
+#define SAMP16(m) ((m)->data[A + SAMPLE] | ((m)->data[A + SAMPLE + 1] << 8))
+#define ADC_CLEAR(m) cpu_write((m), A + INTFLAGS, 0x3f)
+
+		avr_t *m = avr_make_mcu_by_name("attiny3226");
+		if (!m) { printf("cannot make attiny3226 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+		check("CPU clock = OSC20M/6", m->frequency, 3333333);
+		check("PGACTRL resets to 0x04", m->data[A + PGACTRL], 0x04);
+
+		avr_irq_t *ain3 = avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), 3);
+		avr_irq_t *ain5 = avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), 5);
+		check("ADC AIN3 irq exists", ain3 != NULL, 1);
+		avr_raise_irq(ain3, 1650);		/* half of the 3300 mV default VDD */
+
+		/* Single 12-bit: 1650/3300*4096 = 2048. 10 us init (33 cyc @3.33 MHz)
+		 * + (SAMPDUR+15) ADC clocks at DIV2 = 30 cycles. */
+		cpu_write(m, A + MUXPOS, 3);
+		cpu_write(m, A + CTRLA, 0x01);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		check("ADCBUSY set while converting", m->data[A + STATUS], 1);
+		long t = run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("12-bit conversion time = 10us init + 30 cyc", t >= 62 && t <= 65, 1);
+		check("12-bit result = 2048", RES32(m), 2048);
+		check("SAMPLE = 2048", SAMP16(m), 2048);
+		check("RESRDY and SAMPRDY both set", m->data[A + INTFLAGS] & 3, 3);
+		check("START self-clears (IMMEDIATE -> STOP)", m->data[A + COMMAND] & 7, 0);
+		check("ADCBUSY cleared", m->data[A + STATUS], 0);
+		cpu_write(m, A + RESULT, 0x55);
+		cpu_write(m, A + SAMPLE, 0x55);
+		cpu_write(m, A + STATUS, 0x01);
+		check("RESULT is read-only", RES32(m), 2048);
+		check("SAMPLE is read-only", SAMP16(m), 2048);
+		check("STATUS is read-only", m->data[A + STATUS], 0);
+		cpu_read(m, A + SAMPLE);
+		check("reading SAMPLE clears SAMPRDY", m->data[A + INTFLAGS] & 3, 1);
+		cpu_read(m, A + RESULT);
+		check("reading RESULT clears RESRDY", m->data[A + INTFLAGS] & 3, 0);
+
+		/* Single 8-bit: 1650/3300*256 = 128; (SAMPDUR+11) clocks. */
+		cpu_write(m, A + COMMAND, (0 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("8-bit conversion time = init + 22 cyc", t >= 54 && t <= 57, 1);
+		check("8-bit result = 128", RES32(m), 128);
+		ADC_CLEAR(m);
+
+		/* SAMPDUR adds (SAMPDUR) ADC clocks. */
+		cpu_write(m, A + CTRLE, 10);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("SAMPDUR=10 adds 20 cycles at DIV2", t >= 82 && t <= 85, 1);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLE, 0);
+
+		/* CTRLB.PRESC = DIV8 (3): the ADC clock is 4x slower. */
+		cpu_write(m, A + CTRLB, 3);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 800);
+		check("PRESC DIV8: 15 clocks = 120 cyc + init", t >= 152 && t <= 156, 1);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLB, 0);
+
+		/* LOWLAT removes the initialisation time once the modules are warm. */
+		cpu_write(m, A + CTRLA, 0x00);
+		cpu_write(m, A + CTRLA, 0x21);			/* ENABLE | LOWLAT */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("LOWLAT: first conversion still initialises", t >= 62 && t <= 65, 1);
+		ADC_CLEAR(m);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("LOWLAT: second conversion has no init (30 cyc)", t >= 29 && t <= 32, 1);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLA, 0x00);
+		cpu_write(m, A + CTRLA, 0x01);
+
+		/* LEFTADJ: 12-bit result and sample shifted left by 4; 8-bit is not. */
+		cpu_write(m, A + CTRLF, 0x10);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("LEFTADJ result = 2048 << 4", RES32(m), 0x8000);
+		check("LEFTADJ sample = 2048 << 4", SAMP16(m), 0x8000);
+		ADC_CLEAR(m);
+		cpu_write(m, A + COMMAND, (0 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("LEFTADJ ignored in 8-bit mode", RES32(m), 128);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLF, 0x00);
+
+		/* Differential: (VINP - VINN)/VREF * 2048, two's complement, sign-extended. */
+		avr_raise_irq(ain3, 2000);
+		avr_raise_irq(ain5, 500);
+		cpu_write(m, A + MUXNEG, 5);
+		cpu_write(m, A + COMMAND, 0x80 | (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("diff 12-bit (2000-500mV) = 930", RES32(m), 930);
+		ADC_CLEAR(m);
+		avr_raise_irq(ain3, 500);
+		avr_raise_irq(ain5, 2000);
+		cpu_write(m, A + COMMAND, 0x80 | (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("diff 12-bit (500-2000mV) = -931", RES32(m), -931);
+		check("diff result sign-extends into RESULT[31:24]", m->data[A + RESULT + 3], 0xff);
+		check("diff sample is 16-bit two's complement", SAMP16(m), (uint16_t)-931);
+		ADC_CLEAR(m);
+		avr_raise_irq(ain3, 3300);
+		avr_raise_irq(ain5, 0);
+		cpu_write(m, A + COMMAND, 0x80 | (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("diff positive full scale clamps to 2047", RES32(m), 2047);
+		ADC_CLEAR(m);
+		avr_raise_irq(ain3, 0);
+		avr_raise_irq(ain5, 3300);
+		cpu_write(m, A + COMMAND, 0x80 | (0 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("diff 8-bit negative full scale = -128", RES32(m), -128);
+		ADC_CLEAR(m);
+
+		/* PGA: gain 4x (GAIN=2), VIA=PGA: 300 mV -> 1200 mV -> 1489. Timing adds
+		 * the 20 us PGA init and ADCPGASAMPDUR (20 clocks, the reset default). */
+		avr_raise_irq(ain3, 300);
+		cpu_write(m, A + PGACTRL, (2 << 5) | 0x04 | 0x01);
+		cpu_write(m, A + MUXPOS, 0x40 | 3);
+		check("VIA is shared: MUXNEG.VIA mirrors MUXPOS.VIA", m->data[A + MUXNEG] & 0xc0, 0x40);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("PGA single time = 20us init + 35.5 clocks", t >= 136 && t <= 140, 1);
+		check("PGA 4x: 300 mV -> 1489", RES32(m), 1489);
+		ADC_CLEAR(m);
+		cpu_write(m, A + PGACTRL, (4 << 5) | 0x04 | 0x01);	/* 16x */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("PGA 16x: 300 mV -> 4095 (clamped)", RES32(m), 4095);
+		ADC_CLEAR(m);
+		cpu_write(m, A + PGACTRL, (2 << 5) | 0x04);		/* PGAEN = 0: VIA ignored */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("PGAEN=0: direct path, 300 mV -> 372", RES32(m), 372);
+		ADC_CLEAR(m);
+		cpu_write(m, A + MUXPOS, 3);
+		cpu_write(m, A + PGACTRL, 0x04);
+		avr_raise_irq(ain3, 1650);
+
+		/* Reference selection (CTRLC.REFSEL), independent of VREF on this family. */
+		cpu_write(m, A + CTRLC, 0x05);			/* 2.048 V */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("REFSEL 2.048V: 1650 mV -> 3300", RES32(m), 3300);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLC, 0x04);			/* 1.024 V: input clamps */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("REFSEL 1.024V: 1650 mV clamps to 4095", RES32(m), 4095);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLC, 0x02);			/* external VREFA */
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), AVR_ADC2_IRQ_VREFA), 3000);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("REFSEL VREFA=3000: 1650 mV -> 2252", RES32(m), 2252);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLC, 0x00);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), AVR_ADC2_IRQ_VDD), 5000);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("REFSEL VDD=5000: 1650 mV -> 1351", RES32(m), 1351);
+		ADC_CLEAR(m);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), AVR_ADC2_IRQ_VDD), 3300);
+
+		/* Internal inputs: VDD/10, DACREF0 (AC0), GND. */
+		cpu_write(m, A + MUXPOS, 0x31);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("VDDDIV10: 330 mV -> 409", RES32(m), 409);
+		ADC_CLEAR(m);
+		cpu_write(m, 0x680 + ACR_MUXCTRLA, 0x03);
+		cpu_write(m, 0x0a0 + VREFR_CTRLA, 0x02);		/* AC0REFSEL = 2.5 V */
+		cpu_write(m, 0x680 + ACR_DACREF, 0x80);			/* 1250 mV */
+		cpu_write(m, A + MUXPOS, 0x33);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("DACREF0: 1250 mV -> 1551", RES32(m), 1551);
+		check("DACREF0 input costs 35us init", t >= 30 + 115 && t <= 30 + 118, 1);
+		ADC_CLEAR(m);
+		cpu_write(m, A + MUXPOS, 0x30);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 600);
+		check("GND input -> 0", RES32(m), 0);
+		ADC_CLEAR(m);
+
+		/* Temperature sensor: firmware's T = ((RESULT>>2) - off) * gain / 256. */
+		m->data[0x1120] = 180;				/* SIGROW.TEMPSENSE0 (gain) */
+		m->data[0x1121] = (uint8_t)-20;			/* SIGROW.TEMPSENSE1 (offset) */
+		cpu_write(m, A + CTRLC, 0x04);			/* 1.024 V reference */
+		cpu_write(m, A + MUXPOS, 0x32);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		t = run_until_set(m, A + INTFLAGS, F_RES, 800);
+		check("tempsense needs the 60us reference init", t >= 200 && t <= 204 + 30, 1);
+		{
+			int32_t adc = RES32(m) >> 2;
+			int32_t k = (((adc - (int8_t)m->data[0x1121]) * m->data[0x1120]) + 0x80) >> 8;
+			check("tempsense recovers 298 K (+/-1)", k >= 297 && k <= 299, 1);
+		}
+		ADC_CLEAR(m);
+		avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), AVR_ADC2_CH_TEMPSENSE), 358);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 800);
+		{
+			int32_t adc = RES32(m) >> 2;
+			int32_t k = (((adc - (int8_t)m->data[0x1121]) * m->data[0x1120]) + 0x80) >> 8;
+			check("tempsense follows 358 K (+/-1)", k >= 357 && k <= 359, 1);
+		}
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLC, 0x00);
+		cpu_write(m, A + MUXPOS, 3);
+	}
+
+
+	printf("== tinyAVR 2-series ADC0: accumulation, FREERUN, triggers ==\n");
+	{
+		enum { CTRLA = 0, CTRLB = 1, CTRLC = 2, CTRLD = 3, INTCTRL = 4, INTFLAGS = 5,
+			   STATUS = 6, CTRLE = 8, CTRLF = 9, COMMAND = 0x0a, PGACTRL = 0x0b,
+			   MUXPOS = 0x0c, MUXNEG = 0x0d, RESULT = 0x10, SAMPLE = 0x14 };
+		enum { F_RES = 0x01, F_SAMP = 0x02, F_WCMP = 0x04, F_RESOVR = 0x08,
+			   F_SAMPOVR = 0x10, F_TRIGOVR = 0x20 };
+		const avr_io_addr_t A = 0x600;
+		avr_t *m = avr_make_mcu_by_name("attiny3226");
+		if (!m) { printf("cannot make attiny3226 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+		avr_irq_t *ain3 = avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), 3);
+		avr_irq_t *ain5 = avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), 5);
+		avr_raise_irq(ain3, 1650);
+		cpu_write(m, A + MUXPOS, 3);
+		cpu_write(m, A + CTRLA, 0x01);
+
+		/* Series, SAMPNUM=2 (4 samples): one conversion per trigger; RESRDY
+		 * only after the 4th, with the full 24-bit accumulation. */
+		cpu_write(m, A + CTRLF, 2);
+		for (int i = 0; i < 4; i++) {
+			char w[64];
+			cpu_write(m, A + COMMAND, (2 << 4) | 1);
+			run_until_set(m, A + INTFLAGS, F_SAMP, 400);
+			snprintf(w, sizeof(w), "series trigger %d: SAMPRDY", i + 1);
+			check(w, m->data[A + INTFLAGS] & F_SAMP, F_SAMP);
+			snprintf(w, sizeof(w), "series trigger %d: RESRDY only on the 4th", i + 1);
+			check(w, m->data[A + INTFLAGS] & F_RES, i == 3 ? F_RES : 0);
+			cpu_read(m, A + SAMPLE);
+		}
+		check("series x4 accumulation = 4*2048", RES32(m), 8192);
+		check("series sample = last conversion", SAMP16(m), 2048);
+		cpu_read(m, A + RESULT);
+		cpu_write(m, A + COMMAND, (2 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_SAMP, 400);
+		check("series restarts a new accumulation (no RESRDY)", m->data[A + INTFLAGS] & F_RES, 0);
+		cpu_read(m, A + SAMPLE);
+
+		/* Leaving accumulation for Single mode resets the accumulator. */
+		cpu_write(m, A + COMMAND, (2 << 4) | 1);		/* 2nd sample of a new series */
+		run_until_set(m, A + INTFLAGS, F_SAMP, 400);
+		cpu_read(m, A + SAMPLE);
+		cpu_write(m, A + COMMAND, (1 << 4) | 0);		/* MODE=Single, STOP */
+		for (int i = 0; i < 4; i++) {
+			cpu_write(m, A + COMMAND, (2 << 4) | 1);
+			run_until_set(m, A + INTFLAGS, F_SAMP, 400);
+			cpu_read(m, A + SAMPLE);
+			if (i == 2)
+				check("accumulator reset: no RESRDY after 3 triggers",
+					  m->data[A + INTFLAGS] & F_RES, 0);
+		}
+		check("accumulator reset: RESRDY after the 4th trigger",
+			  m->data[A + INTFLAGS] & F_RES, F_RES);
+		check("accumulator was reset by the Single-mode write", RES32(m), 8192);
+		cpu_read(m, A + RESULT);
+
+		/* Burst, SAMPNUM=3 (8 samples): one trigger, 10us init + (14*8+1.5) clocks. */
+		cpu_write(m, A + CTRLA, 0x00);
+		cpu_write(m, A + CTRLA, 0x01);
+		cpu_write(m, A + CTRLF, 3);
+		cpu_write(m, A + COMMAND, (4 << 4) | 1);
+		long t = run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("burst x8 time = 33 + 227 cycles", t >= 258 && t <= 262, 1);
+		check("burst x8 accumulation = 8*2048", RES32(m), 16384);
+		check("burst sample = last conversion", SAMP16(m), 2048);
+		check("unread samples overwritten -> SAMPOVR", !!(m->data[A + INTFLAGS] & F_SAMPOVR), 1);
+		ADC_CLEAR(m);
+		check("burst START returns to STOP", m->data[A + COMMAND] & 7, 0);
+
+		/* Burst with scaling: SAMPNUM=6 (64 samples) -> acc >> (6-4). */
+		cpu_write(m, A + CTRLF, 6);
+		cpu_write(m, A + COMMAND, (5 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 6000);
+		check("burst x64 scaled = (64*2048) >> 2", RES32(m), 32768);
+		ADC_CLEAR(m);
+		/* < 16 samples: not shifted; LEFTADJ justifies bit 15 as the MSb. */
+		cpu_write(m, A + CTRLF, 2);
+		cpu_write(m, A + COMMAND, (5 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("burst x4 scaled, no LEFTADJ = 8192", RES32(m), 8192);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLF, 2 | 0x10);
+		cpu_write(m, A + COMMAND, (5 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("burst x4 scaled, LEFTADJ -> bit15 is MSb", RES32(m), 32768);
+		ADC_CLEAR(m);
+		/* Unscaled accumulation ignores LEFTADJ. */
+		cpu_write(m, A + COMMAND, (4 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("unscaled accumulation ignores LEFTADJ", RES32(m), 8192);
+		ADC_CLEAR(m);
+		/* SAMPNUM=0: a burst of one. */
+		cpu_write(m, A + CTRLF, 0);
+		cpu_write(m, A + COMMAND, (4 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("burst SAMPNUM=0 = one sample", RES32(m), 2048);
+		ADC_CLEAR(m);
+		/* The widest accumulation: 1024 samples need 22 bits, no overflow. */
+		cpu_write(m, A + CTRLF, 10);
+		cpu_write(m, A + COMMAND, (4 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 40000);
+		check("burst x1024 = 1024*2048", RES32(m), 1024 * 2048);
+		ADC_CLEAR(m);
+		/* Differential accumulation sign-extends. */
+		avr_raise_irq(ain3, 500);
+		avr_raise_irq(ain5, 2000);
+		cpu_write(m, A + MUXNEG, 5);
+		cpu_write(m, A + CTRLF, 2);
+		cpu_write(m, A + COMMAND, 0x80 | (4 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("diff burst x4 = 4*-931", RES32(m), -3724);
+		ADC_CLEAR(m);
+		cpu_write(m, A + COMMAND, 0x80 | (5 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 1000);
+		check("diff burst x4 scaled = -3724 (arith)", RES32(m), -3724);
+		ADC_CLEAR(m);
+		avr_raise_irq(ain3, 1650);
+		cpu_write(m, A + CTRLF, 0);
+
+		/* FREERUN restarts Single immediately (no init): ~30-cycle cadence. */
+		cpu_write(m, A + CTRLF, 0x20);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		int hits = 0;
+		long last = -1, maxgap = 0, mingap = 1 << 30;
+		for (int i = 0; i < 6000 && hits < 5; i++) {
+			avr_run(m);
+			if (m->data[A + INTFLAGS] & F_RES) {
+				if (last >= 0) {
+					long g = (long)m->cycle - last;
+					if (g > maxgap) maxgap = g;
+					if (g < mingap) mingap = g;
+				}
+				last = (long)m->cycle;
+				hits++;
+				ADC_CLEAR(m);
+			}
+		}
+		check("FREERUN keeps converting", hits >= 5, 1);
+		check("FREERUN cadence = 30 cycles (no re-init)", mingap >= 29 && maxgap <= 31, 1);
+		check("FREERUN keeps START=IMMEDIATE", m->data[A + COMMAND] & 7, 1);
+		cpu_write(m, A + COMMAND, (1 << 4) | 0);		/* STOP */
+		ADC_CLEAR(m);
+		long quiet = run_until_set(m, A + INTFLAGS, F_RES | F_SAMP, 300);
+		check("STOP ends FREERUN", quiet, -1);
+		check("STOP clears ADCBUSY", m->data[A + STATUS], 0);
+
+		/* FREERUN is ignored in Series mode: one trigger, one conversion. */
+		cpu_write(m, A + CTRLF, 0x20 | 2);
+		cpu_write(m, A + COMMAND, (2 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_SAMP, 400);
+		ADC_CLEAR(m);
+		quiet = run_until_set(m, A + INTFLAGS, F_SAMP, 200);
+		check("FREERUN has no effect in Series mode", quiet, -1);
+		cpu_write(m, A + CTRLF, 0);
+		cpu_write(m, A + COMMAND, (1 << 4) | 0);
+
+		/* FREERUN with Burst accumulation. */
+		cpu_write(m, A + CTRLF, 0x20 | 1);
+		cpu_write(m, A + COMMAND, (4 << 4) | 1);
+		hits = 0;
+		for (int i = 0; i < 4000 && hits < 3; i++) {
+			avr_run(m);
+			if (m->data[A + INTFLAGS] & F_RES) { hits++; ADC_CLEAR(m); }
+		}
+		check("FREERUN burst repeats", hits, 3);
+		cpu_write(m, A + COMMAND, (4 << 4) | 0);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLF, 0);
+
+		/* Trigger sources: START=MUXPOS_WRITE / MUXNEG_WRITE start on a mux write. */
+		cpu_write(m, A + MUXNEG, 0);
+		cpu_write(m, A + COMMAND, (1 << 4) | 2);
+		quiet = run_until_set(m, A + INTFLAGS, F_RES, 100);
+		check("MUXPOS_WRITE: nothing starts by itself", quiet, -1);
+		cpu_write(m, A + MUXPOS, 3);
+		check("MUXPOS write triggers a conversion", m->data[A + STATUS], 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("MUXPOS_WRITE result = 2048", RES32(m), 2048);
+		check("MUXPOS_WRITE keeps START armed", m->data[A + COMMAND] & 7, 2);
+		ADC_CLEAR(m);
+		cpu_write(m, A + MUXNEG, 5);
+		quiet = run_until_set(m, A + INTFLAGS, F_RES, 100);
+		check("MUXPOS_WRITE ignores MUXNEG writes", quiet, -1);
+		cpu_write(m, A + COMMAND, (1 << 4) | 3);
+		cpu_write(m, A + MUXNEG, 0);
+		check("MUXNEG write triggers a conversion", m->data[A + STATUS], 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		ADC_CLEAR(m);
+		cpu_write(m, A + COMMAND, (1 << 4) | 0);
+
+		/* Triggering while converting: TRIGOVR, the trigger is ignored. */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		check("trigger during conversion sets TRIGOVR", !!(m->data[A + INTFLAGS] & F_TRIGOVR), 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("first conversion still completes", RES32(m), 2048);
+		long extra = run_until_set(m, A + INTFLAGS, F_RES | 0x80, 100);
+		(void)extra;
+		ADC_CLEAR(m);
+		quiet = run_until_set(m, A + INTFLAGS, F_RES, 200);
+		check("ignored trigger started nothing", quiet, -1);
+
+		/* Unread result/sample overwritten by the next conversion. */
+		ADC_CLEAR(m);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("first conversion: no overwrite flags", m->data[A + INTFLAGS] & (F_RESOVR | F_SAMPOVR), 0);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RESOVR, 400);
+		check("unread RESULT overwritten -> RESOVR", !!(m->data[A + INTFLAGS] & F_RESOVR), 1);
+		check("unread SAMPLE overwritten -> SAMPOVR", !!(m->data[A + INTFLAGS] & F_SAMPOVR), 1);
+		ADC_CLEAR(m);
+
+		/* STOP aborts a running conversion; disabling aborts too. */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		for (int i = 0; i < 10; i++) avr_run(m);
+		cpu_write(m, A + COMMAND, (1 << 4) | 0);
+		check("STOP aborts: ADCBUSY clear", m->data[A + STATUS], 0);
+		quiet = run_until_set(m, A + INTFLAGS, F_RES | F_SAMP, 300);
+		check("STOP aborts: no result arrives", quiet, -1);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		for (int i = 0; i < 10; i++) avr_run(m);
+		cpu_write(m, A + CTRLA, 0x00);
+		quiet = run_until_set(m, A + INTFLAGS, F_RES | F_SAMP, 300);
+		check("ENABLE=0 aborts the conversion", quiet, -1);
+		check("ENABLE=0 clears ADCBUSY", m->data[A + STATUS], 0);
+		/* IMMEDIATE while disabled reads back as STOP and starts nothing. */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		check("IMMEDIATE with ADC disabled reads back STOP", m->data[A + COMMAND] & 7, 0);
+		quiet = run_until_set(m, A + INTFLAGS, F_RES | F_SAMP, 300);
+		check("IMMEDIATE with ADC disabled starts nothing", quiet, -1);
+		cpu_write(m, A + CTRLA, 0x01);
+	}
+
+	printf("== tinyAVR 2-series ADC0: window comparator, vectors, events ==\n");
+	{
+		enum { CTRLA = 0, CTRLB = 1, CTRLC = 2, CTRLD = 3, INTCTRL = 4, INTFLAGS = 5,
+			   STATUS = 6, CTRLE = 8, CTRLF = 9, COMMAND = 0x0a, PGACTRL = 0x0b,
+			   MUXPOS = 0x0c, MUXNEG = 0x0d, RESULT = 0x10, SAMPLE = 0x14,
+			   WINLT = 0x1c, WINHT = 0x1e };
+		enum { F_RES = 0x01, F_SAMP = 0x02, F_WCMP = 0x04, F_RESOVR = 0x08,
+			   F_SAMPOVR = 0x10, F_TRIGOVR = 0x20 };
+		const avr_io_addr_t A = 0x600;
+		avr_t *m = avr_make_mcu_by_name("attiny3226");
+		if (!m) { printf("cannot make attiny3226 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+		avr_irq_t *ain3 = avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), 3);
+		avr_irq_t *ain5 = avr_io_getirq(m, AVR_IOCTL_ADC2_GETIRQ('0'), 5);
+		avr_raise_irq(ain3, 1650);
+		cpu_write(m, A + MUXPOS, 3);
+		cpu_write(m, A + CTRLA, 0x21);		/* LOWLAT: keep the loops short */
+
+#define WIN(lt, ht) do { \
+			cpu_write(m, A + WINLT, (lt) & 0xff); cpu_write(m, A + WINLT + 1, (lt) >> 8); \
+			cpu_write(m, A + WINHT, (ht) & 0xff); cpu_write(m, A + WINHT + 1, (ht) >> 8); \
+		} while (0)
+#define CONVERT(cmd) do { \
+			ADC_CLEAR(m); cpu_write(m, A + COMMAND, (cmd)); \
+			run_until_set(m, A + INTFLAGS, F_RES, 40000); \
+		} while (0)
+#define WCMP_SET() (!!(m->data[A + INTFLAGS] & F_WCMP))
+
+		/* Window modes on the RESULT (2048). Comparisons are strict. */
+		cpu_write(m, A + CTRLD, 2);	WIN(0, 1000);	CONVERT((1 << 4) | 1);
+		check("ABOVE: 2048 > 1000", WCMP_SET(), 1);
+		WIN(0, 2048);	CONVERT((1 << 4) | 1);
+		check("ABOVE: 2048 > 2048 is false", WCMP_SET(), 0);
+		cpu_write(m, A + CTRLD, 1);	WIN(3000, 0);	CONVERT((1 << 4) | 1);
+		check("BELOW: 2048 < 3000", WCMP_SET(), 1);
+		WIN(2048, 0);	CONVERT((1 << 4) | 1);
+		check("BELOW: 2048 < 2048 is false", WCMP_SET(), 0);
+		cpu_write(m, A + CTRLD, 3);	WIN(2048, 3000);	CONVERT((1 << 4) | 1);
+		check("INSIDE: LT < 2048 is false at the edge", WCMP_SET(), 0);
+		WIN(2047, 3000);	CONVERT((1 << 4) | 1);
+		check("INSIDE: 2047 < 2048 < 3000", WCMP_SET(), 1);
+		cpu_write(m, A + CTRLD, 4);	WIN(2048, 2048);	CONVERT((1 << 4) | 1);
+		check("OUTSIDE: equal to both thresholds is not outside", WCMP_SET(), 0);
+		WIN(2049, 3000);	CONVERT((1 << 4) | 1);
+		check("OUTSIDE: 2048 < 2049", WCMP_SET(), 1);
+		cpu_write(m, A + CTRLD, 0);	WIN(5000, 0);	CONVERT((1 << 4) | 1);
+		check("WINCM=NONE: window disabled", WCMP_SET(), 0);
+		cpu_write(m, A + CTRLD, 5);	CONVERT((1 << 4) | 1);
+		check("reserved WINCM: no match", WCMP_SET(), 0);
+
+		/* WINSRC picks the compared register when accumulating (result 8192,
+		 * sample 2048). */
+		cpu_write(m, A + CTRLF, 2);
+		WIN(0, 4000);
+		cpu_write(m, A + CTRLD, 2);			/* ABOVE, source RESULT */
+		CONVERT((4 << 4) | 1);
+		check("WINSRC=RESULT: 8192 > 4000", WCMP_SET(), 1);
+		cpu_write(m, A + CTRLD, 0x08 | 2);		/* ABOVE, source SAMPLE */
+		CONVERT((4 << 4) | 1);
+		check("WINSRC=SAMPLE: 2048 > 4000 is false", WCMP_SET(), 0);
+		cpu_write(m, A + CTRLF, 0);
+
+		/* Differential values compare as signed (here -931 < -1). */
+		avr_raise_irq(ain3, 500);
+		avr_raise_irq(ain5, 2000);
+		cpu_write(m, A + MUXNEG, 5);
+		cpu_write(m, A + CTRLD, 1);			/* BELOW */
+		WIN(0xffff, 0);
+		CONVERT(0x80 | (1 << 4) | 1);
+		check("differential: -931 BELOW -1 (signed)", WCMP_SET(), 1);
+		avr_raise_irq(ain3, 1650);
+		cpu_write(m, A + MUXNEG, 0);
+		cpu_write(m, A + CTRLD, 0);
+		ADC_CLEAR(m);
+
+		/* Interrupt routing: RESRDY -> 22, SAMPRDY -> 23, ERROR -> 21 (ADC0_*_vect_num). */
+		cpu_write(m, A + INTCTRL, F_RES);
+		CONVERT((1 << 4) | 1);
+		check("RESRDY interrupt -> vector 22", take_vector(m), 22);
+		check("no second request after servicing", take_vector(m), -1);
+		ADC_CLEAR(m);
+		cpu_write(m, A + INTCTRL, F_SAMP);
+		CONVERT((1 << 4) | 1);
+		check("SAMPRDY interrupt -> vector 23", take_vector(m), 23);
+		ADC_CLEAR(m);
+		cpu_write(m, A + INTCTRL, F_RES | F_SAMP);
+		CONVERT((1 << 4) | 1);
+		check("both enabled: lower vector (RESRDY=22) first", take_vector(m), 22);
+		check("both enabled: then SAMPRDY=23", take_vector(m), 23);
+		ADC_CLEAR(m);
+		cpu_write(m, A + INTCTRL, 0);
+		CONVERT((1 << 4) | 1);
+		check("flags set but nothing enabled: no interrupt", take_vector(m), -1);
+		cpu_write(m, A + INTCTRL, F_RES);
+		check("enabling an already-set flag requests it", take_vector(m), 22);
+		/* Reading RESULT clears RESRDY and withdraws a pending request. */
+		ADC_CLEAR(m);
+		CONVERT((1 << 4) | 1);
+		cpu_read(m, A + RESULT);
+		check("reading RESULT withdraws the RESRDY request", take_vector(m), -1);
+		/* W1C also withdraws it. */
+		CONVERT((1 << 4) | 1);
+		cpu_write(m, A + INTFLAGS, F_RES);
+		check("W1C withdraws the RESRDY request", take_vector(m), -1);
+
+		/* WCMP uses the RESRDY vector for WINSRC=RESULT, SAMPRDY for SAMPLE. */
+		ADC_CLEAR(m);
+		WIN(0, 1000);
+		cpu_write(m, A + INTCTRL, F_WCMP);
+		cpu_write(m, A + CTRLD, 2);			/* ABOVE, RESULT */
+		CONVERT((1 << 4) | 1);
+		check("WCMP (WINSRC=RESULT) -> vector 22", take_vector(m), 22);
+		ADC_CLEAR(m);
+		cpu_write(m, A + CTRLD, 0x08 | 2);		/* ABOVE, SAMPLE */
+		CONVERT((1 << 4) | 1);
+		check("WCMP (WINSRC=SAMPLE) -> vector 23", take_vector(m), 23);
+		cpu_write(m, A + CTRLD, 0);
+		ADC_CLEAR(m);
+
+		/* ERROR vector: trigger overrun, sample overwrite, result overwrite. */
+		cpu_write(m, A + INTCTRL, F_TRIGOVR);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		check("TRIGOVR interrupt -> vector 21", take_vector(m), 21);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		ADC_CLEAR(m);
+		cpu_write(m, A + INTCTRL, F_RESOVR);
+		CONVERT((1 << 4) | 1);
+		CONVERT((1 << 4) | 1);			/* ADC_CLEAR inside: unread? flags cleared */
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_RESOVR, 400);
+		check("RESOVR interrupt -> vector 21", take_vector(m), 21);
+		ADC_CLEAR(m);
+		cpu_write(m, A + INTCTRL, F_SAMPOVR);
+		CONVERT((1 << 4) | 1);
+		cpu_write(m, A + COMMAND, (1 << 4) | 1);
+		run_until_set(m, A + INTFLAGS, F_SAMPOVR, 400);
+		check("SAMPOVR interrupt -> vector 21", take_vector(m), 21);
+		cpu_write(m, A + INTCTRL, 0);
+		ADC_CLEAR(m);
+
+		/* Event generators: RES / SAMP / WCMP pulse EVSYS channels. */
+		const avr_io_addr_t E = 0x180;
+		int n_res = 0, n_samp = 0, n_wcmp = 0;
+		cpu_write(m, E + 0x11, 0x24);			/* CHANNEL1 = ADC0 RES */
+		cpu_write(m, E + 0x12, 0x25);			/* CHANNEL2 = ADC0 SAMP */
+		cpu_write(m, E + 0x13, 0x26);			/* CHANNEL3 = ADC0 WCMP */
+		cpu_write(m, E + 0x20 + 0, 2);			/* USERCCLLUT0A -> CHANNEL1 */
+		cpu_write(m, E + 0x20 + 1, 3);			/* USERCCLLUT0B -> CHANNEL2 */
+		cpu_write(m, E + 0x20 + 2, 4);			/* USERCCLLUT1A -> CHANNEL3 */
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+							AVR_EVSYS_IRQ_USER0 + 0), evsys_count_param_hook, &n_res);
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+							AVR_EVSYS_IRQ_USER0 + 1), evsys_count_param_hook, &n_samp);
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+							AVR_EVSYS_IRQ_USER0 + 2), evsys_count_param_hook, &n_wcmp);
+		WIN(0, 1000);
+		cpu_write(m, A + CTRLD, 2);
+		CONVERT((1 << 4) | 1);
+		check("ADC RES event pulses once", n_res, 1);
+		check("ADC SAMP event pulses once", n_samp, 1);
+		check("ADC WCMP event pulses once (window hit)", n_wcmp, 1);
+		cpu_write(m, A + CTRLD, 0);
+		CONVERT((1 << 4) | 1);
+		check("no WCMP event without a window match", n_wcmp, 1);
+		check("RES event per conversion", n_res, 2);
+
+		/* Event user: START=EVENT_TRIGGER starts a conversion on a rising event edge
+		 * (AC0 OUT -> CHANNEL0 -> USERADC0START). */
+		avr_irq_t *ainp0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINP0);
+		avr_irq_t *ainn0 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_IRQ_AINN0);
+		cpu_write(m, 0x680 + ACR_MUXCTRLA, 0x00);
+		avr_raise_irq(ainn0, 1000);
+		avr_raise_irq(ainp0, 0);
+		cpu_write(m, 0x680 + ACR_CTRLA, 0x01);
+		cpu_write(m, E + 0x10, 0x20);			/* CHANNEL0 = AC0 OUT */
+		cpu_write(m, E + 0x28, 1);			/* USERADC0START -> CHANNEL0 */
+		ADC_CLEAR(m);
+		cpu_write(m, A + COMMAND, (1 << 4) | 4);	/* START = EVENT_TRIGGER */
+		check("EVENT_TRIGGER waits for an event", m->data[A + STATUS], 0);
+		avr_raise_irq(ainp0, 2000);			/* AC0 output rises */
+		check("rising event edge starts a conversion", m->data[A + STATUS], 1);
+		run_until_set(m, A + INTFLAGS, F_RES, 400);
+		check("event-started result = 2048", RES32(m), 2048);
+		check("EVENT_TRIGGER stays armed", m->data[A + COMMAND] & 7, 4);
+		ADC_CLEAR(m);
+		avr_raise_irq(ainp0, 0);			/* falling edge: no start */
+		check("falling event edge does not start", m->data[A + STATUS], 0);
+		cpu_write(m, A + COMMAND, (1 << 4) | 0);		/* START = STOP */
+		avr_raise_irq(ainp0, 2000);
+		check("events ignored unless START=EVENT_TRIGGER", m->data[A + STATUS], 0);
 	}
 
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",

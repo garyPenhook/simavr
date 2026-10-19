@@ -3,10 +3,13 @@ board_modern_avr — every supported modern AVR, in one board
 
 Where board_atmega4809 and board_attiny3217 are per-family demos, this board is
 the *coverage* board: it proves that **every** modern core this fork supports
-boots and exercises its core peripherals. That is all 23:
+boots and exercises its core peripherals. That is all 46:
 
+  tinyAVR 0-series (11): attiny202 204 402 404 406 804 806 807 1604 1606 1607
   tinyAVR 1-series (15): attiny212 214 412 414 416 417 814 816 817
                          1614 1616 1617 3214 3216 3217
+  tinyAVR 2-series (12): attiny424 426 427 824 826 827 1624 1626 1627
+                         3224 3226 3227
   megaAVR 0-series (8):  atmega808 809 1608 1609 3208 3209 4808 4809
 
 Each core is checked against seven peripherals present identically on every
@@ -46,7 +49,7 @@ Expected output (one line per device, then a summary):
 
     PASS  attiny3217   PORT+ TCA0+ TCB0+ RTC+ ADC0+ SPI0+ TWI0+
     ...
-    23/23 cores PASSED
+    46/46 cores PASSED
 
 To run just one device, call the host runner with that firmware:
 
@@ -59,10 +62,11 @@ runner.elf); the ./obj-*/ glob picks it regardless of architecture.
 Toolchain note
 --------------
 
-Building firmware needs a modern avr-gcc (12+) with the tinyAVR-1 / megaAVR-0
-device headers (verified with avr-gcc 16). The Makefile filters the device list
-down to the cores the installed avr-gcc can actually target, so a plain `make`
-never fails on an older toolchain — it just builds fewer (or no) firmwares, and
+Building firmware needs a modern avr-gcc (12+) with the tinyAVR / megaAVR-0
+device headers (the 2-series headers need a recent one; verified with avr-gcc
+16). The Makefile filters the device list down to the cores the installed
+avr-gcc can actually target, so a plain `make` never fails on an older
+toolchain — it just builds fewer (or no) firmwares, and
 the host runner builds regardless. `make run` then exercises whatever fw_*.axf
 are present (the .axf are build artifacts, not committed — see .gitignore).
 
@@ -71,4 +75,6 @@ Adding a new modern device
 
 Drop its sim_<device>.c in simavr/cores/ (per the auto-discovery in
 simavr/Makefile), then add its avr-gcc name to ALL_MCUS in this Makefile. No
-firmware edits are needed — blink_fw.c is device-agnostic.
+firmware edits are needed for another device on an existing register map —
+blink_fw.c is device-agnostic, apart from the ADC, which switches on ADC0_CTRLF
+between the 10-bit ADC (tinyAVR 0/1, megaAVR 0) and the 12-bit tinyAVR 2-series one.

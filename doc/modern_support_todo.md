@@ -6,6 +6,9 @@ plus the 11 tinyAVR® 0-series cores added 2026-10-19 (ATtiny202/204/402/404/406
 blocks (no DAC, TCD, PTC; one TCB/AC/ADC — AN2636 table 2-1, DS40002312A/DS40002318A); its
 VREF.CTRLA.DAC0REFSEL is the AC0 reference. The "all 23" counts below predate it and apply to
 those 23 cores; each 0-series part inherits the gaps of the blocks it fits.
+The 12 tinyAVR® 2-series cores (ATtiny424/426/427/824/826/827/1624/1626/1627/3224/3226/3227)
+were added 2026-10-19 on a new template, `sim_tinyx2.h`; their gaps are listed in the
+[tinyAVR 2-series section](#tinyavr-2-series-12-cores-added-2026-10-19) at the end.
 Every top-level peripheral block on these parts is *present and functional*; the
 items below are **feature-depth gaps inside existing models**, not missing blocks.
 A gap applies to a micro only if that micro fits the instance.
@@ -207,3 +210,59 @@ not duplicates of the per-micro modern-AVR feature-depth gaps above.
 | Shared I2C helper examples | ✓ | **Fixed (2026-06-08).** `i2c_start_wait()` now bounds its ack-polling at `I2C_START_WAIT_MAX_RETRIES` (default 100) and gives up — leaving the bus stopped — instead of spinning forever on an absent device. Applied to both the shared helper and the board-local copy; the FIXME is removed. | `examples/shared/twimaster.c`, `examples/board_ds1338/twimaster.c` |
 | Classic external-interrupt coverage | ✓ | **Fixed (2026-06-08).** Added a dedicated, self-contained regression for the classic low-level (level-triggered) external interrupt: `atmega168_extint_level.c` drives its own INT0/PD2 output low to assert the level, so it exercises the continuous re-trigger path *and* its clean termination (ISR releases the level after 3 entries), plus mask-respect (re-asserting low with INT0 masked produces no interrupt). Kept separate from the two choreographed ioport tests rather than perturbing their exact expected-output strings; their stale TODO comments now point at the new coverage. | `tests/atmega168_extint_level.c`, `tests/test_atmega168_extint_level.c`, `tests/atmega168_ioport.c`, `tests/atmega48_ioport.c` |
 | Classic UART pin override | ✓ | **Fixed (2026-06-08).** Modelled RxD/TxD pin-function override. Added an additive pin-function-override layer to `avr_ioport` (per-pin override mask/dir/value, empty by default so every existing core is byte-for-byte unchanged) plus an `AVR_IOCTL_IOPORT_SET_FUNCTION` ioctl; the USART now claims TxD as a high-idle output while TXEN is set and RxD as an input while RXEN is set, overriding GPIO DDR/PORT, via optional `txd`/`rxd` pin coordinates wired in the megaX8 template (ATmega48/88/168/328: TxD=PD1, RxD=PD0). Reconciliation runs only on writes to the TXEN/RXEN control register and from the written bit values — avoiding the reset-time `TXEN` printf convenience — so the frozen ioport tests (which printf without writing UCSRB) keep PD0/PD1 as GPIO. Host firmware test added. | `simavr/sim/avr_uart.c`, `avr_uart.h`, `avr_ioport.c`, `avr_ioport.h`, `cores/sim_megax8.h`, `tests/atmega48_uart_pins.c` |
+
+## tinyAVR 2-series (12 cores, added 2026-10-19)
+
+ATtiny424/426/427, 824/826/827, 1624/1626/1627, 3224/3226/3227 on `sim_tinyx2.h`
+(DS40002311B, DS40002234B, DS40002345B). Register bases and layouts were diffed against
+the 1-series and megaAVR-0 headers; the blocks that differ got new or extended models:
+
+| Module | New / changed | Model |
+|---|---|---|
+| ADC0 | **new** 12-bit differential ADC with PGA, series/burst accumulation, window comparator, three vectors (`avr_adc_tiny2.c`) — not the 10-bit `avr_adc_modern.c` | `avr_adc_tiny2.c` |
+| AC0 | `avr_ac_init_dacref()`: `DACREF` (reset 0xFF, `VREF*DACREF/256`), `MUXNEG` = AINN0/1/2/DACREF, datasheet VHYS | `avr_ac.c` |
+| VREF | `avr_vref_init_tiny2()`: only `AC0REFSEL` (1.024/2.048/2.5/4.096 V/VDD); the ADC picks its reference in `ADC0.CTRLC` | `avr_vref.c` |
+| CCL | 4 LUTs on the mega layout, plus the new `INTCTRL0`/`INTFLAGS` LUT-output-edge interrupt (`avr_ccl_set_interrupt()`) | `avr_ccl.c` |
+| EVSYS | `avr_evsys_init_xt()`: 6 channels, 20 users (`USERCCLLUTnA/B`…`USERTCB1COUNT`) | `avr_evsys.c` |
+| PORTMUX | `avr_portmux_init_n()`: six `*ROUTEA` registers at 0x05E0 | `avr_portmux.c` |
+
+Remaining gaps (all [P] unless noted):
+
+* **ADC0:** `TIMEBASE`, `RUNSTDBY`, `DBGRUN`, `PGABIASSEL` are stored only (no power/clock
+  model); `CLK_PER` is taken as the CPU clock (CLKCTRL's peripheral prescaler is ignored, as in
+  `avr_adc_modern.c`); `RESULT`/`SAMPLE` update atomically (no TEMP-byte latch between the
+  low- and high-byte reads); only the low byte read clears `RESRDY`/`SAMPRDY`; changing the
+  mux or reference mid-conversion does not corrupt the result; the LOWLAT "modules stay
+  warm" rule is a per-module bitmask, not an analog settling model.
+* **EVSYS:** generators wired are AC0 OUT, ADC0 RES/SAMP/WCMP, TCB0/1 CAPT and CCL LUT0-3;
+  RTC/PIT, PORT pins, USART XCK, SPI SCK, TCA0 and TCB OVF are **not** generators yet, and
+  the channel-availability restrictions (PORT pins, even/odd PIT) are not enforced. Users
+  wired are ADC0 START, TCB0/1 CAPT and TCA0 CNTA; `USERCCLLUTnA/B` (the CCL has no per-LUT
+  event inputs), `USERTCA0CNTB`, the TCB `COUNT` users and `USERUSARTnIRDA` are **not**.
+* **CCL:** USART TXD (INSEL 0x8) and SPI (INSEL 0x9) sources are unwired, as on every
+  family (the USART/SPI models expose no line-level output IRQs).
+* **PORT:** the 14/20-pin parts fit only PORTB[3:0] / PORTB[5:0], PORTC[3:0]; the model does
+  not mask unfitted pins (same as the 1-series).
+* **SIGROW:** `OSCCAL16M0/1` and `OSCCAL20M0/1` (0x1118-0x111B) are not populated.
+
+Defects found while doing this work that are **not** specific to the 2-series (left as is):
+
+* **[F] GPIOR0-3 alias r28-r31 on every modern core.** simavr keeps the register file in
+  `data[0..31]`; the low-I/O redirect only covers the VPORTs, so firmware that uses
+  `GPIOR0..3` (0x1C-0x1F) and also uses `Y`/`Z` corrupts both. `tests/attiny3217_selftest.c`
+  only survives because of register allocation; `tests/attiny3224_selftest.c` uses SRAM
+  for its result block for this reason.
+* `avr_evsys_init_mega()` instantiates 6 channels, but `iom4809.h` defines `CHANNEL0..7`.
+* The megaAVR-0 AC uses the tinyAVR-1 model (no `DACREF`, no AINN2); `iom4809.h` defines
+  `AC0.DACREF`. The 2-series `avr_ac_init_dacref()` is a candidate once DS40002173C is checked.
+* AC hysteresis shape is **unverified**: the datasheets give only a typical `VHYS` per
+  `HYSMODE` (2-series: 0/10/30/55 mV, 0/10/40/80 mV in low-power mode; DS40002311B Tables
+  33-30/31), not the window geometry. The 1-series model applies its table as a ±band; the
+  2-series variant assumes `VHYS` is the total width, i.e. a ±VHYS/2 half-window.
+
+Review notes (2-series, unfixed, all [P]): supply voltage lives in three unsynchronised places
+(`avr_vref_t.vdd_mv`, `avr_adc_tiny2_t.vdd_mv`, AC0's cached reference), so changing VDD at
+runtime after selecting `AC0REFSEL=VDD` does not refresh AC0; ADC IRQs exist for input codes
+the mux cannot select (AIN0/8/9/12-15 are accepted but MUXPOS=0 reads ground); the AC model
+honours reserved MUXPOS/MUXNEG codes; every accumulation step flags `SAMPOVR` if `SAMPLE` was not
+read (literal reading of the datasheet, not confirmed for series/burst).

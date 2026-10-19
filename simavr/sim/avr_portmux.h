@@ -45,6 +45,7 @@ extern "C" {
 #include "sim_avr.h"
 
 #define AVR_PORTMUX_REGS	4	/* CTRLA..CTRLD */
+#define AVR_PORTMUX_REGS_MAX	6	/* tinyAVR 2-series: EVSYSROUTEA..TCBROUTEA */
 
 /* Register offsets within a PORTMUX block (device header PORTMUX_t). */
 enum {
@@ -59,6 +60,7 @@ typedef struct avr_portmux_t {
 	char		name;
 
 	avr_io_addr_t	base;
+	uint8_t		nregs;
 } avr_portmux_t;
 
 /*
@@ -69,6 +71,18 @@ avr_portmux_init(
 		avr_t * avr,
 		avr_portmux_t * p,
 		avr_io_addr_t base,
+		char name);
+
+/*
+ * As avr_portmux_init() but with 'nregs' routing registers: the tinyAVR
+ * 2-series block is six *ROUTEA registers (DS40002311B 16.2), not CTRLA..CTRLD.
+ */
+void
+avr_portmux_init_n(
+		avr_t * avr,
+		avr_portmux_t * p,
+		avr_io_addr_t base,
+		uint8_t nregs,
 		char name);
 
 #ifdef __cplusplus

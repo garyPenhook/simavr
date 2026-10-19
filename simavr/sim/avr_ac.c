@@ -36,6 +36,7 @@
 #define ENABLE_bm	0x01
 #define HYSMODE_gm	0x06
 #define HYSMODE_gp	1
+#define LPMODE_bm	0x08
 #define INTMODE_gm	0x30
 #define INTMODE_gp	4
 #define INTMODE_BOTHEDGE	0
@@ -71,8 +72,8 @@ static uint32_t ac_neg_mv(avr_ac_t *p)
 	switch (sel) {
 	case 0: return p->neg_mv[0];	/* AINN0 */
 	case 1: return p->neg_mv[1];	/* AINN1 */
-	case 2: return p->vref_mv;	/* internal VREF */
-	case 3: return p->dacref_mv;	/* DAC output */
+	case 2: return p->dacref_mode ? p->neg_mv[2] : p->vref_mv;	/* AINN2 / VREF */
+	case 3: return p->dacref_mv;	/* DAC output / DACREF */
 	}
 	return 0;
 }
@@ -82,7 +83,16 @@ static uint32_t ac_neg_mv(avr_ac_t *p)
 static int32_t ac_hyst_mv(avr_ac_t *p)
 {
 	static const uint8_t band[4] = { 0, 10, 25, 50 };
-	return band[(rd(p->io.avr, p->r_ctrla) & HYSMODE_gm) >> HYSMODE_gp];
+	/* tinyAVR 2-series VHYS typ (DS40002311B Tables 33-30/31). The datasheet does
+	 * not give the window geometry: VHYS is assumed to be the total width, so
+	 * the hold band is half of it on each side of the crossing. */
+	static const uint8_t half_reg[4] = { 0, 5, 15, 28 };
+	static const uint8_t half_lp[4] = { 0, 5, 20, 40 };
+	uint8_t ctrla = rd(p->io.avr, p->r_ctrla);
+	uint8_t mode = (ctrla & HYSMODE_gm) >> HYSMODE_gp;
+	if (p->dacref_mode)
+		return (ctrla & LPMODE_bm) ? half_lp[mode] : half_reg[mode];
+	return band[mode];
 }
 
 /* Raw comparator level (pre-INVERT). With a non-OFF hysteresis band the output
@@ -211,8 +221,28 @@ avr_ac_irq_input(struct avr_irq_t *irq, uint32_t value, void *param)
 		p->pos_mv[idx - AVR_AC_IRQ_AINP0] = value & 0xffff;
 	else if (idx == AVR_AC_IRQ_AINN0 || idx == AVR_AC_IRQ_AINN1)
 		p->neg_mv[idx - AVR_AC_IRQ_AINN0] = value & 0xffff;
+	else if (idx == AVR_AC_IRQ_AINN2)
+		p->neg_mv[2] = value & 0xffff;
 	else
 		return;
+	ac_evaluate(p);
+}
+
+/* DACREF output (mV) = DACREF * VREF / 256 (DS40002311B 29.5.3). */
+static void
+ac_update_dacref(avr_ac_t *p)
+{
+	p->dacref_mv = (uint32_t)(((uint64_t)rd(p->io.avr, p->r_dacref) *
+							   p->vref_mv) >> 8);
+}
+
+static void
+avr_ac_dacref_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v,
+					void *param)
+{
+	avr_ac_t *p = (avr_ac_t *)param;
+	avr_core_watch_write(avr, addr, v);
+	ac_update_dacref(p);
 	ac_evaluate(p);
 }
 
@@ -222,6 +252,11 @@ avr_ac_reset(avr_io_t *io)
 	avr_ac_t *p = (avr_ac_t *)io;
 	p->prev_state = 0;
 	p->prev_raw = 0;
+	if (p->dacref_mode) {
+		p->vref_mv = 1024;	/* VREF.AC0REFSEL resets to 1.024 V */
+		p->io.avr->data[p->r_dacref] = 0xff;	/* DACREF resets to 0xFF */
+		ac_update_dacref(p);
+	}
 }
 
 static const char *irq_names[AVR_AC_IRQ_COUNT] = {
@@ -232,6 +267,7 @@ static const char *irq_names[AVR_AC_IRQ_COUNT] = {
 	[AVR_AC_IRQ_AINN0] = "ac.ainn0",
 	[AVR_AC_IRQ_AINN1] = "ac.ainn1",
 	[AVR_AC_IRQ_OUT] = ">ac.out",
+	[AVR_AC_IRQ_AINN2] = "ac.ainn2",
 };
 
 static avr_io_t _io = {
@@ -244,7 +280,10 @@ void
 avr_ac_set_refs(avr_ac_t * p, uint32_t vref_mv, uint32_t dacref_mv)
 {
 	p->vref_mv = vref_mv;
-	p->dacref_mv = dacref_mv;
+	if (p->dacref_mode)
+		ac_update_dacref(p);	/* the DACREF output tracks the reference */
+	else
+		p->dacref_mv = dacref_mv;
 	/* The negative input (VREF/DAC) is a comparator input, so a reference
 	 * change re-evaluates the output and can raise OUT / a CMP edge, just like
 	 * a pin change (DS40002205A p.417 §29.2: output reflects input changes).
@@ -289,10 +328,28 @@ avr_ac_init(
 	p->base_irq = p->io.irq[0].irq;
 	for (int i = AVR_AC_IRQ_AINP0; i <= AVR_AC_IRQ_AINN1; i++)
 		avr_irq_register_notify(p->io.irq + i, avr_ac_irq_input, p);
+	avr_irq_register_notify(p->io.irq + AVR_AC_IRQ_AINN2, avr_ac_irq_input, p);
 
 	avr_register_io_write(avr, p->r_ctrla, avr_ac_ctrla_write, p);
 	avr_register_io_write(avr, p->r_muxctrla, avr_ac_muxctrla_write, p);
 	avr_register_io_write(avr, p->r_intctrl, avr_ac_intctrl_write, p);
 	avr_register_io_write(avr, p->r_status, avr_ac_status_write, p);
 	avr_register_io_read(avr, p->r_status, avr_ac_status_read, p);
+}
+
+void
+avr_ac_init_dacref(
+		avr_t * avr,
+		avr_ac_t * p,
+		avr_io_addr_t base,
+		uint8_t vector,
+		char name)
+{
+	avr_ac_init(avr, p, base, vector, name);
+	p->dacref_mode = 1;
+	p->r_dacref = base + ACR_DACREF;
+	p->vref_mv = 1024;	/* VREF.CTRLA.AC0REFSEL resets to 1.024 V */
+	avr->data[p->r_dacref] = 0xff;
+	ac_update_dacref(p);
+	avr_register_io_write(avr, p->r_dacref, avr_ac_dacref_write, p);
 }

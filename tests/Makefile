@@ -27,18 +27,23 @@ IPATH 		+= ${simavr}/simavr/sim
 
 tests_src	:= ${wildcard test_*.c}
 tests_src	:= $(filter-out test_attiny3217_%,$(tests_src))
+tests_src	:= $(filter-out test_attiny3224_%,$(tests_src))
 
 all: obj axf hex tst
 
 include ../Makefile.common
 
 HAVE_ATTINY3217_AVR_GCC := $(shell ${AVR}gcc -mmcu=attiny3217 -E - < /dev/null >/dev/null 2>&1 && echo 1 || echo 0)
+HAVE_ATTINY3224_AVR_GCC := $(shell ${AVR}gcc -mmcu=attiny3224 -E - < /dev/null >/dev/null 2>&1 && echo 1 || echo 0)
 
 # The firmware-backed ATtiny3217 tests can run when avr-gcc supports
 # -mmcu=attiny3217. Keep them enabled automatically on capable toolchains,
 # but still build on older environments by filtering them out there.
 ifeq ($(HAVE_ATTINY3217_AVR_GCC),0)
 sources		:= $(filter-out attiny3217_%,$(sources))
+endif
+ifeq ($(HAVE_ATTINY3224_AVR_GCC),0)
+sources		:= $(filter-out attiny3224_%,$(sources))
 endif
 
 tst: ${patsubst %.c, ${OBJ}/%.tst, ${tests_src}}
@@ -82,6 +87,13 @@ run_tests: all
 	        fi ;\
 	    done ;\
 	fi ;\
+	if [ "$(HAVE_ATTINY3224_AVR_GCC)" = "1" ]; then \
+	    num_run=$$(($$num_run+1)) ;\
+	    if ! $(MAKE) attiny3224-selftest >/dev/null; then \
+			echo "attiny3224-selftest returned with exit value $$?." ;\
+			num_failed=$$(($$num_failed+1)) ;\
+	    fi ;\
+	fi ;\
 	echo "Tests run: $$num_run  Successes: $$(($$num_run-$$num_failed))  Failures: $$num_failed" ;\
 	exit $$num_failed
 
@@ -104,6 +116,18 @@ attiny3217-selftest: attiny3217_selftest.axf ${OBJ}/test_attiny3217_selftest
 	@LD_LIBRARY_PATH=${simavr}/simavr/${OBJ} ${OBJ}/test_attiny3217_selftest attiny3217_selftest.axf
 
 ${OBJ}/test_attiny3217_selftest: test_attiny3217_selftest.c | ${OBJ}
+	$(CC) ${CPPFLAGS} -I${simavr}/simavr/sim -I${simavr}/simavr/cores \
+		-o $@ $< -L${simavr}/simavr/${OBJ} -lsimavr -lelf -lm
+
+# tinyAVR 2-series self-test: real compiled firmware exercising the 12-bit
+# differential ADC (single/burst/series, PGA, window), AC0 DACREF, EVSYS and the
+# CCL interrupt through <avr/io.h>, plus the ADC/CCL interrupt vectors, on the
+# ATtiny3224 core. The host harness checks the pass bits the firmware leaves in SRAM.
+attiny3224-selftest: attiny3224_selftest.axf ${OBJ}/test_attiny3224_selftest
+	@echo "--- ATtiny3224 self-test ---"
+	@LD_LIBRARY_PATH=${simavr}/simavr/${OBJ} ${OBJ}/test_attiny3224_selftest attiny3224_selftest.axf
+
+${OBJ}/test_attiny3224_selftest: test_attiny3224_selftest.c | ${OBJ}
 	$(CC) ${CPPFLAGS} -I${simavr}/simavr/sim -I${simavr}/simavr/cores \
 		-o $@ $< -L${simavr}/simavr/${OBJ} -lsimavr -lelf -lm
 

@@ -50,6 +50,7 @@ extern "C" {
 enum {
 	ACR_CTRLA = 0x00,
 	ACR_MUXCTRLA = 0x02,
+	ACR_DACREF = 0x04,	/* tinyAVR 2-series only */
 	ACR_INTCTRL = 0x06,
 	ACR_STATUS = 0x07,
 };
@@ -64,11 +65,12 @@ enum {
 	AVR_AC_IRQ_AINN0,
 	AVR_AC_IRQ_AINN1,
 	AVR_AC_IRQ_OUT,
+	AVR_AC_IRQ_AINN2,	/* tinyAVR 2-series only (appended: keeps OUT's index) */
 	AVR_AC_IRQ_COUNT,
 };
 
 #define AVR_AC_POS_PINS	4
-#define AVR_AC_NEG_PINS	2
+#define AVR_AC_NEG_PINS	3
 
 typedef struct avr_ac_t {
 	avr_io_t	io;
@@ -85,6 +87,8 @@ typedef struct avr_ac_t {
 	uint32_t	dacref_mv;	/* DAC output (MUXNEG = DAC) */
 	uint8_t		prev_state;	/* last comparator output (for edge detect) */
 	uint8_t		prev_raw;	/* last raw level (pre-INVERT), hysteresis memory */
+	uint8_t		dacref_mode;	/* tinyAVR 2-series: DACREF register + AINN2 */
+	avr_io_addr_t	r_dacref;
 	int			base_irq;	/* global irq number of AINP0 */
 } avr_ac_t;
 
@@ -94,6 +98,24 @@ typedef struct avr_ac_t {
  */
 void
 avr_ac_init(
+		avr_t * avr,
+		avr_ac_t * p,
+		avr_io_addr_t base,
+		uint8_t vector,
+		char name);
+
+/*
+ * As avr_ac_init() for the tinyAVR 2-series comparator (DS40002311B ch.29):
+ * MUXNEG selects AINN0/AINN1/AINN2/DACREF, and DACREF (offset 0x04, reset 0xFF)
+ * scales the VREF.AC0REFSEL reference: V = DACREF * VREF / 256. The reference
+ * (mV) is supplied with avr_ac_set_refs() (its dacref argument is ignored —
+ * the DACREF output is recomputed from the register). HYSMODE uses the
+ * datasheet's typical VHYS, 10/30/55 mV (10/40/80 mV with LPMODE). The
+ * datasheet gives no window geometry; VHYS is *assumed* to be the total width,
+ * i.e. a +/- VHYS/2 half-window around the crossing.
+ */
+void
+avr_ac_init_dacref(
 		avr_t * avr,
 		avr_ac_t * p,
 		avr_io_addr_t base,

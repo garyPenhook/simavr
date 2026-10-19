@@ -2,13 +2,15 @@
 	blink_fw.c
 
 	A *device-agnostic* modern-AVR (AVRxt) peripheral self-test firmware. The
-	same source is compiled once per supported modern core (all 15 tinyAVR
-	1-series + 8 megaAVR 0-series) by this board's Makefile, each build passing
+	same source is compiled once per supported modern core (tinyAVR 0-, 1- and
+	2-series + megaAVR 0-series) by this board's Makefile, each build passing
 	the device name in MCU_NAME so the embedded .mmcu section names the right
 	core for simavr.
 
-	It touches only peripherals that exist identically on every modern AVR, from
-	the 8-pin ATtiny212 up to the 48-pin ATmega4809, and reports a result bitmask
+	It touches only peripherals that exist on every modern AVR, from the 8-pin
+	ATtiny212 up to the 48-pin ATmega4809 (the ADC is the one block with two
+	register maps: the tinyAVR 2-series 12-bit ADC is driven under #ifdef
+	ADC0_CTRLF, which only that ADC defines), and reports a result bitmask
 	(one bit per peripheral that responded) on USART0 every loop:
 
 	  bit 0  PORT   PA0 toggles                       (the "LED")
@@ -115,10 +117,18 @@ main(void)
 		;
 	RTC.CTRLA = RTC_RTCEN_bm;
 
-	/* ADC0: enable, VDD reference, modest prescaler; convert AIN0. */
+	/* ADC0: enable, VDD reference, modest prescaler; convert AIN0 (the 2-series
+	 * ADC has no AIN0 in its mux, so it converts the internal GND input). */
+#ifdef ADC0_CTRLF
+	ADC0.CTRLB = ADC_PRESC_DIV4_gc;
+	ADC0.CTRLC = (4 << ADC_TIMEBASE_gp) | ADC_REFSEL_VDD_gc;
+	ADC0.MUXPOS = ADC_MUXPOS_GND_gc;
+	ADC0.CTRLA = ADC_ENABLE_bm;
+#else
 	ADC0.CTRLC = ADC_PRESC_DIV4_gc | ADC_REFSEL_VDDREF_gc;
 	ADC0.MUXPOS = 0;
 	ADC0.CTRLA = ADC_ENABLE_bm;
+#endif
 
 	/* SPI0: master; SS-disable so a stray SS pin can't clear master mode. */
 	SPI0.CTRLB = SPI_SSD_bm;
@@ -143,12 +153,21 @@ main(void)
 			r |= R_RTC;
 
 		/* ADC: start a conversion, bounded wait for RESRDY, then clear it. */
+#ifdef ADC0_CTRLF
+		ADC0.COMMAND = ADC_MODE_SINGLE_12BIT_gc | ADC_START_IMMEDIATE_gc;
+		if (wait_flag((volatile uint8_t *)&ADC0.INTFLAGS, ADC_RESRDY_bm, 4000)) {
+			(void)ADC0.RESULT;
+			ADC0.INTFLAGS = ADC_RESRDY_bm;
+			r |= R_ADC;
+		}
+#else
 		ADC0.COMMAND = ADC_STCONV_bm;
 		if (wait_flag((volatile uint8_t *)&ADC0.INTFLAGS, ADC_RESRDY_bm, 4000)) {
 			(void)ADC0.RES;
 			ADC0.INTFLAGS = ADC_RESRDY_bm;
 			r |= R_ADC;
 		}
+#endif
 
 		/* SPI: clock a byte out as master, bounded wait for IF. */
 		SPI0.DATA = 0xA5;

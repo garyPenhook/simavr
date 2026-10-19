@@ -201,26 +201,29 @@ avr_evsys_init(
 }
 
 void
-avr_evsys_init_mega(
+avr_evsys_init_xt(
 		avr_t * avr,
 		avr_evsys_t * p,
 		avr_io_addr_t base,
-		char name)
+		char name,
+		uint8_t nchannels,
+		uint8_t nusers)
 {
 	memset(p, 0, sizeof(*p));
 	p->io = _io;
 	p->name = name;
 	p->base = base;
-	p->nchannels = 6;
-	p->nusers = 24;
+	p->nchannels = nchannels > AVR_EVSYS_MAX_CHANNELS ?
+				   AVR_EVSYS_MAX_CHANNELS : nchannels;
+	p->nusers = nusers > AVR_EVSYS_MAX_USERS ? AVR_EVSYS_MAX_USERS : nusers;
 	p->nstrobe = 1;
-	p->r_strobe[0] = base + 0x00;
+	p->r_strobe[0] = base + 0x00;		/* SWEVENTA / STROBE */
 	p->strobe_first_channel[0] = 0;
-	p->strobe_width[0] = 6;
+	p->strobe_width[0] = p->nchannels;
 	for (int i = 0; i < p->nchannels; i++)
-		p->r_chan[i] = base + 0x10 + i;
+		p->r_chan[i] = base + 0x10 + i;	/* CHANNELn */
 	for (int i = 0; i < p->nusers; i++)
-		p->r_user[i] = base + 0x20 + i;
+		p->r_user[i] = base + 0x20 + i;	/* USERxxx */
 
 	avr_register_io(avr, &p->io);
 	avr_io_setirqs(&p->io, AVR_IOCTL_EVSYS_GETIRQ(name),
@@ -232,4 +235,14 @@ avr_evsys_init_mega(
 	avr_register_io_write(avr, p->r_strobe[0], avr_evsys_strobe_write, p);
 	for (int i = 0; i < p->nusers; i++)
 		avr_register_io_write(avr, p->r_user[i], avr_evsys_user_write, p);
+}
+
+void
+avr_evsys_init_mega(
+		avr_t * avr,
+		avr_evsys_t * p,
+		avr_io_addr_t base,
+		char name)
+{
+	avr_evsys_init_xt(avr, p, base, name, 6, 24);
 }

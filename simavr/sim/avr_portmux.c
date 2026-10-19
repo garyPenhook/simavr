@@ -43,7 +43,7 @@ avr_portmux_reset(avr_io_t *io)
 {
 	avr_portmux_t *p = (avr_portmux_t *)io;
 	avr_t *avr = p->io.avr;
-	for (int i = 0; i < AVR_PORTMUX_REGS; i++)
+	for (int i = 0; i < p->nregs; i++)
 		avr->data[p->base + i] = 0;	/* default routing */
 }
 
@@ -56,18 +56,30 @@ static avr_io_t _io = {
 };
 
 void
-avr_portmux_init(
+avr_portmux_init_n(
 		avr_t * avr,
 		avr_portmux_t * p,
 		avr_io_addr_t base,
+		uint8_t nregs,
 		char name)
 {
 	memset(p, 0, sizeof(*p));
 	p->io = _io;
 	p->name = name;
 	p->base = base;
+	p->nregs = nregs > AVR_PORTMUX_REGS_MAX ? AVR_PORTMUX_REGS_MAX : nregs;
 
 	avr_register_io(avr, &p->io);
-	for (int i = 0; i < AVR_PORTMUX_REGS; i++)
+	for (int i = 0; i < p->nregs; i++)
 		avr_register_io_write(avr, base + i, avr_portmux_write, p);
+}
+
+void
+avr_portmux_init(
+		avr_t * avr,
+		avr_portmux_t * p,
+		avr_io_addr_t base,
+		char name)
+{
+	avr_portmux_init_n(avr, p, base, AVR_PORTMUX_REGS, name);
 }

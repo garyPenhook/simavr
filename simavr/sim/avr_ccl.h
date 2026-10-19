@@ -143,6 +143,12 @@ typedef struct avr_ccl_t {
 		void * ccl;
 		uint8_t lut;
 	} tick_ctx[AVR_CCL_MAX_LUTS];
+
+	/* megaAVR-0 / tinyAVR-2 layout: INTCTRL0 @+0x05, INTFLAGS @+0x07, one
+	 * CCL_CCL vector shared by the four LUT outputs (see avr_ccl_set_interrupt). */
+	uint8_t		has_irq;
+	avr_io_addr_t	r_intctrl, r_intflags;
+	avr_int_vector_t	vect;
 } avr_ccl_t;
 
 /*
@@ -164,6 +170,19 @@ avr_ccl_init_mega(
 		avr_io_addr_t base,
 		uint8_t nluts,
 		char name);
+
+/*
+ * Enable the LUT-output interrupt of the mega-layout CCL (avr_ccl_init_mega):
+ * CCL.INTCTRL0.INTMODEn selects which LUTn output edge (rising / falling /
+ * both) sets CCL.INTFLAGS.INTn, which is cleared by writing a 1 to it; all four
+ * flags are ORed onto 'vector' (the CCL_CCL vector). DS40002311B 28.3.2, 28.5.4-5.
+ * A no-op on the tinyAVR-1 layout, which has neither register.
+ */
+void
+avr_ccl_set_interrupt(
+		avr_t * avr,
+		avr_ccl_t * p,
+		uint8_t vector);
 
 #define AVR_IOCTL_CCL_GETIRQ(_name) AVR_IOCTL_DEF('c','c','l',(_name))
 
