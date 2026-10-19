@@ -364,3 +364,27 @@ def test_watchpoint(sim):
         sim.add_watchpoint(PORTA_DIR, 1, sa.WatchFlag(0))
     with pytest.raises(sa.OutOfRange):
         sim.add_watchpoint(0xFFFF, 4)
+
+
+def test_peripheral_watch(sim):
+    # The port model, not the CPU, updates PORTA.IN when OUT toggles.
+    cpu_wp = sim.add_watchpoint(PORTA_IN, 1, sa.WatchFlag.WRITE)
+    sim.run_cycles(1000)
+    assert not [e for e in sim.events()
+                if isinstance(e, sa.StateEvent) and e.reason is sa.StopReason.WATCHPOINT]
+    sim.remove_watchpoint(cpu_wp)
+    sim.reset()
+    wp = sim.add_watchpoint(PORTA_IN, 1, sa.WatchFlag.PERIPH)
+    sim.run_cycles(1000)
+    st = [e for e in sim.events() if isinstance(e, sa.StateEvent)][-1]
+    assert st.reason is sa.StopReason.WATCHPOINT and st.id == wp
+    sim.remove_watchpoint(wp)
+
+
+def test_peripheral_watch_ignores_host_pokes(sim):
+    wp = sim.add_watchpoint(0x3000, 1, sa.WatchFlag.PERIPH)    # SRAM the firmware never touches
+    sim.poke(0x3000, 0x55)
+    sim.run_cycles(200)
+    assert not [e for e in sim.events()
+                if isinstance(e, sa.StateEvent) and e.reason is sa.StopReason.WATCHPOINT]
+    sim.remove_watchpoint(wp)

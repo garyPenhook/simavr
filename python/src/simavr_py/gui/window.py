@@ -692,11 +692,12 @@ class SourceView(QWidget):
 
 
 def parse_data_break(text: str) -> tuple[int, int, WatchFlag]:
-    """'hexaddr[:len] [r|w|rw|c]' -> (addr, length, flags). Hex is always hex.
-    Modes: r read, w write (default), rw both, c write that changes the value."""
+    """'hexaddr[:len] [r|w|rw|c|p]' -> (addr, length, flags). Hex is always hex.
+    Modes: r read, w write (default), rw both, c CPU write that changes the value,
+    p any change by anyone (CPU or peripheral model)."""
     parts = text.split()
     if not 1 <= len(parts) <= 2:
-        raise ValueError(f"bad data breakpoint {text!r}: expected hexaddr[:len] [r|w|rw|c]")
+        raise ValueError(f"bad data breakpoint {text!r}: expected hexaddr[:len] [r|w|rw|c|p]")
     spec, _, ln = parts[0].partition(":")
     try:
         if "_" in parts[0]:
@@ -706,24 +707,27 @@ def parse_data_break(text: str) -> tuple[int, int, WatchFlag]:
     except ValueError:
         raise ValueError(f"bad data breakpoint {text!r}: expected hexaddr[:decimal len]") from None
     modes = {"r": WatchFlag.READ, "w": WatchFlag.WRITE,
-             "rw": WatchFlag.READ | WatchFlag.WRITE, "c": WatchFlag.WRITE | WatchFlag.CHANGE}
+             "rw": WatchFlag.READ | WatchFlag.WRITE, "c": WatchFlag.WRITE | WatchFlag.CHANGE, "p": WatchFlag.PERIPH}
     mode = parts[1].lower() if len(parts) == 2 else "w"
     if mode not in modes:
-        raise ValueError(f"bad data breakpoint {text!r}: mode must be r, w, rw or c")
+        raise ValueError(f"bad data breakpoint {text!r}: mode must be r, w, rw, c or p")
     if not 0 <= addr <= 0xFFFF or not 1 <= length <= 0xFFFF:
         raise ValueError(f"bad data breakpoint {text!r}: address/length out of range")
     return addr, length, modes[mode]
 
 
 def _mode_text(flags: WatchFlag) -> str:
+    if flags & WatchFlag.PERIPH:
+        return "p"
     if flags & WatchFlag.CHANGE:
         return "c"
     return ("r" if flags & WatchFlag.READ else "") + ("w" if flags & WatchFlag.WRITE else "")
 
 
 class DataBreakPane(QWidget):
-    """Data-space watchpoints that pause the run. CPU accesses only (peripheral
-    writes are not seen); the stop lands after the accessing instruction. Owns
+    """Data-space watchpoints that pause the run. r/w/rw/c see CPU accesses only;
+    p sees any change, peripheral models included. The stop lands after the
+    accessing instruction (or the cycle step that changed it). Owns
     the list and re-arms it on every new simulator."""
 
     HIT = QColor("#f4a6a6")
@@ -735,7 +739,7 @@ class DataBreakPane(QWidget):
         self._ids: dict[tuple[int, int, WatchFlag], int] = {}
         self._hit: tuple[int, int, WatchFlag] | None = None
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("hexaddr[:len] [r|w|rw|c], e.g. 0x0400, 3f:2 rw (Enter)")
+        self._edit.setPlaceholderText("hexaddr[:len] [r|w|rw|c|p], e.g. 0x0400, 3f:2 rw (Enter)")
         self._edit.returnPressed.connect(self._add_from_edit)
         rm = QPushButton("Remove")
         rm.clicked.connect(self._remove_selected)

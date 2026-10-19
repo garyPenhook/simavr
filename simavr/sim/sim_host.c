@@ -115,7 +115,9 @@ struct avr_host_t {
 		int				id;
 		uint16_t		addr, len;
 		uint32_t		flags;
+		uint8_t *		prev;		/* PERIPH: last seen bytes of [addr, addr+len) */
 	}					watch[HOST_MAX_WATCHES];
+	int					nperiph;	/* watches with AVR_HOST_WATCH_PERIPH */
 	int					in_run;		/* inside avr_run(): host peeks/pokes must not hit watches */
 	int					watch_hit;	/* id of the watch that fired this instruction */
 	uint16_t			watch_addr;
@@ -447,6 +449,12 @@ host_exec(
 	avr_t * avr = h->avr;
 	avr_cycle_count_t start = avr->cycle;
 
+	/* Host pokes and earlier stops may have changed watched bytes: re-baseline,
+	 * so only changes made while running trigger a PERIPH watch. */
+	for (int i = 0; h->nperiph && i < h->nwatches; i++)
+		if (h->watch[i].prev)
+			memcpy(h->watch[i].prev, h->avr->data + h->watch[i].addr, h->watch[i].len);
+
 	while (h->mode == AVR_HOST_RUNNING && avr->cycle - start < budget) {
 		if (__atomic_exchange_n(&h->pause_req, 0, __ATOMIC_SEQ_CST)) {
 			host_set_mode(h, AVR_HOST_PAUSED, AVR_HOST_STOP_USER, 0);
@@ -472,6 +480,13 @@ host_exec(
 		h->in_run = 0;
 		if (executed)
 			h->skip_break = 0;
+		for (int i = 0; h->nperiph && !h->watch_hit && i < h->nwatches; i++) {
+			uint8_t * cur = avr->data + h->watch[i].addr;
+			if (h->watch[i].prev && memcmp(h->watch[i].prev, cur, h->watch[i].len)) {
+				memcpy(h->watch[i].prev, cur, h->watch[i].len);
+				h->watch_hit = h->watch[i].id;
+			}
+		}
 		if (h->watch_hit) {
 			int id = h->watch_hit;
 			h->watch_hit = 0;
@@ -741,6 +756,8 @@ avr_host_free(
 	free(h->avr);
 	for (int i = 0; i < HOST_MAX_UARTS; i++)
 		free(h->uart[i].buf);
+	for (int i = 0; i < h->nwatches; i++)
+		free(h->watch[i].prev);
 #ifndef _WIN32
 	if (h->ev_pipe[0] >= 0) {
 		close(h->ev_pipe[0]);
@@ -1495,19 +1512,27 @@ avr_host_watch_add(
 		uint32_t flags)
 {
 	int res;
+	uint8_t * prev = NULL;
 	host_lock(h);
 	if (!len || (uint32_t)addr + len > (uint32_t)h->avr->ramend + 1)
 		res = host_error(h, AVR_HOST_ERANGE, "bad watch range %#x+%u", addr, len);
-	else if (!(flags & (AVR_HOST_WATCH_READ | AVR_HOST_WATCH_WRITE)))
-		res = host_error(h, AVR_HOST_EINVAL, "watch needs READ and/or WRITE");
+	else if (!(flags & (AVR_HOST_WATCH_READ | AVR_HOST_WATCH_WRITE | AVR_HOST_WATCH_PERIPH)))
+		res = host_error(h, AVR_HOST_EINVAL, "watch needs READ, WRITE and/or PERIPH");
 	else if (h->nwatches == HOST_MAX_WATCHES)
 		res = host_error(h, AVR_HOST_ENOMEM, "too many watchpoints");
+	else if ((flags & AVR_HOST_WATCH_PERIPH) && !(prev = malloc(len)))
+		res = host_error(h, AVR_HOST_ENOMEM, "out of memory");
 	else {
 		res = h->next_id++;
 		h->watch[h->nwatches].id = res;
 		h->watch[h->nwatches].addr = addr;
 		h->watch[h->nwatches].len = len;
+		h->watch[h->nwatches].prev = prev;
 		h->watch[h->nwatches++].flags = flags;
+		if (prev) {
+			memcpy(prev, h->avr->data + addr, len);
+			h->nperiph++;
+		}
 		h->avr->cpu_watch = host_cpu_watch;
 		h->avr->cpu_watch_param = h;
 	}
@@ -1524,6 +1549,10 @@ avr_host_watch_remove(
 	host_lock(h);
 	for (int i = 0; i < h->nwatches; i++)
 		if (h->watch[i].id == id) {
+			if (h->watch[i].prev) {
+				free(h->watch[i].prev);
+				h->nperiph--;
+			}
 			h->watch[i] = h->watch[--h->nwatches];
 			res = 0;
 			break;

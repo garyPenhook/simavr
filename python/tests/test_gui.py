@@ -588,6 +588,7 @@ from simavr_py.gui.window import MainWindow, parse_data_break
 assert parse_data_break("0x0407") == (0x407, 1, WatchFlag.WRITE)
 assert parse_data_break("3f:2 RW") == (0x3F, 2, WatchFlag.READ | WatchFlag.WRITE)
 assert parse_data_break("40 c") == (0x40, 1, WatchFlag.WRITE | WatchFlag.CHANGE)
+assert parse_data_break("408 P") == (0x408, 1, WatchFlag.PERIPH)
 for bad in ("", "zz", "40 x", "40:0", "10000", "1 2 3", "4_0", "40:-1"):
     try:
         parse_data_break(bad)

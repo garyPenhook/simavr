@@ -47,6 +47,7 @@ class WatchFlag(enum.IntFlag):
     READ = 1
     WRITE = 2
     CHANGE = 4          # with WRITE: only when the value differs
+    PERIPH = 8          # any change, whoever wrote it (peripheral models included)
 
 
 class Space(enum.IntEnum):

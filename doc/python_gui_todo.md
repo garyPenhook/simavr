@@ -265,10 +265,19 @@ RETI doesn't count (it restores SP to at most the starting value). Step *into* i
 just Step. The "running" state event produced by our own resume is now ignored
 rather than treated as a foreign stop (it could cancel a step over a call).
 
+**Peripheral-register triggers (slice 12, 2026-10-19):** `AVR_HOST_WATCH_PERIPH`
+(Python `WatchFlag.PERIPH`, GUI mode `p`) pauses when any byte of the range
+differs after an instruction, whoever wrote it. It is a snapshot compare after
+each `avr_run()` (only while a PERIPH watch exists), so no peripheral model needs
+hooking; it also catches changes made while asleep. The baseline is re-taken at
+every resume, so host pokes never fire it. Limits: granularity is one
+instruction/cycle-timer step, a value that changes and changes back within one
+step is missed, and the stop does not say who wrote it. SREG is not covered (the
+core keeps it outside `data[]`).
+
 1. Breakpoints:
    * PC breakpoints
-   * data watchpoints (CPU accesses done; peripheral-register triggers not)
-   * peripheral-register change triggers
+   * data watchpoints and peripheral-register change triggers
 2. Add disassembly and source correlation from ELF/DWARF where available.
 3. Show interrupt activity:
    * pending/active sources

@@ -405,16 +405,23 @@ enum {
 	AVR_HOST_WATCH_WRITE	= 1 << 1,
 	/* Pause only if the written value differs from the old one. */
 	AVR_HOST_WATCH_CHANGE	= 1 << 2,
+	/* Pause when any byte of the range differs after an instruction (or the
+	 * timers/peripherals run), whoever wrote it: CPU, peripheral model or
+	 * interrupt hardware. Needs neither READ nor WRITE; the range is re-
+	 * baselined on every resume, so host pokes never fire it. A write of the
+	 * same value is not a change. */
+	AVR_HOST_WATCH_PERIPH	= 1 << 3,
 };
 
 /* Pausing data-space watch over [addr, addr+len) (addr is a data-space
  * address: registers, I/O and SRAM). Fires on CPU accesses only (LD/ST/LDS/
- * STS/IN/OUT/SBI/PUSH/CALL/interrupt entry/...); writes made by peripheral models are not seen. The
+ * STS/IN/OUT/SBI/PUSH/CALL/interrupt entry/...); writes made by peripheral models are not seen
+ * unless AVR_HOST_WATCH_PERIPH is set. The
  * instruction completes first, so the instance stops with PC at the next
  * instruction (AVR_HOST_STOP_WATCHPOINT, id = the watch id). A read-modify-
  * write instruction (SBI/CBI) counts as both a read and a write. The
  * non-pausing AVR_HOST_EV_WATCH event is not produced. Errors: ERANGE (outside
- * data space), EINVAL (neither READ nor WRITE), ENOMEM (32 watches). */
+ * data space), EINVAL (none of READ, WRITE, PERIPH), ENOMEM (32 watches). */
 int
 avr_host_watch_add(
 		avr_host_t * h,
