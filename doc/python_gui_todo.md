@@ -179,6 +179,13 @@ metadata table).
 
 ## Phase 5 — debugger-quality UX
 
+**Status (2026-10-18): PC breakpoints landed.** A "Breakpoints" dock
+(`BreakpointPane`) lists flash byte addresses, arms them on every (re)loaded
+simulator, highlights the one that stopped the run, and saves them in the
+session (format version 3). Addresses beyond the device's flash stay listed but
+show unarmed. Data watchpoints are blocked on the native `avr_host_watch_add`
+(not implemented); source/disassembly correlation is not started.
+
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints if the core can surface them cheaply

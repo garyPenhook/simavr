@@ -16,11 +16,12 @@ from PySide6.QtWidgets import (
 
 from ..boards import BoardError, load_board
 from ..core import (
-    OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent, UartTxEvent,
+    OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent, StopReason,
+    UartTxEvent,
 )
 from .board import BoardCanvas
 
-SESSION_VERSION = 2          # 2 added "board"; 1 files still load
+SESSION_VERSION = 3          # 3 added "breakpoints", 2 "board"; older files still load
 REFRESH_MS = 50          # repaint cadence, independent of simulated time
 DRAIN_LIMIT = 1024
 
@@ -335,6 +336,137 @@ class WatchPane(QWidget):
                 item.setBackground(QBrush(self.CHANGED) if changed else QBrush())
 
 
+def parse_breakpoint(text: str) -> int:
+    """'hexaddr' -> flash byte address of an instruction (even; 0x optional)."""
+    t = text.strip()
+    try:
+        if "_" in t:
+            raise ValueError(t)
+        addr = int(t, 16)       # always hex: "0b10" is 0x0B10, not binary
+    except ValueError:
+        raise ValueError(f"bad breakpoint {text!r}: expected a hex flash address") from None
+    if addr < 0 or addr & 1:
+        raise ValueError(f"bad breakpoint {text!r}: must be an even byte address")
+    return addr
+
+
+class BreakpointPane(QWidget):
+    """PC breakpoints by flash byte address. The pane owns the address list and
+    re-arms it on every new simulator (the host ids die with the old one)."""
+
+    HIT = QColor("#f4a6a6")
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._addrs: list[int] = []
+        self._ids: dict[int, int] = {}          # address -> host breakpoint id
+        self._hit: int | None = None
+        self._edit = QLineEdit()
+        self._edit.setPlaceholderText("hex flash address, e.g. 0x0120 (Enter)")
+        self._edit.returnPressed.connect(self._add_from_edit)
+        rm = QPushButton("Remove")
+        rm.clicked.connect(self._remove_selected)
+        self._table = QTableWidget(0, 2)
+        self._table.setHorizontalHeaderLabels(["Addr", "Armed"])
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setFont(_mono())
+        top = QHBoxLayout()
+        top.addWidget(self._edit)
+        top.addWidget(rm)
+        lay = QGridLayout(self)
+        lay.addLayout(top, 0, 0)
+        lay.addWidget(self._table, 1, 0)
+
+    @property
+    def addresses(self) -> list[int]:
+        return list(self._addrs)
+
+    def set_sim(self, sim: Simulator | None):
+        """Attach (or detach) a simulator and arm every address on it."""
+        self._sim = sim
+        self._ids.clear()
+        self._hit = None
+        for addr in self._addrs:
+            self._arm(addr)
+        self._render()
+
+    def set_addresses(self, addrs):
+        for addr in list(self._addrs):
+            self._disarm(addr)
+        self._addrs = sorted(set(addrs))
+        self._hit = None
+        for addr in self._addrs:
+            self._arm(addr)
+        self._render()
+
+    def add(self, addr: int):
+        if addr not in self._addrs:
+            self._addrs = sorted([*self._addrs, addr])
+            self._arm(addr)
+            self._render()
+
+    def _arm(self, addr: int):
+        if self._sim is None:
+            return
+        try:
+            self._ids[addr] = self._sim.add_breakpoint(addr)
+        except SimavrError:
+            pass            # out of this device's flash: stays listed, shown unarmed
+
+    def _disarm(self, addr: int):
+        bp = self._ids.pop(addr, None)
+        if bp is not None and self._sim is not None:
+            try:
+                self._sim.remove_breakpoint(bp)
+            except SimavrError:
+                pass
+
+    def mark_hit(self, bp_id: int):
+        self._hit = next((a for a, i in self._ids.items() if i == bp_id), None)
+        self._render()
+
+    def clear_hit(self):
+        if self._hit is not None:
+            self._hit = None
+            self._render()
+
+    def _add_from_edit(self):
+        try:
+            addr = parse_breakpoint(self._edit.text())
+        except ValueError as e:
+            QMessageBox.warning(self, "Breakpoint", str(e))
+            return
+        self.add(addr)
+        self._edit.clear()
+
+    def _remove_selected(self):
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        gone = [a for i, a in enumerate(self._addrs) if i in rows]
+        for addr in gone:
+            self._disarm(addr)
+        self._addrs = [a for a in self._addrs if a not in gone]
+        if self._hit in gone:
+            self._hit = None
+        self._render()
+
+    def _render(self):
+        selected = {self._addrs[i] for i in {x.row() for x in self._table.selectedIndexes()}
+                    if i < len(self._addrs)}
+        self._table.setRowCount(len(self._addrs))
+        for row, addr in enumerate(self._addrs):
+            armed = "yes" if addr in self._ids else ("-" if self._sim is None else "no")
+            for col, text in enumerate((f"0x{addr:05X}", armed)):
+                item = QTableWidgetItem(text)
+                if addr == self._hit:
+                    item.setBackground(QBrush(self.HIT))
+                self._table.setItem(row, col, item)
+            if addr in selected:
+                self._table.selectRow(row)
+
+
 class UartConsole(QWidget):
     def __init__(self):
         super().__init__()
@@ -386,6 +518,7 @@ class MainWindow(QMainWindow):
         self.cpu = CpuView()
         self.mem = MemoryView()
         self.watch = WatchPane()
+        self.breaks = BreakpointPane()
         self.uart = UartConsole()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -395,6 +528,7 @@ class MainWindow(QMainWindow):
         for title, w, area in (("Board", self.board, Qt.DockWidgetArea.TopDockWidgetArea),
                                ("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Breakpoints", self.breaks, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
             dock = QDockWidget(title, self)
@@ -462,6 +596,7 @@ class MainWindow(QMainWindow):
         self.pins.set_sim(sim)
         self.uart.set_sim(sim)
         self.board.set_sim(sim)
+        self.breaks.set_sim(sim)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
         self.refresh()
@@ -475,6 +610,7 @@ class MainWindow(QMainWindow):
             self._notifier = None
         self.pins.set_sim(None)
         self.uart.set_sim(None)
+        self.breaks.set_sim(None)
         self.board.set_sim(None)     # releases held pins while the sim is still open
         if sim is not None:
             try:
@@ -505,6 +641,12 @@ class MainWindow(QMainWindow):
                     tx.append(b)
                 case PinEvent() | OverflowEvent():
                     self.board.dispatch(ev)
+                case StateEvent(reason=StopReason.BREAKPOINT, id=bp):
+                    # A queued event can outlive a Run/Step pressed since; only
+                    # mark while the sim is actually stopped.
+                    if sim.state not in (State.RUNNING, State.SLEEPING):
+                        self.breaks.mark_hit(bp)
+                    self._update_actions()
                 case StateEvent():
                     self._update_actions()
         if tx:
@@ -557,17 +699,20 @@ class MainWindow(QMainWindow):
             "geometry": b64(self.saveGeometry()),
             "layout": b64(self.saveState()),
             "watches": [list(w) for w in self.watch.watches],
+            "breakpoints": self.breaks.addresses,
             "driven": self.pins.driven(),
         }
 
     def apply_session(self, d: dict, load_firmware: bool = True):
         """Restore a session dict. Raises ValueError on a file we can't read."""
-        if not isinstance(d, dict) or d.get("version") not in (1, SESSION_VERSION):
+        if not isinstance(d, dict) or d.get("version") not in (1, 2, SESSION_VERSION):
             raise ValueError("not a simavr session file (or unsupported version)")
         self._mmcu = d.get("mmcu") or self._mmcu
         self._freq = int(d.get("freq", self._freq))
         self._speed = float(d.get("speed", self._speed))
         self.watch.set_watches((str(l), int(a), int(w)) for l, a, w in d.get("watches", []))
+        self.breaks.set_addresses(parse_breakpoint(f"{int(a):x}")
+                                  for a in d.get("breakpoints", []))
         for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
             if d.get(key):
                 restore(QByteArray(base64.b64decode(d[key])))
@@ -619,6 +764,8 @@ class MainWindow(QMainWindow):
     def run(self):
         if self._sim:
             self._guard(self._sim.resume)
+            if self._sim.state in (State.RUNNING, State.SLEEPING):
+                self.breaks.clear_hit()
 
     def pause(self):
         if self._sim:
@@ -627,6 +774,7 @@ class MainWindow(QMainWindow):
     def step(self):
         if self._sim:
             self._guard(self._sim.step)
+            self.breaks.clear_hit()
 
     def reset(self):
         if self._sim:

@@ -263,3 +263,63 @@ def test_lcd_end_to_end(tmp_path):
     r = subprocess.run([sys.executable, "-c", LCD_SCRIPT, str(elf), board], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+BREAK_SCRIPT = r"""
+import json, sys
+from PySide6.QtWidgets import QApplication
+from simavr_py.core import State
+from simavr_py.gui.window import MainWindow, parse_breakpoint
+
+assert parse_breakpoint("0x120") == 0x120 and parse_breakpoint("40") == 0x40
+assert parse_breakpoint("0b10") == 0xB10
+for bad in ("zz", "121", "-2", "", "1_0"):
+    try:
+        parse_breakpoint(bad)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(bad)
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.breaks.set_addresses([0, 0xFFFFFE])      # second is beyond flash: listed, unarmed
+win.load(sys.argv[1])
+assert win.breaks._table.item(0, 1).text() == "yes"
+assert win.breaks._table.item(1, 1).text() == "no"
+win.run()
+assert win._sim.wait_stopped(5), "reset-vector breakpoint did not fire"
+win._drain()
+assert win._sim.state == State.PAUSED and win.breaks._hit == 0
+assert win.breaks._table.item(0, 0).background().color().name() == "#f4a6a6"
+win.run()                                    # resuming from the hit PC must not refire
+assert not win._sim.wait_stopped(0.3)
+assert win.breaks._hit is None
+win.pause(); assert win._sim.wait_stopped(5)
+d = json.loads(json.dumps(win.session_dict()))
+assert d["breakpoints"] == [0, 0xFFFFFE]
+win.breaks._table.selectRow(0); win.breaks._remove_selected()
+assert win.breaks.addresses == [0xFFFFFE]
+win.close()
+
+win2 = MainWindow(None, 0)
+win2.apply_session(d)
+assert win2.breaks.addresses == [0, 0xFFFFFE]
+assert win2.breaks._table.item(0, 1).text() == "yes"
+win2.close()
+"""
+
+
+def test_breakpoint_pane(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(FIRMWARE)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", BREAK_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
