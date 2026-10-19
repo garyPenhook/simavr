@@ -689,6 +689,10 @@ assert IP.exec_text(0) == "executing: none" and IP.exec_text(0x01) == "executing
 assert IP.exec_text(0x83) == "executing: NMI > LVL1 > LVL0"
 win.refresh()
 assert win.irqs._exec.text() == "executing: none", win.irqs._exec.text()
+assert IP.flags_text([("TCA0", 0, 1), ("USART0", 0x40, 0x80), ("X", 2, None)]) == \
+    "flags set: USART0 flags 0x40 (enable 0x80), X flags 0x02"
+assert IP.flags_text([("A", 0, 0)]) == "flags set: none"
+assert win.irqs._flags.text().startswith("flags set: "), win.irqs._flags.text()
 win.irqs.clear()
 assert win.irqs.stats == {} and win.irqs._table.rowCount() == 0
 win.close()

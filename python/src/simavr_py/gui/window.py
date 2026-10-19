@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
-from ..registers import Register, registers
+from ..registers import Register, interrupt_flag_pairs, registers
 from ..vectors import vector_label, vector_names
 from ..boards import BoardError, load_board
 from ..core import (
@@ -964,6 +964,13 @@ class InterruptPane(QWidget):
         clear.clicked.connect(self.clear)
         self._total = QLabel("0 interrupts")
         self._exec = QLabel("executing: -")
+        self._flags = QLabel("flags set: -")
+        self._flags.setWordWrap(True)
+        self._flags.setToolTip("Peripherals whose INTFLAGS register is non-zero while stopped.\n"
+                               "INTCTRL is the matching enable register; a flag only raises an\n"
+                               "interrupt if its enable bit, the global I flag and the level allow it.")
+        self._pairs: tuple = ()
+        self._flags_key = None
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Vector", "Level", "Count", "Last cycle"])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -975,7 +982,20 @@ class InterruptPane(QWidget):
         lay = QGridLayout(self)
         lay.addLayout(top, 0, 0)
         lay.addWidget(self._exec, 1, 0)
-        lay.addWidget(self._table, 2, 0)
+        lay.addWidget(self._flags, 2, 0)
+        lay.addWidget(self._table, 3, 0)
+
+    @staticmethod
+    def flags_text(rows: list[tuple[str, int, int | None]]) -> str:
+        """rows = (peripheral, INTFLAGS value, INTCTRL value or None); non-zero flags only."""
+        parts = [f"{name} flags 0x{fl:02X}" + (f" (enable 0x{en:02X})" if en is not None else "")
+                 for name, fl, en in rows if fl]
+        return "flags set: " + (", ".join(parts) if parts else "none")
+
+    def set_sim(self, sim: Simulator | None):
+        self._pairs = interrupt_flag_pairs(sim.mmcu) if sim is not None else ()
+        self._flags_key = None
+        self._flags.setText("flags set: -")
 
     def set_names(self, names: dict[int, str]):
         self._names = names
@@ -1012,6 +1032,12 @@ class InterruptPane(QWidget):
             return
         try:
             self._exec.setText(self.exec_text(sim.peek(self.CPUINT_STATUS)))
+            key = sim.cycle
+            if self._pairs and key != self._flags_key:
+                self._flags_key = key
+                rows = [(f.name.rsplit(".", 1)[0], sim.peek(f.address),
+                         sim.peek(c.address) if c else None) for f, c in self._pairs]
+                self._flags.setText(self.flags_text(rows))
         except SimavrError:
             pass                    # resumed meanwhile, or no CPUINT at that address
 
@@ -1268,6 +1294,7 @@ class MainWindow(QMainWindow):
         self.timeline.set_sim(sim)
         self.irqs.set_names(vector_names(sim.mmcu))
         self.regs.set_sim(sim)
+        self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
@@ -1291,6 +1318,7 @@ class MainWindow(QMainWindow):
             self._notifier = None
         self.pins.set_sim(None)
         self.regs.set_sim(None)
+        self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
         self.databreaks.set_sim(None)

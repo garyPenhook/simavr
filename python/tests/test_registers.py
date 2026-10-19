@@ -35,3 +35,13 @@ def test_every_modern_core_has_a_table():
 @pytest.mark.parametrize("mmcu", ["atmega328", "attiny85", "", "nonsense"])
 def test_unknown_or_classic_is_empty(mmcu):
     assert registers(mmcu) == ()
+
+
+def test_interrupt_flag_pairs():
+    from simavr_py.registers import interrupt_flag_pairs
+    pairs = {f.name: c for f, c in interrupt_flag_pairs("atmega4809")}
+    assert pairs["TCA0.SINGLE.INTFLAGS"].name == "TCA0.SINGLE.INTCTRL"
+    assert "PORTA.INTFLAGS" in pairs and not any(n.startswith("VPORT") for n in pairs)
+    assert interrupt_flag_pairs("atmega328") == ()
+    addrs = [f.address for f, _ in interrupt_flag_pairs("atmega4809")]
+    assert len(addrs) == len(set(addrs))                 # union arms not listed twice

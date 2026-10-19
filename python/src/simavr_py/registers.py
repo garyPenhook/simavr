@@ -97,3 +97,17 @@ def registers(mmcu: str) -> tuple[Register, ...]:
         if out:
             return tuple(sorted(out, key=lambda r: (r.address, r.name)))
     return ()
+
+
+def interrupt_flag_pairs(mmcu: str) -> tuple[tuple[Register, Register | None], ...]:
+    """(INTFLAGS, INTCTRL-or-None) per peripheral instance that has an INTFLAGS register.
+    The VPORT aliases are left out (they mirror the PORT ones), and of a union's overlapping
+    arms (TCA0.SINGLE / TCA0.SPLIT) only the first by name is kept."""
+    by_name = {r.name: r for r in registers(mmcu)}
+    pairs, seen = [], set()
+    for name in sorted(by_name):
+        reg = by_name[name]
+        if name.endswith(".INTFLAGS") and not name.startswith("VPORT") and reg.address not in seen:
+            seen.add(reg.address)
+            pairs.append((reg, by_name.get(name[:-len("INTFLAGS")] + "INTCTRL")))
+    return tuple(pairs)
