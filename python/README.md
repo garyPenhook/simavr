@@ -99,6 +99,22 @@ Run controls are disabled while they can't apply (e.g. Step while running).
 or momentary), a rotary encoder and an HD44780 LCD. Define your own in JSON/TOML
 (see `boards/demo_4809.json` and `simavr_py.boards`).
 
+Shipped boards in `boards/`:
+
+| File | MCU | Wired parts |
+|---|---|---|
+| `demo_4809.json` | atmega4809 | 3 LEDs, 2 buttons, encoder, 16x2 LCD (matches `examples/demo_4809.c`) |
+| `demo_4808.json` | atmega4808 | same layout as the 4809 demo |
+| `demo_3217.json` | attiny3217 | 3 LEDs, 2 buttons, encoder, 16x2 LCD |
+| `demo_1614.json` | attiny1614 | 3 LEDs, 2 buttons, encoder |
+| `demo_212.json` | attiny212 | 2 LEDs, 2 buttons |
+| `curiosity_nano_4809.json` | atmega4809 | ATmega4809 Curiosity Nano: LED0 on PF5 (active low), SW0 on PF6 |
+| `curiosity_nano_3217.json` | attiny3217 | ATtiny3217 Curiosity Nano: LED0 on PA3 (active low), SW0 on PB7 |
+
+The `demo_*` layouts are generic; only `demo_4809` has matching firmware. The
+Curiosity Nano pins come from Microchip's board user guides. Neither Nano has an
+external pull-up on SW0, so the firmware must enable the internal one.
+
 **Docks** (drag to rearrange; related ones share tabs, the default is right column =
 CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **CPU**: state, cycle, time, PC/SP/SREG and r0-r31 (refreshed while paused; shown stale while running).
