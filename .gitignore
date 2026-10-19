@@ -22,3 +22,6 @@ perf.data
 .bash_history
 compile_commands.json
 .cache
+
+# Local AVR datasheets (downloaded for fact-checking, not part of the repo)
+datasheets/
