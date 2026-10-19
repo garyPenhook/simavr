@@ -233,8 +233,14 @@ session (format version 4).
 `.debug_line` (DWARF 2-5, 32-bit DWARF) from the ELF; the disassembly dock gains a
 "Source" column (`file.c:line`, full path in the tooltip). Checked against
 `avr-objdump --dwarf=decodedline` for each DWARF version. At an address shared by
-several rows the last row wins. Not done: a source-text view / source-level
-stepping, inlined-call info (`.debug_info`), compressed or 64-bit DWARF.
+several rows the last row wins. Not done: source-level stepping, inlined-call
+info (`.debug_info`), compressed or 64-bit DWARF.
+
+**Source view (slice 8, 2026-10-19):** a "Source" dock shows the source file
+(read from the path recorded in the ELF, +/-200 lines) with the PC's line
+highlighted, refreshed on each stop; it reports "no source line" for code without
+debug info and "file not found" if the path is gone. Read-only: no breakpoints
+by clicking a source line yet, no step-over-line.
 
 1. Breakpoints:
    * PC breakpoints

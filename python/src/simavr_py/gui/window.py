@@ -7,11 +7,11 @@ import os
 import re
 
 from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer
-from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QWidget,
+    QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
 from ..boards import BoardError, load_board
@@ -586,6 +586,84 @@ class DisasmView(QWidget):
         self._table.resizeColumnToContents(3)
 
 
+class SourceView(QWidget):
+    """The source file around the line the PC is in (needs `-g` debug info)."""
+
+    CURRENT = QColor("#b7d7f5")
+    CONTEXT = 200           # lines shown each side of the current one
+
+    def __init__(self):
+        super().__init__()
+        self._lines = LineTable()
+        self._files: dict[str, list[str] | None] = {}
+        self._key = None
+        self._head = QLabel("")
+        self._text = QPlainTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._text.setFont(_mono())
+        lay = QGridLayout(self)
+        lay.addWidget(self._head, 0, 0)
+        lay.addWidget(self._text, 1, 0)
+
+    def set_lines(self, lines: LineTable):
+        self._lines = lines
+        self._files = {}                # firmware (re)loaded: sources may have changed
+        self._key = None
+
+    def _source(self, path: str) -> list[str] | None:
+        if path not in self._files:
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    self._files[path] = f.read().splitlines()
+            except OSError:
+                self._files[path] = None
+        return self._files[path]
+
+    def _show(self, key, head: str, body: str, line: int | None = None):
+        if key == self._key:
+            return
+        self._key = key
+        self._head.setText(head)
+        self._text.setPlainText(body)
+        if line is not None:
+            cur = QTextCursor(self._text.document().findBlockByLineNumber(line))
+            sel = QTextEdit.ExtraSelection()
+            sel.cursor = cur
+            sel.format.setBackground(QBrush(self.CURRENT))
+            sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            self._text.setExtraSelections([sel])
+            self._text.setTextCursor(cur)
+            self._text.centerCursor()
+        else:
+            self._text.setExtraSelections([])
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None:
+            self._show(None, "", "")
+            return
+        if sim.state in (State.RUNNING, State.SLEEPING):
+            self._text.setEnabled(False)        # the PC is only readable while stopped
+            return
+        try:
+            pc = sim.cpu.pc
+        except SimavrError:
+            return              # resumed between the state read and the fetch
+        self._text.setEnabled(True)
+        hit = self._lines.find(pc)
+        if hit is None:
+            self._show(("none", pc), f"0x{pc:05X}: no source line", "")
+            return
+        src = self._source(hit.file)
+        if src is None:
+            self._show(("missing", hit.file, hit.line), f"{hit.file}:{hit.line} (file not found)", "")
+            return
+        first = max(0, hit.line - 1 - self.CONTEXT)
+        last = min(len(src), hit.line + self.CONTEXT)
+        body = "\n".join(f"{n + 1:5}  {src[n]}" for n in range(first, last))
+        self._show((hit.file, hit.line), f"{hit.file}:{hit.line}", body, hit.line - 1 - first)
+
+
 def parse_data_break(text: str) -> tuple[int, int, WatchFlag]:
     """'hexaddr[:len] [r|w|rw|c]' -> (addr, length, flags). Hex is always hex.
     Modes: r read, w write (default), rw both, c write that changes the value."""
@@ -837,6 +915,7 @@ class MainWindow(QMainWindow):
         self.breaks = BreakpointPane()
         self.databreaks = DataBreakPane()
         self.disasm = DisasmView(self.breaks)
+        self.source = SourceView()
         self.uart = UartConsole()
         self.irqs = InterruptPane()
         self.board = BoardCanvas()
@@ -848,6 +927,7 @@ class MainWindow(QMainWindow):
                                ("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Disassembly", self.disasm, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Source", self.source, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Breakpoints", self.breaks, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Data Breakpoints", self.databreaks,
                                 Qt.DockWidgetArea.RightDockWidgetArea),
@@ -927,7 +1007,9 @@ class MainWindow(QMainWindow):
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
-        self.disasm.set_symbols(symbols, read_elf_lines(path) if is_elf else LineTable())
+        lines = read_elf_lines(path) if is_elf else LineTable()
+        self.disasm.set_symbols(symbols, lines)
+        self.source.set_lines(lines)
         self.breaks.set_symbols(symbols)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
@@ -997,6 +1079,7 @@ class MainWindow(QMainWindow):
         self.board.refresh()
         self.cpu.refresh(sim)
         self.disasm.refresh(sim)
+        self.source.refresh(sim)
         self.mem.refresh(sim)
         self.watch.refresh(sim)
         self.irqs.refresh()

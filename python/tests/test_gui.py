@@ -361,12 +361,22 @@ win.refresh()
 assert t.item(rows[0], 0).text() == "●"
 t.cellDoubleClicked.emit(rows[0], 0)
 assert win.breaks.addresses == []
+src = win.source
+for _ in range(200):                                  # startup code has no source line
+    win.refresh()
+    if "fw.c" in src._head.text():
+        break
+    win.step(); assert win._sim.wait_stopped(5)
+assert src._head.text().split(":")[0].endswith("fw.c") and src._text.toPlainText(), src._head.text()
+assert src._text.extraSelections()
+cur = src._text.textCursor().block().text()
+assert cur.split(None, 1)[0] == src._head.text().rsplit(":", 1)[1], cur   # highlighted = PC line
 win.run(); win.refresh()
-assert not t.isEnabled()                              # PC unreadable while running
+assert not t.isEnabled() and not src._text.isEnabled()   # PC unreadable while running
 win.pause(); assert win._sim.wait_stopped(5)
 win.close()
 win.refresh()
-assert t.rowCount() == 0
+assert t.rowCount() == 0 and src._text.toPlainText() == ""
 """
 
 
