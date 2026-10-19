@@ -9,7 +9,7 @@ import re
 from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
+    QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
@@ -18,7 +18,7 @@ from ..vectors import vector_label, vector_names
 from ..boards import BoardError, load_board
 from ..core import (
     InterruptEvent, IrqEvent, OverflowEvent, PinEvent, Simulator, SimavrError, Space, State,
-    StateEvent, StopReason, UartTxEvent, WatchFlag,
+    StateEvent, StopReason, UartTxEvent, WatchFlag, cores,
 )
 from ..disasm import Insn
 from ..disasm import window as disasm_window
@@ -856,6 +856,7 @@ class InterruptPane(QWidget):
         clear = QPushButton("Clear")
         clear.clicked.connect(self.clear)
         self._total = QLabel("0 interrupts")
+        self._exec = QLabel("executing: -")
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Vector", "Level", "Count", "Last cycle"])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -866,7 +867,8 @@ class InterruptPane(QWidget):
         top.addWidget(clear)
         lay = QGridLayout(self)
         lay.addLayout(top, 0, 0)
-        lay.addWidget(self._table, 1, 0)
+        lay.addWidget(self._exec, 1, 0)
+        lay.addWidget(self._table, 2, 0)
 
     def set_names(self, names: dict[int, str]):
         self._names = names
@@ -886,6 +888,25 @@ class InterruptPane(QWidget):
     @property
     def stats(self) -> dict[int, tuple[int, int, int]]:
         return {v: tuple(r) for v, r in self._stats.items()}
+
+    CPUINT_STATUS = 0x0111          # CPUINT base 0x0110 + STATUS offset 0x01
+    EXEC_BITS = ((0x80, "NMI"), (0x02, "LVL1"), (0x01, "LVL0"))
+
+    @classmethod
+    def exec_text(cls, status: int) -> str:
+        """CPUINT.STATUS (NMIEX/LVL1EX/LVL0EX) as the levels being executed.
+        Nested handlers set several bits; the innermost level is listed first."""
+        active = [name for bit, name in cls.EXEC_BITS if status & bit]
+        return "executing: " + (" > ".join(active) if active else "none")
+
+    def refresh_exec(self, sim: Simulator | None):
+        """Read CPUINT.STATUS while stopped; keep the last text while running."""
+        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+            return
+        try:
+            self._exec.setText(self.exec_text(sim.peek(self.CPUINT_STATUS)))
+        except SimavrError:
+            pass                    # resumed meanwhile, or no CPUINT at that address
 
     def refresh(self):
         if not self._dirty:
@@ -1020,11 +1041,52 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             tb.addAction(act)
             self._acts[key] = act
+            if key == "open":
+                self._add_target_controls(tb)
         self._update_actions()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(REFRESH_MS)
+
+    # -- target selection ----------------------------------------------------
+
+    def _add_target_controls(self, tb):
+        """MCU / clock pickers, so a bare launch can pick the device, then open an image."""
+        self._mcu_box = QComboBox()
+        self._mcu_box.addItem("(from ELF)", "")
+        for name in sorted(cores()):
+            self._mcu_box.addItem(name, name)
+        self._mcu_box.setToolTip("Target MCU; changing it reloads the current firmware")
+        self._freq_box = QSpinBox()
+        self._freq_box.setRange(0, 100_000_000)
+        self._freq_box.setSingleStep(100_000)
+        self._freq_box.setSpecialValueText("auto Hz")
+        self._freq_box.setSuffix(" Hz")
+        self._freq_box.setToolTip("Clock frequency; 0 = take it from the ELF / device default")
+        self._sync_target(self._mmcu, self._freq)
+        self._mcu_box.activated.connect(self._target_changed)
+        self._freq_box.editingFinished.connect(self._target_changed)
+        tb.addWidget(self._mcu_box)
+        tb.addWidget(self._freq_box)
+
+    def _sync_target(self, mmcu: str | None, freq: int):
+        """Show the target without triggering a reload."""
+        self._mcu_box.blockSignals(True)
+        self._freq_box.blockSignals(True)
+        self._mcu_box.setCurrentIndex(max(0, self._mcu_box.findData(mmcu or "")))
+        self._freq_box.setValue(freq or 0)
+        self._mcu_box.blockSignals(False)
+        self._freq_box.blockSignals(False)
+
+    def _target_changed(self, *_):
+        mmcu = self._mcu_box.currentData() or None
+        freq = self._freq_box.value()
+        if (mmcu, freq) == (self._mmcu, self._freq):
+            return
+        self._mmcu, self._freq = mmcu, freq
+        if self._firmware:
+            self.load(self._firmware)
 
     # -- session -------------------------------------------------------------
 
@@ -1036,7 +1098,7 @@ class MainWindow(QMainWindow):
             if is_elf:
                 sim = Simulator.from_elf(path, self._mmcu, self._freq)
             elif not self._mmcu:
-                raise ValueError("--mmcu is required for HEX images")
+                raise ValueError("choose an MCU in the toolbar (or --mmcu) for HEX images")
             else:
                 sim = Simulator(self._mmcu, self._freq)
         except (SimavrError, ValueError, OSError) as e:
@@ -1078,6 +1140,7 @@ class MainWindow(QMainWindow):
         self.disasm.set_symbols(symbols, lines)
         self.source.set_lines(lines)
         self.breaks.set_symbols(symbols)
+        self._sync_target(sim.mmcu, self._freq)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
         self._update_actions()
         self.refresh()
@@ -1161,6 +1224,7 @@ class MainWindow(QMainWindow):
         self.mem.refresh(sim)
         self.watch.refresh(sim)
         self.irqs.refresh()
+        self.irqs.refresh_exec(sim)
         self.timeline.refresh()
         self._update_actions()
 
@@ -1265,7 +1329,7 @@ class MainWindow(QMainWindow):
 
     def open_dialog(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open firmware", "",
-                                              "Firmware (*.elf *.hex);;All files (*)")
+                                              "Firmware (*.elf *.axf *.hex);;All files (*)")
         if path:
             self.load(path)
 

@@ -47,7 +47,8 @@ input, log text, VCD) aren't wrapped. Watchpoints and interrupt events are
 ## GUI
 
 From the repo root, `./simavr-gui [-f hz] [--board file] [firmware.elf]` does everything
-below (builds the library and sets up `.venv` on first use) and works from any directory.
+below (builds the library and sets up `.venv` on first use) and works from any directory. With no arguments it opens an empty window: pick the MCU
+and clock in the toolbar, then **Open…** an ELF/HEX (changing the MCU reloads it).
 
 ```sh
 uv pip install --python .venv/bin/python -e 'python[gui]'

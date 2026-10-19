@@ -338,6 +338,12 @@ else `$AVR_INCLUDE` / the avr-gcc install; `simavr_py.vectors`). Vector 0 is
 `RESET`. No header found (or a non-tiny/mega device) falls back to the bare
 number; the VCD still carries the number.
 
+**CPUINT state (slice 19, 2026-10-19):** the Interrupts pane shows `executing: ...`
+from CPUINT.STATUS (data 0x0111: NMIEX bit 7, LVL1EX bit 1, LVL0EX bit 0, checked
+against DS40002205A 13.5.2), innermost level first (`NMI > LVL1 > LVL0`, or `none`).
+It is read on each refresh while stopped and left as-is while running. Not done:
+pending (flag-set but not yet taken) sources, which need per-peripheral INTFLAGS.
+
 1. Breakpoints:
    * PC breakpoints
    * data watchpoints and peripheral-register change triggers

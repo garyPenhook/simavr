@@ -684,6 +684,11 @@ assert len(st) == 1, st
 assert vec > 0 and level == 0 and count == 3 and cycle > 0, st
 assert win.irqs._table.item(0, 0).text() == f"{vec} USART0_RXC"
 assert win.irqs._table.item(0, 1).text() == "LVL0" and win.irqs._table.item(0, 2).text() == "3"
+from simavr_py.gui.window import InterruptPane as IP
+assert IP.exec_text(0) == "executing: none" and IP.exec_text(0x01) == "executing: LVL0"
+assert IP.exec_text(0x83) == "executing: NMI > LVL1 > LVL0"
+win.refresh()
+assert win.irqs._exec.text() == "executing: none", win.irqs._exec.text()
 win.irqs.clear()
 assert win.irqs.stats == {} and win.irqs._table.rowCount() == 0
 win.close()
@@ -765,3 +770,33 @@ def test_data_breakpoint_pane(tmp_path):
     r = subprocess.run([sys.executable, "-c", DATABREAK_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+TARGET_SCRIPT = """
+import sys
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow(None, 0, speed=0)
+assert win._mcu_box.count() > 20 and win._mcu_box.currentData() == ""
+i = win._mcu_box.findData("atmega4809")
+win._mcu_box.setCurrentIndex(i); win._target_changed()
+assert win._mmcu == "atmega4809" and win._sim is None      # nothing to reload yet
+win.load(sys.argv[1])
+assert win._sim.mmcu == "atmega4809" and win._mcu_box.currentData() == "atmega4809"
+win.close()
+"""
+
+
+def test_target_picker(tmp_path):
+    src = tmp_path / "b.c"
+    src.write_text("int main(void){for(;;);}\n")
+    elf = tmp_path / "b.elf"
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", TARGET_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
