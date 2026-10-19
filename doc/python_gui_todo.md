@@ -291,8 +291,8 @@ cursor B; the status line shows both times, Δ and 1/Δ (`measure`). A "UART0 TX
 lane marks each byte USART0 sent (labelled when there is room; the cycle is when
 the byte left the simulated shifter). "Export VCD…" writes the traced pins plus
 the UART lane (`uart0_tx`, 8-bit) at 1 ns resolution (`write_vcd`), for GTKWave.
-Not done: USART1-3 lanes, RX bytes, analog values, exporting a cycle range only
-(the export is the whole retained history).
+Not done: analog values, exporting a cycle range only (the export is the whole
+retained history).
 
 **Timer lanes (slice 15, 2026-10-19):** the pin box also takes timer waveform
 outputs: `TCA0.WO0-2`, `TCB0-3.WO`, `TCD0.WOA/WOB`. They subscribe to the timer's
@@ -318,6 +318,15 @@ message word) and in the session. The marker lanes now share one drawing path
 (labels that don't fit collapse to ticks). A device without the peripheral
 rejects the name. Tests inject wire events (decoding, lanes, VCD, session,
 paint); no firmware-driven SPI/TWI transfer is run end to end.
+
+**USART lanes (slice 17, 2026-10-19):** `USART0`-`USART3` in the pin box add `tx` +
+`rx` lanes (`usartN_tx`/`usartN_rx` in the VCD, 8-bit) from the USART's wire IRQs;
+USART0 adds only `rx` because its TX is the built-in "UART0 TX" lane. RX is every
+byte that reaches the USART's input (typed into the UART dock, sent with
+`uart_send`, or driven by an attached part), at the cycle it arrived, not the
+cycle the firmware reads it. Labels are the character, or hex if unprintable. An
+end-to-end test (real firmware with RXEN set, a byte fed in) checks the RX lane;
+the TX lanes of USART1-3 are covered by injected events only.
 
 1. Breakpoints:
    * PC breakpoints

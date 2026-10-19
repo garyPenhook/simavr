@@ -577,6 +577,16 @@ assert tl.owns(sub_out) and tl.grab().width() > 0
 tl.export_vcd(sys.argv[1] + ".bus.vcd")
 assert "spi0_out" in open(sys.argv[1] + ".bus.vcd").read()
 d = win.session_dict(); assert d["timeline"] == ["PA0", "SPI0", "TWI0"], d["timeline"]
+assert tl.add("usart0") and tl.add("USART3") and not tl.add("USART9")
+rx0 = next(s for s, (lane, row) in tl._bus_subs.items() if lane == "USART0")
+tx3 = next(s for s, (lane, row) in tl._bus_subs.items() if lane == "USART3" and row == 0)
+tl.record(IrqEvent(sub=rx0, cycle=win._sim.cycle, index=0, value=0x41))
+tl.record(IrqEvent(sub=tx3, cycle=win._sim.cycle, index=1, value=0x0D))
+lanes = {l: m for l, _, m in tl.event_lanes(0, 1 << 62)}
+assert [t for _, t in lanes["USART0 rx"]] == ["A"] and [t for _, t in lanes["USART3 tx"]] == ["0D"]
+assert "USART0 tx" not in lanes and "USART3 rx" in lanes
+assert tl.grab().width() > 0
+tl.remove("USART0"); tl.remove("USART3")
 tl.remove("SPI0"); tl.remove("TWI0"); assert tl.buses == [] and tl._bus_subs == {}
 assert tl.wanted == ["PA0"]
 tl.place_cursor(0, 100, 500); tl.place_cursor(1, 300, 500)
@@ -589,6 +599,48 @@ win.apply_session(d, load_firmware=True)
 assert tl.names == ["PA0"]                           # restored and resubscribed on load
 win.close()
 """
+
+
+RX_FIRMWARE = r"""
+#include <avr/io.h>
+int main(void) {
+    USART0.BAUD = 1;
+    USART0.CTRLB = USART_RXEN_bm;
+    for (;;) ;
+}
+"""
+
+RX_SCRIPT = r"""
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+tl = win.timeline
+assert tl.add("USART0")
+win.run()
+time.sleep(0.05)
+win._sim.uart_send(0, b"Q")             # fed into the USART RX path at the end of a batch
+end = time.time() + 5
+while time.time() < end and not tl.event_lanes(0, 1 << 62)[-1][2]:
+    app.processEvents(); time.sleep(0.005)
+win.pause(); win._sim.wait_stopped(5)
+lanes = {l: m for l, _, m in tl.event_lanes(0, 1 << 62)}
+assert [t for _, t in lanes["USART0 rx"]] == ["Q"], lanes
+win.close()
+"""
+
+
+def test_usart_rx_lane(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    elf = _build(tmp_path, RX_FIRMWARE)
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", RX_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
 
 
 def test_timeline_dock(tmp_path):

@@ -78,12 +78,15 @@ def test_vcd_interrupt_vector(tmp_path):
 def test_bus_lane_names():
     assert bus_lane("SPI0") == ("spi", "0", (("out", 1), ("in", 0)))
     assert bus_lane("TWI1")[:2] == ("twi", "1")
+    assert bus_lane("USART2") == ("uar", "2", (("tx", 1), ("rx", 0)))
+    assert bus_lane("USART0") == ("uar", "0", (("rx", 0),))      # TX is the built-in lane
     for bad in ("SPI", "SPI10", "PA0", "UART0", "TWI0.X"):
         assert bus_lane(bad) is None
 
 
 def test_describe_bus():
     assert describe_bus("spi", 0x1A5) == "A5"
+    assert describe_bus("uar", 0x68) == "h" and describe_bus("uar", 0x0A) == "0A"
     msg = lambda cond, addr, data: (cond << 8) | (addr << 16) | (data << 24)
     assert describe_bus("twi", msg(0x01, 0xA0, 0)) == "S A0"
     assert describe_bus("twi", msg(0x10, 0xA0, 0x3C)) == "W 3C"

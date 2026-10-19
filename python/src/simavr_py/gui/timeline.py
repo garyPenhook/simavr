@@ -137,7 +137,7 @@ class TimelineView(QWidget):
         self._bus_subs: dict[int, tuple[str, int]] = {}     # sub id -> (lane, direction row)
         self._bus_events: dict[str, list[tuple[int, int, int]]] = {}  # lane -> (cycle, row, value)
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("pin, timer output or bus: PA0, TCA0.WO1, SPI0, TWI0")
+        self._edit.setPlaceholderText("pin, timer output or bus: PA0, TCA0.WO1, SPI0, TWI0, USART1")
         self._edit.returnPressed.connect(self._add_from_edit)
         self._span = QComboBox()
         for label, _ in SPANS:
@@ -206,7 +206,7 @@ class TimelineView(QWidget):
 
     def _resize_canvas(self):
         rows = (len(self.names) + (1 if self.show_uart else 0) + (1 if self.show_irq else 0)
-                + 2 * len(self.buses))
+                + sum(len(bus_lane(n)[2]) for n in self.buses))
         self._canvas.setMinimumHeight(max(1, rows) * ROW_H + AXIS_H)
 
     def _start_bus(self, sim: Simulator, name: str, spec) -> bool:
@@ -339,7 +339,7 @@ class TimelineView(QWidget):
         for name in self.buses:
             tag, _, dirs = bus_lane(name)
             for row, (direction, _) in enumerate(dirs):
-                lanes.append((f"{name} {direction}", "#1f77b4" if row == 0 else "#2a9d8f",
+                lanes.append((f"{name} {direction}", "#b5651d" if tag == "uar" else ("#1f77b4" if direction == "out" else "#2a9d8f"),
                               [(c, describe_bus(tag, v)) for c, r, v in self._bus_events[name]
                                if r == row and t0 <= c <= t1]))
         return lanes

@@ -71,13 +71,16 @@ def timer_output(name: str) -> tuple[str, str, int] | None:
 _BUS = (
     (re.compile(r"SPI(\d)"), "spi", (("out", 1), ("in", 0))),
     (re.compile(r"TWI(\d)"), "twi", (("out", 1), ("in", 0))),
+    (re.compile(r"USART(\d)"), "uar", (("tx", 1), ("rx", 0))),     # UART_IRQ_OUTPUT/INPUT
 )
 
 
 def bus_lane(name: str) -> tuple[str, str, tuple[tuple[str, int], ...]] | None:
-    """'SPI0' / 'TWI0' -> (ioctl tag, instance char, ((direction, IRQ index), ...))."""
+    """'SPI0' / 'TWI0' / 'USART1' -> (ioctl tag, instance char, ((direction, IRQ index), ...))."""
     for rx, tag, dirs in _BUS:
         if m := rx.fullmatch(name):
+            if tag == "uar" and m[1] == "0":
+                dirs = dirs[1:]         # USART0 TX is the timeline's built-in "UART0 TX" lane
             return tag, m[1], dirs
     return None
 
@@ -86,10 +89,13 @@ _TWI_COND = ((0x01, "S"), (0x02, "P"), (0x04, "ADDR"), (0x08, "ACK"), (0x10, "W"
 
 
 def describe_bus(tag: str, value: int) -> str:
-    """Short label for one wire message. SPI: the byte. TWI: simavr's message word
+    """Short label for one wire message. SPI: the byte; USART: the character or hex byte. TWI: simavr's message word
     (bits 8-15 TWI_COND_* flags, 16-23 address, 24-31 data), e.g. 'S A0', 'W 3C', 'R', 'P'."""
     if tag == "spi":
         return f"{value & 0xFF:02X}"
+    if tag == "uar":
+        b = value & 0xFF
+        return chr(b) if 32 <= b < 127 else f"{b:02X}"
     cond, addr, data = (value >> 8) & 0xFF, (value >> 16) & 0xFF, (value >> 24) & 0xFF
     names = [n for bit, n in _TWI_COND if cond & bit]
     if not names:
