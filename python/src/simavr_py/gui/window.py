@@ -1,20 +1,23 @@
-"""Main window: toolbar, pin panel, CPU view, memory viewer, UART console."""
+"""Main window: toolbar, pin panel, CPU view, memory viewer, watch pane, UART console."""
 
 import argparse
+import base64
+import json
 import re
 
-from PySide6.QtCore import QSocketNotifier, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QTextCursor
+from PySide6.QtCore import QByteArray, QSocketNotifier, Qt, QTimer
+from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QSpinBox, QWidget,
+    QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QWidget,
 )
 
 from ..core import (
     Simulator, SimavrError, Space, State, StateEvent, UartTxEvent,
 )
 
+SESSION_VERSION = 1
 REFRESH_MS = 50          # repaint cadence, independent of simulated time
 DRAIN_LIMIT = 1024
 
@@ -66,6 +69,21 @@ class PinPanel(QScrollArea):
                 self._cells[name] = (led, drive, high)
         grid.setRowStretch(grid.rowCount(), 1)
         self.setWidget(host)
+
+    def driven(self) -> dict[str, bool]:
+        """Pins currently held from outside, name -> level."""
+        return {n: h.isChecked() for n, (_, d, h) in self._cells.items()
+                if d.isChecked()}
+
+    def apply_driven(self, driven: dict[str, bool]):
+        """Re-apply saved drives; names this MCU doesn't have are ignored."""
+        for name, level in driven.items():
+            cell = self._cells.get(name)
+            if cell is None:
+                continue
+            _, drive, high = cell
+            high.setChecked(bool(level))
+            drive.setChecked(True)
 
     def _drive(self, name: str):
         """'drive' ticked: hold the pin at the 'H' level; unticked: release."""
@@ -217,6 +235,103 @@ class MemoryView(QWidget):
         bar.setValue(pos)
 
 
+def parse_watch(text: str) -> tuple[str, int, int]:
+    """'[label=]addr[:width]' -> (label, data address, width in bytes).
+
+    The address is hex (0x optional); width is 1, 2 or 4 and defaults to 1.
+    """
+    label, _, spec = text.rpartition("=")
+    spec = spec.strip()
+    addr_s, _, width_s = spec.partition(":")
+    addr_s = addr_s.strip()
+    try:
+        addr = int(addr_s, 0 if addr_s.lower().startswith(("0x", "0b", "0o")) else 16)
+        width = int(width_s) if width_s.strip() else 1
+    except ValueError:
+        raise ValueError(f"bad watch {text!r}: expected [label=]hexaddr[:1|2|4]") from None
+    if width not in (1, 2, 4) or addr < 0:
+        raise ValueError(f"bad watch {text!r}: width must be 1, 2 or 4")
+    return label.strip() or f"0x{addr:04X}", addr, width
+
+
+class WatchPane(QWidget):
+    """Live view of chosen data-space locations (registers or SRAM), little-endian.
+    A value that changed since the last repaint is highlighted."""
+
+    CHANGED = QColor("#ffd966")
+
+    def __init__(self):
+        super().__init__()
+        self._watches: list[tuple[str, int, int]] = []
+        self._prev: dict[int, int] = {}
+        self._edit = QLineEdit()
+        self._edit.setPlaceholderText("[label=]hexaddr[:width]  e.g. porta_out=0x0405 (Enter)")
+        self._edit.returnPressed.connect(self._add_from_edit)
+        rm = QPushButton("Remove")
+        rm.clicked.connect(self._remove_selected)
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Name", "Addr", "Hex", "Dec"])
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setFont(_mono())
+        top = QHBoxLayout()
+        top.addWidget(self._edit)
+        top.addWidget(rm)
+        lay = QGridLayout(self)
+        lay.addLayout(top, 0, 0)
+        lay.addWidget(self._table, 1, 0)
+
+    @property
+    def watches(self) -> list[tuple[str, int, int]]:
+        return list(self._watches)
+
+    def set_watches(self, watches):
+        self._watches = [tuple(w) for w in watches]
+        self._prev.clear()
+        self._table.setRowCount(len(self._watches))
+        for row, (label, addr, _) in enumerate(self._watches):
+            for col, text in enumerate((label, f"0x{addr:04X}", "-", "-")):
+                self._table.setItem(row, col, QTableWidgetItem(text))
+
+    def _add_from_edit(self):
+        try:
+            w = parse_watch(self._edit.text())
+        except ValueError as e:
+            QMessageBox.warning(self, "Watch", str(e))
+            return
+        self.set_watches([*self._watches, w])
+        self._edit.clear()
+
+    def _remove_selected(self):
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        self.set_watches(w for i, w in enumerate(self._watches) if i not in rows)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None:
+            return
+        for row, (_, addr, width) in enumerate(self._watches):
+            val = None
+            try:
+                if addr + width <= sim.mem_size(Space.DATA):
+                    val = int.from_bytes(sim.read(Space.DATA, addr, width), "little")
+            except SimavrError:
+                pass
+            if val is None:
+                hexs = dec = "n/a"
+            else:
+                hexs, dec = f"0x{val:0{width * 2}X}", str(val)
+            changed = val is not None and self._prev.get(addr) not in (None, val)
+            self._prev[addr] = val
+            for col, text in ((2, hexs), (3, dec)):
+                item = self._table.item(row, col)
+                if item is None:
+                    continue
+                if item.text() != text:
+                    item.setText(text)
+                item.setBackground(QBrush(self.CHANGED) if changed else QBrush())
+
+
 class UartConsole(QWidget):
     def __init__(self):
         super().__init__()
@@ -267,14 +382,25 @@ class MainWindow(QMainWindow):
         self.pins = PinPanel()
         self.cpu = CpuView()
         self.mem = MemoryView()
+        self.watch = WatchPane()
         self.uart = UartConsole()
+        self._firmware: str | None = None
         self.setCentralWidget(self.pins)
         for title, w, area in (("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
             dock = QDockWidget(title, self)
+            dock.setObjectName(title)       # saveState() keys docks by object name
             dock.setWidget(w)
             self.addDockWidget(area, dock)
+
+        menu = self.menuBar().addMenu("&Session")
+        for label, slot in (("&Save session…", self.save_session_dialog),
+                            ("&Load session…", self.load_session_dialog)):
+            act = QAction(label, self)
+            act.triggered.connect(slot)
+            menu.addAction(act)
 
         tb = self.addToolBar("Run")
         self._acts = {}
@@ -323,6 +449,8 @@ class MainWindow(QMainWindow):
             pass
         self._notifier = QSocketNotifier(sim.fileno(), QSocketNotifier.Type.Read, self)
         self._notifier.activated.connect(self._drain)
+        self._firmware = path
+        self.watch.set_watches(self.watch.watches)   # drop stale change baselines
         self.pins.set_sim(sim)
         self.uart.set_sim(sim)
         self.setWindowTitle(f"simavr - {sim.mmcu} - {path}")
@@ -375,7 +503,63 @@ class MainWindow(QMainWindow):
         self.pins.refresh()
         self.cpu.refresh(sim)
         self.mem.refresh(sim)
+        self.watch.refresh(sim)
         self._update_actions()
+
+    # -- session save/restore ------------------------------------------------
+
+    def session_dict(self) -> dict:
+        b64 = lambda ba: base64.b64encode(bytes(ba)).decode()
+        return {
+            "version": SESSION_VERSION,
+            "firmware": self._firmware,
+            "mmcu": self._sim.mmcu if self._sim else self._mmcu,
+            "freq": self._freq,
+            "speed": self._speed,
+            "geometry": b64(self.saveGeometry()),
+            "layout": b64(self.saveState()),
+            "watches": [list(w) for w in self.watch.watches],
+            "driven": self.pins.driven(),
+        }
+
+    def apply_session(self, d: dict, load_firmware: bool = True):
+        """Restore a session dict. Raises ValueError on a file we can't read."""
+        if not isinstance(d, dict) or d.get("version") != SESSION_VERSION:
+            raise ValueError("not a simavr session file (or unsupported version)")
+        self._mmcu = d.get("mmcu") or self._mmcu
+        self._freq = int(d.get("freq", self._freq))
+        self._speed = float(d.get("speed", self._speed))
+        self.watch.set_watches((str(l), int(a), int(w)) for l, a, w in d.get("watches", []))
+        for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
+            if d.get(key):
+                restore(QByteArray(base64.b64decode(d[key])))
+        fw = d.get("firmware")
+        if load_firmware and fw:
+            self.load(fw)       # builds a fresh pin panel, so drives go after
+        if self._sim is not None:
+            self.pins.apply_driven(d.get("driven", {}))
+
+    def save_session_dialog(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save session", "session.json",
+                                              "Session (*.json)")
+        if path:
+            try:
+                with open(path, "w") as f:
+                    json.dump(self.session_dict(), f, indent=2)
+            except OSError as e:
+                QMessageBox.warning(self, "Save session", str(e))
+
+    def load_session_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load session", "", "Session (*.json)")
+        if path:
+            self.load_session(path)
+
+    def load_session(self, path: str, load_firmware: bool = True):
+        try:
+            with open(path) as f:
+                self.apply_session(json.load(f), load_firmware)
+        except (OSError, ValueError, TypeError, KeyError) as e:
+            QMessageBox.warning(self, "Load session", str(e))
 
     # -- actions -------------------------------------------------------------
 
@@ -426,6 +610,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("firmware", nargs="?", help="ELF or HEX image")
     ap.add_argument("-m", "--mmcu", help="MCU name (needed for HEX / ELF without .mmcu)")
     ap.add_argument("-f", "--freq", type=int, default=0, help="clock frequency in Hz")
+    ap.add_argument("--session", help="restore a saved session (.json)")
     ap.add_argument("--speed", type=float, default=1.0,
                     help="1.0 = real time (default), 0 = unthrottled")
     args, qt_args = ap.parse_known_args(argv[1:])
@@ -433,5 +618,7 @@ def main(argv: list[str]) -> int:
     win = MainWindow(args.mmcu, args.freq, args.speed)
     win.show()
     if args.firmware:
-        win.load(args.firmware)
+        win.load(args.firmware)     # an explicit image wins over the session's
+    if args.session:
+        win.load_session(args.session, load_firmware=not args.firmware)
     return app.exec()

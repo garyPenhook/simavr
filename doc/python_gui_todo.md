@@ -119,8 +119,11 @@ console with TX input. Decisions: repaint on a fixed 50 ms `QTimer`, independent
 of simulated time; events via `QSocketNotifier` on `Simulator.fileno()`, drained
 in bounded batches so a chatty firmware can't starve the event loop; the C API
 only exposes PC/SP/SREG/r[] while paused, so the CPU view keeps its last
-snapshot while running. Not done: board canvas, watch pane, session
-save/restore, per-pin edge coalescing/timeline. Known quirk: on 3.15.0a7,
+snapshot while running. Added later the same day: watch pane (data-space `[label=]hexaddr[:width]`,
+changed-value highlight) and session save/restore (Session menu or
+`--session FILE.json`: firmware, MCU, clock, window/dock layout, watches, driven
+pins). Not done: board canvas, per-pin edge coalescing/timeline, named
+register watches (blocked on the register metadata table). Known quirk: on 3.15.0a7,
 importing PySide6 stops `simavr_py.<name>` attribute access from reifying lazy
 imports (use `from simavr_py.core import ...` alongside PySide6).
 
