@@ -876,3 +876,65 @@ def test_register_pane(tmp_path):
     r = subprocess.run([sys.executable, "-c", REGS_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+RUNTO_SCRIPT = """
+import sys, time
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+from simavr_py.symbols import read_elf_symbols
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+
+def settle(pred, secs=5):
+    t = time.time()
+    while time.time() - t < secs:
+        app.processEvents(); win._drain(); win.refresh()
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+# Run for 1 ms of simulated time: pauses by itself, ~3333 cycles later.
+win._run_ms.setValue(1.0)
+c0 = win._sim.cycle
+win.run_for()
+assert settle(lambda: win._sim.state.name == "PAUSED"), win._sim.state
+assert 3333 <= win._sim.cycle - c0 < 3333 + 50, win._sim.cycle - c0
+
+# Run to a function: stops exactly there, leaves no breakpoint behind.
+target = read_elf_symbols(sys.argv[1]).lookup("marker").addr
+win.run_to(target)
+assert win._runto is not None
+assert settle(lambda: win._sim.state.name == "PAUSED")
+assert win._sim.cpu.pc == target, hex(win._sim.cpu.pc)
+assert win._runto is None and win.breaks.addresses == []
+# And a second run-to works (the first one cleaned up after itself).
+win.run_to(target)
+assert settle(lambda: win._sim.state.name == "PAUSED") and win._sim.cpu.pc == target
+# Run to an address never reached, then Pause: the temporary breakpoint is removed.
+win.run_to(0x1000)
+assert win._runto is not None
+win.pause()
+assert settle(lambda: win._runto is None)
+assert win._acts["run"].isEnabled() and win._acts["runfor"].isEnabled()
+win.close()
+"""
+
+
+def test_run_for_and_run_to(tmp_path):
+    src = tmp_path / "rt.c"
+    src.write_text("#include <avr/io.h>\n"
+                   "__attribute__((noinline)) void marker(void){PORTA.OUTTGL=1;}\n"
+                   "int main(void){PORTA.DIRSET=1;for(;;){marker();"
+                   "for(volatile int i=0;i<200;i++);}}\n")
+    elf = tmp_path / "rt.elf"
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-g", "-o", elf, src],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", RUNTO_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr

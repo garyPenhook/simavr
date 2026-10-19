@@ -88,7 +88,7 @@ Pick `.axf`/`.elf` files that are *AVR* binaries; a host program such as a board
 
 **Toolbar:** `Open…` load firmware · MCU box (every compiled core; `(from ELF)` uses
 the ELF's own; changing it reloads the loaded firmware) · clock box (Hz, `auto` = default) ·
-`Board…` · `Run` · `Pause` · `Step` (one instruction) · `Next line` (step over a source
+`Board…` · `Run` · `Run for` (with its ms box: run that much simulated time, then pause) · `Pause` · `Step` (one instruction) · `Next line` (step over a source
 line or call) · `Step out` (run to the current function's return) · `Reset`.
 Run controls are disabled while they can't apply (e.g. Step while running).
 
@@ -102,8 +102,8 @@ or momentary), a rotary encoder and an HD44780 LCD. Define your own in JSON/TOML
 **Docks** (drag to rearrange; related ones share tabs, the default is right column =
 CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **CPU**: state, cycle, time, PC/SP/SREG and r0-r31 (refreshed while paused; shown stale while running).
-- **Disassembly**: instructions around PC with symbols and source lines; double-click a row to toggle a breakpoint.
-- **Source**: the C source with the current line (needs `-g`).
+- **Disassembly**: instructions around PC with symbols and source lines; double-click a row to toggle a breakpoint, right-click for **Run to here**.
+- **Source**: the C source with the current line (needs `-g`); double-click toggles a breakpoint, right-click offers **Run to line**.
 - **Watch**: `[label=]hexaddr[:width]`, e.g. `porta_out=0x0405`, live data-space values.
 - **Breakpoints**: hex address or symbol (`main`, `main+0x4`); `0xadd` forces an address over a symbol.
 - **Data Breakpoints**: `hexaddr[:len] [r|w|rw|c|p]` (read/write/either/change/any peripheral-register change), e.g. `0x0400`, `3f:2 rw`.

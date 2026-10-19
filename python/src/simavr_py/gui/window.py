@@ -10,8 +10,8 @@ import re
 from PySide6.QtCore import QByteArray, QSettings, QSocketNotifier, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog, QFormLayout, QGridLayout,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+    QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout,
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
@@ -513,6 +513,7 @@ class DisasmView(QWidget):
     Double-click a row to toggle a PC breakpoint there."""
 
     CURRENT = QColor("#b7d7f5")
+    runToRequested = Signal(int)    # flash byte address chosen from the context menu
 
     def __init__(self, breaks: BreakpointPane):
         super().__init__()
@@ -529,8 +530,19 @@ class DisasmView(QWidget):
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setFont(_mono())
         self._table.cellDoubleClicked.connect(self._toggle)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._menu)
         lay = QGridLayout(self)
         lay.addWidget(self._table, 0, 0)
+
+    def _menu(self, pos):
+        row = self._table.rowAt(pos.y())
+        if 0 <= row < len(self._insns):
+            addr = self._insns[row].addr
+            menu = QMenu(self)
+            menu.addAction(f"Run to 0x{addr:05X}", lambda: self.runToRequested.emit(addr))
+            menu.addAction("Toggle breakpoint", lambda: self._breaks.toggle(addr))
+            menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def set_symbols(self, symbols: SymbolTable, lines: LineTable | None = None):
         self._symbols = symbols
@@ -604,6 +616,7 @@ class SourceView(QWidget):
 
     CURRENT = QColor("#b7d7f5")
     CONTEXT = 200           # lines shown each side of the current one
+    runToRequested = Signal(int)
 
     def __init__(self, breaks: BreakpointPane):
         super().__init__()
@@ -615,6 +628,8 @@ class SourceView(QWidget):
         self._head = QLabel("")
         self._text = _SourceText()
         self._text.lineDoubleClicked.connect(self._toggle)
+        self._text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._text.customContextMenuRequested.connect(self._menu)
         self._text.setReadOnly(True)
         self._text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._text.setFont(_mono())
@@ -626,6 +641,19 @@ class SourceView(QWidget):
         self._lines = lines
         self._files = {}                # firmware (re)loaded: sources may have changed
         self._key = None
+
+    def _menu(self, pos):
+        if self._shown is None:
+            return
+        block = self._text.cursorForPosition(pos).blockNumber()
+        file, first = self._shown
+        addr = self._lines.address_of(file, first + block)
+        if addr is None:
+            return
+        menu = QMenu(self)
+        menu.addAction(f"Run to line {first + block}", lambda: self.runToRequested.emit(addr))
+        menu.addAction("Toggle breakpoint", lambda: self._breaks.toggle(addr))
+        menu.exec(self._text.viewport().mapToGlobal(pos))
 
     def _toggle(self, block: int):
         if self._shown is None:
@@ -1125,6 +1153,7 @@ class MainWindow(QMainWindow):
         self._mmcu, self._freq, self._speed = mmcu, freq, speed
         self._line_table = LineTable()
         self._next: _NextLine | None = None
+        self._runto: int | None = None      # id of the temporary run-to-here breakpoint
 
         self.pins = PinPanel()
         self.cpu = CpuView()
@@ -1134,6 +1163,8 @@ class MainWindow(QMainWindow):
         self.databreaks = DataBreakPane()
         self.disasm = DisasmView(self.breaks)
         self.source = SourceView(self.breaks)
+        self.disasm.runToRequested.connect(self.run_to)
+        self.source.runToRequested.connect(self.run_to)
         self.uart = UartConsole()
         self.irqs = InterruptPane()
         self.regs = RegisterPane()
@@ -1178,7 +1209,8 @@ class MainWindow(QMainWindow):
         self._acts = {}
         for key, label, slot in (("open", "Open…", self.open_dialog),
                                  ("board", "Board…", self.open_board_dialog),
-                                 ("run", "Run", self.run), ("pause", "Pause", self.pause),
+                                 ("run", "Run", self.run), ("runfor", "Run for", self.run_for),
+                                 ("pause", "Pause", self.pause),
                                  ("step", "Step", self.step),
                                  ("next", "Next line", self.step_line),
                                  ("out", "Step out", self.step_out), ("reset", "Reset", self.reset)):
@@ -1188,6 +1220,14 @@ class MainWindow(QMainWindow):
             self._acts[key] = act
             if key == "open":
                 self._add_target_controls(tb)
+            elif key == "runfor":
+                self._run_ms = QDoubleSpinBox()
+                self._run_ms.setRange(0.001, 60000)
+                self._run_ms.setDecimals(3)
+                self._run_ms.setValue(10)
+                self._run_ms.setSuffix(" ms")
+                self._run_ms.setToolTip("Simulated time for 'Run for', then it pauses")
+                tb.addWidget(self._run_ms)
         self._update_actions()
 
         self._timer = QTimer(self)
@@ -1310,6 +1350,7 @@ class MainWindow(QMainWindow):
 
     def _teardown(self):
         self._cancel_next()
+        self._runto = None          # the breakpoint dies with the simulator
         # Drop every reference first so no timer/notifier touches a closed handle.
         sim, self._sim = self._sim, None
         if self._notifier is not None:
@@ -1378,6 +1419,13 @@ class MainWindow(QMainWindow):
         # the fd stays readable while events remain, so the rest comes next time.
         tx = bytearray()
         for ev in sim.events(limit=DRAIN_LIMIT):
+            if (isinstance(ev, StateEvent) and self._runto is not None
+                    and ev.state not in (State.RUNNING, State.SLEEPING)):
+                reached = ev.reason == StopReason.BREAKPOINT and ev.id == self._runto
+                self._cancel_runto()            # any stop ends the run-to
+                if reached:                     # our own breakpoint: not a user hit
+                    self._update_actions()
+                    continue
             if isinstance(ev, StateEvent) and self._next is not None and self._next_event(ev):
                 continue
             match ev:
@@ -1535,11 +1583,56 @@ class MainWindow(QMainWindow):
 
     def run(self):
         self._cancel_next()
+        self._cancel_runto()
         if self._sim:
             self._guard(self._sim.resume)
             if self._sim.state in (State.RUNNING, State.SLEEPING):
                 self.breaks.clear_hit()
                 self.databreaks.clear_hit()
+
+    def run_for(self):
+        """Run for the chosen simulated time, then pause."""
+        sim = self._sim
+        if sim is None or self._next is not None or sim.state in (
+                State.RUNNING, State.SLEEPING, State.DONE, State.CRASHED):
+            return
+        self._cancel_runto()
+        cycles = max(1, round(self._run_ms.value() / 1000 * sim.frequency))
+        self._guard(lambda: sim.run_cycles(cycles))
+        if sim.state in (State.RUNNING, State.SLEEPING):
+            self.breaks.clear_hit()
+            self.databreaks.clear_hit()
+
+    def run_to(self, addr: int):
+        """Run until `addr` (flash byte address) is reached, or anything else stops the run."""
+        sim = self._sim
+        if sim is None or self._next is not None or sim.state in (
+                State.RUNNING, State.SLEEPING, State.DONE, State.CRASHED):
+            return
+        self._cancel_runto()
+        try:
+            self._runto = sim.add_breakpoint(addr)
+        except SimavrError as e:
+            QMessageBox.warning(self, "simavr", str(e))
+            return
+        try:
+            sim.resume()
+        except SimavrError as e:
+            self._cancel_runto()
+            QMessageBox.warning(self, "simavr", str(e))
+            return
+        # The run may already have reached the address; its stop event cleans up in _drain.
+        self.breaks.clear_hit()
+        self.databreaks.clear_hit()
+        self._update_actions()
+
+    def _cancel_runto(self):
+        bp, self._runto = self._runto, None
+        if bp is not None and self._sim is not None:
+            try:
+                self._sim.remove_breakpoint(bp)
+            except SimavrError:
+                pass
 
     def pause(self):
         self._cancel_next()
@@ -1549,6 +1642,7 @@ class MainWindow(QMainWindow):
 
     def step(self):
         self._cancel_next()
+        self._cancel_runto()
         if self._sim:
             self._guard(self._sim.step)
             self.breaks.clear_hit()
@@ -1653,6 +1747,7 @@ class MainWindow(QMainWindow):
 
     def reset(self):
         self._cancel_next()
+        self._cancel_runto()
         if self._sim:
             self._guard(self._sim.reset)
 
@@ -1663,6 +1758,7 @@ class MainWindow(QMainWindow):
         live = sim is not None and state not in (State.DONE, State.CRASHED)
         a = self._acts
         a["run"].setEnabled(live and not running)
+        a["runfor"].setEnabled(live and not running and self._next is None)
         a["pause"].setEnabled(live and (running or self._next is not None))
         # Stepping while the sim thread runs would race the run request.
         a["step"].setEnabled(live and not running)
