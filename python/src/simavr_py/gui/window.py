@@ -1117,6 +1117,7 @@ class MainWindow(QMainWindow):
             match ev:
                 case UartTxEvent(index=0, byte=b):
                     tx.append(b)
+                    self.timeline.record_uart(ev)
                 case InterruptEvent():
                     self.irqs.record(ev)
                 case PinEvent() if self.timeline.owns(ev.sub):

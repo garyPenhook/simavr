@@ -284,8 +284,15 @@ subscription id so the board's LED/LCD models never see the extra edges. Span
 restarts the traces. Pins are saved in the session (format version 5). Limits:
 a very busy pin at unthrottled speed overflows the event queue; the trace then
 resyncs to the pin's *current* level (approximate) and follow-mode can lag the
-simulator until the queue drains. Not done: timers, bus traffic (UART/SPI/TWI),
-analog values, exporting to VCD, cursors/measurements.
+simulator until the queue drains.
+
+**Timeline extras (slice 14, 2026-10-19):** click = cursor A, right-click =
+cursor B; the status line shows both times, Δ and 1/Δ (`measure`). A "UART0 TX"
+lane marks each byte USART0 sent (labelled when there is room; the cycle is when
+the byte left the simulated shifter). "Export VCD…" writes the traced pins plus
+the UART lane (`uart0_tx`, 8-bit) at 1 ns resolution (`write_vcd`), for GTKWave.
+Not done: timers, SPI/TWI/USART1-3 lanes, RX bytes, analog values, exporting a
+cycle range only (the export is the whole retained history).
 
 1. Breakpoints:
    * PC breakpoints

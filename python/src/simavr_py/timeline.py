@@ -58,3 +58,48 @@ def format_time(cycles: float, frequency: int) -> str:
         if abs(s) >= scale:
             return f"{s / scale:.7g} {unit}"
     return f"{s / 1e-9:.7g} ns"
+
+
+def measure(a: int | None, b: int | None, frequency: int) -> str:
+    """Text for two cursor cycles: both times, their distance and 1/distance."""
+    if a is None and b is None:
+        return "click = cursor A, right-click = cursor B"
+    parts = [f"A {format_time(a, frequency)}" if a is not None else "A -",
+             f"B {format_time(b, frequency)}" if b is not None else "B -"]
+    if a is not None and b is not None:
+        d = abs(b - a)
+        parts.append(f"Δ {format_time(d, frequency)}")
+        if d and frequency > 0:
+            parts.append(f"{frequency / d:.6g} Hz")
+    return "   ".join(parts)
+
+
+def write_vcd(path: str, traces: dict[str, "PinTrace"], frequency: int, end: int,
+              uart: list[tuple[int, int]] | None = None) -> None:
+    """Dump pin traces (and optionally UART TX bytes) as a 1 ns-resolution VCD.
+    Without a known frequency the timescale is one cycle per tick (reported as 1 ns)."""
+    ns = (lambda c: round(c * 1e9 / frequency)) if frequency > 0 else (lambda c: c)
+    ids = {name: chr(33 + i) for i, name in enumerate(traces)}
+    uart_id = chr(33 + len(traces)) if uart is not None else None
+    changes: list[tuple[int, int, str]] = []        # (time, order, line)
+    for name, tr in traces.items():
+        for c, lv in zip(tr._cycles, tr._levels):
+            changes.append((ns(c), 0, f"{int(lv)}{ids[name]}"))
+    for c, byte in uart or ():
+        changes.append((ns(c), 1, f"b{byte:08b} {uart_id}"))
+    changes.sort(key=lambda t: (t[0], t[1]))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("$timescale 1 ns $end\n$scope module simavr $end\n")
+        for name in traces:
+            f.write(f"$var wire 1 {ids[name]} {name} $end\n")
+        if uart_id:
+            f.write(f"$var wire 8 {uart_id} uart0_tx $end\n")
+        f.write("$upscope $end\n$enddefinitions $end\n")
+        last = None
+        for t, _, line in changes:
+            if t != last:
+                f.write(f"#{t}\n")
+                last = t
+            f.write(line + "\n")
+        if last is None or ns(end) > last:
+            f.write(f"#{ns(end)}\n")

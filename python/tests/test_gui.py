@@ -553,7 +553,12 @@ tl.pan(-0.5); assert not tl._follow.isChecked()
 tl.zoom(-1); tl.zoom(1)
 d = win.session_dict()
 assert d["timeline"] == ["PA0"]
-tl.clear(); assert len(tl.traces["PA0"]) == 1
+assert tl._uart and tl.uart_bytes(0, 1 << 62)[0][1] == ord("h")
+tl.place_cursor(0, 100, 500); tl.place_cursor(1, 300, 500)
+assert None not in tl.cursors and tl.cursors[1] > tl.cursors[0] and "Δ" in tl._info.text()
+tl.export_vcd(sys.argv[1] + ".vcd")
+assert "$var wire 1 ! PA0 $end" in open(sys.argv[1] + ".vcd").read()
+tl.clear(); assert len(tl.traces["PA0"]) == 1 and not tl._uart
 tl.remove("PA0"); assert tl.names == [] and tl.wanted == []
 win.apply_session(d, load_firmware=True)
 assert tl.names == ["PA0"]                           # restored and resubscribed on load

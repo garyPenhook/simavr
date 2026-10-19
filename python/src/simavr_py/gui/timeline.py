@@ -3,11 +3,12 @@
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QGridLayout, QLineEdit, QPushButton, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QWidget,
 )
 
-from ..core import PinEvent, SimavrError, Simulator
-from ..timeline import PinTrace, format_time
+from ..core import PinEvent, SimavrError, Simulator, UartTxEvent
+from ..timeline import PinTrace, format_time, measure, write_vcd
 
 SPANS = (("10 µs", 10e-6), ("100 µs", 100e-6), ("1 ms", 1e-3), ("10 ms", 10e-3),
          ("100 ms", 100e-3), ("1 s", 1.0))
@@ -19,6 +20,7 @@ class _Canvas(QWidget):
         super().__init__()
         self._v = view
         self._drag_x: float | None = None
+        self._press_x = 0.0
         self.setMinimumHeight(ROW_H + AXIS_H)
         self.setMouseTracking(False)
 
@@ -50,7 +52,30 @@ class _Canvas(QWidget):
                     p.drawLine(QPointF(x(start), prev), QPointF(x(start), y))
                 p.drawLine(QPointF(x(start), y), QPointF(x(end), y))
                 prev = y
-        axis = len(v.names) * ROW_H
+        rows = len(v.names)
+        if v.show_uart:
+            top = rows * ROW_H
+            p.setPen(fg)
+            p.drawText(QRectF(2, top, LABEL_W - 6, ROW_H), Qt.AlignmentFlag.AlignVCenter, "UART0 TX")
+            p.setPen(QPen(dim, 1, Qt.PenStyle.DotLine))
+            p.drawLine(LABEL_W, int(top + ROW_H - 1), self.width(), int(top + ROW_H - 1))
+            p.setPen(QPen(QColor("#b5651d"), 1))
+            last_x = -1e9
+            for c, byte in v.uart_bytes(t0, t1):
+                bx = x(c)
+                if bx - last_x < 14:                # too dense to label: mark only
+                    p.drawLine(QPointF(bx, top + 6), QPointF(bx, top + ROW_H - 6))
+                    continue
+                last_x = bx
+                text = chr(byte) if 32 <= byte < 127 else f"{byte:02X}"
+                p.drawRect(QRectF(bx, top + 4, 14, ROW_H - 10))
+                p.drawText(QRectF(bx, top + 4, 14, ROW_H - 10), Qt.AlignmentFlag.AlignCenter, text)
+            rows += 1
+        for c, color in zip(v.cursors, ("#d62728", "#1f77b4")):
+            if c is not None and t0 <= c <= t1:
+                p.setPen(QPen(QColor(color), 1))
+                p.drawLine(QPointF(x(c), 0), QPointF(x(c), rows * ROW_H))
+        axis = rows * ROW_H
         p.setPen(dim)
         p.drawLine(LABEL_W, axis + 2, self.width(), axis + 2)
         p.setPen(fg)
@@ -64,7 +89,7 @@ class _Canvas(QWidget):
         self._v.zoom(-1 if ev.angleDelta().y() > 0 else 1)
 
     def mousePressEvent(self, ev):
-        self._drag_x = ev.position().x()
+        self._drag_x = self._press_x = ev.position().x()
 
     def mouseMoveEvent(self, ev):
         if self._drag_x is not None:
@@ -72,8 +97,11 @@ class _Canvas(QWidget):
             self._drag_x = ev.position().x()
             self._v.pan(-dx / max(1, self.width() - LABEL_W))
 
-    def mouseReleaseEvent(self, _ev):
+    def mouseReleaseEvent(self, ev):
         self._drag_x = None
+        if abs(ev.position().x() - self._press_x) < 3:          # a click, not a pan
+            which = 1 if ev.button() == Qt.MouseButton.RightButton else 0
+            self._v.place_cursor(which, ev.position().x(), self.width())
 
     def mouseDoubleClickEvent(self, ev):
         row = int(ev.position().y() // ROW_H)
@@ -94,6 +122,9 @@ class TimelineView(QWidget):
         self._wanted: list[str] = []            # survives reloads
         self._end: int | None = None            # None = follow
         self.frequency = 0
+        self.cursors: list[int | None] = [None, None]
+        self.show_uart = True
+        self._uart: list[tuple[int, int]] = []  # (cycle, byte) of USART0 TX
         self._edit = QLineEdit()
         self._edit.setPlaceholderText("pin to trace, e.g. PA0 (Enter)")
         self._edit.returnPressed.connect(self._add_from_edit)
@@ -107,13 +138,19 @@ class TimelineView(QWidget):
         self._follow.toggled.connect(self._follow_toggled)
         clear = QPushButton("Clear")
         clear.clicked.connect(self.clear)
+        export = QPushButton("Export VCD…")
+        export.clicked.connect(self.export_dialog)
+        self._info = QLabel(measure(None, None, 0))
         self._canvas = _Canvas(self)
         lay = QGridLayout(self)
         lay.addWidget(self._edit, 0, 0)
         lay.addWidget(self._span, 0, 1)
         lay.addWidget(self._follow, 0, 2)
         lay.addWidget(clear, 0, 3)
-        lay.addWidget(self._canvas, 1, 0, 1, 4)
+        lay.addWidget(export, 0, 4)
+        lay.addWidget(self._canvas, 1, 0, 1, 5)
+        lay.addWidget(self._info, 2, 0, 1, 5)
+        self._resize_canvas()
 
     # -- model ---------------------------------------------------------------
 
@@ -139,6 +176,9 @@ class TimelineView(QWidget):
         self._sim = sim
         self.frequency = sim.frequency if sim else 0
         self._end = None
+        self._uart = []
+        self.cursors = [None, None]
+        self._update_info()
         self._follow.setChecked(True)
         self._resubscribe()
 
@@ -148,8 +188,12 @@ class TimelineView(QWidget):
         if sim is not None:
             for name in self._wanted:
                 self._start(sim, name)
-        self._canvas.setMinimumHeight(max(1, len(self.names)) * ROW_H + AXIS_H)
+        self._resize_canvas()
         self._canvas.update()
+
+    def _resize_canvas(self):
+        rows = len(self.names) + (1 if self.show_uart else 0)
+        self._canvas.setMinimumHeight(max(1, rows) * ROW_H + AXIS_H)
 
     def _start(self, sim: Simulator, name: str) -> bool:
         try:
@@ -170,7 +214,7 @@ class TimelineView(QWidget):
         if self._sim is not None and not self._start(self._sim, name):
             return False
         self._wanted.append(name)
-        self._canvas.setMinimumHeight(max(1, len(self.names)) * ROW_H + AXIS_H)
+        self._resize_canvas()
         self._canvas.update()
         return True
 
@@ -187,12 +231,13 @@ class TimelineView(QWidget):
         if name in self.names:
             self.names.remove(name)
             del self.traces[name]
-        self._canvas.setMinimumHeight(max(1, len(self.names)) * ROW_H + AXIS_H)
+        self._resize_canvas()
         self._canvas.update()
 
     def clear(self):
         """Forget the history, keeping the pins; each restarts at its current level."""
         sim = self._sim
+        self._uart = []
         if sim is None:
             return
         for name in self.names:
@@ -211,6 +256,15 @@ class TimelineView(QWidget):
                 self.traces[name].record(cycle, sim.pin_state(name).level)
             except (SimavrError, AttributeError):
                 pass
+
+    def record_uart(self, ev: UartTxEvent):
+        """A byte USART0 finished sending (shown at the cycle it left the shifter)."""
+        self._uart.append((ev.cycle, ev.byte))
+        if len(self._uart) > 20_000:
+            del self._uart[:2_000]
+
+    def uart_bytes(self, t0: int, t1: int) -> list[tuple[int, int]]:
+        return [(c, b) for c, b in self._uart if t0 <= c <= t1]
 
     def owns(self, sub: int) -> bool:
         return sub in self._subs
@@ -246,6 +300,29 @@ class TimelineView(QWidget):
         self._follow.setChecked(False)
         self._follow.blockSignals(False)
         self._canvas.update()
+
+    def place_cursor(self, which: int, x: float, width: int):
+        t0, t1 = self.window()
+        frac = min(1.0, max(0.0, (x - LABEL_W) / max(1, width - LABEL_W)))
+        self.cursors[which] = round(t0 + frac * (t1 - t0))
+        self._update_info()
+        self._canvas.update()
+
+    def _update_info(self):
+        self._info.setText(measure(*self.cursors, self.frequency))
+
+    def export_dialog(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export VCD", "timeline.vcd", "VCD (*.vcd)")
+        if path:
+            try:
+                self.export_vcd(path)
+            except OSError as e:
+                QMessageBox.warning(self, "Export VCD", str(e))
+
+    def export_vcd(self, path: str):
+        end = self.window()[1]
+        write_vcd(path, self.traces, self.frequency, end,
+                  self._uart if self.show_uart else None)
 
     def _follow_toggled(self, on: bool):
         self._end = None if on else self.window()[1]
