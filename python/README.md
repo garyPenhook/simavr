@@ -45,6 +45,9 @@ watchpoints, analog input, interrupt events, VCD) aren't wrapped.
 
 ## GUI
 
+From the repo root, `./simavr-gui [-f hz] [--board file] [firmware.elf]` does everything
+below (builds the library and sets up `.venv` on first use) and works from any directory.
+
 ```sh
 uv pip install --python .venv/bin/python -e 'python[gui]'
 .venv/bin/python -m simavr_py.gui -f 3333333 blink.elf   # --speed 0 = unthrottled
