@@ -19,6 +19,8 @@ from ..core import (
     OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent, StopReason,
     UartTxEvent,
 )
+from ..disasm import Insn
+from ..disasm import window as disasm_window
 from .board import BoardCanvas
 
 SESSION_VERSION = 3          # 3 added "breakpoints", 2 "board"; older files still load
@@ -408,6 +410,16 @@ class BreakpointPane(QWidget):
             self._arm(addr)
             self._render()
 
+    def toggle(self, addr: int):
+        if addr in self._addrs:
+            self._disarm(addr)
+            self._addrs.remove(addr)
+            if self._hit == addr:
+                self._hit = None
+            self._render()
+        else:
+            self.add(addr)
+
     def _arm(self, addr: int):
         if self._sim is None:
             return
@@ -467,6 +479,70 @@ class BreakpointPane(QWidget):
                 self._table.selectRow(row)
 
 
+class DisasmView(QWidget):
+    """Instructions around the PC, read from flash while the sim is stopped.
+    Double-click a row to toggle a PC breakpoint there."""
+
+    CURRENT = QColor("#b7d7f5")
+
+    def __init__(self, breaks: BreakpointPane):
+        super().__init__()
+        self._breaks = breaks
+        self._key = None            # what the table currently shows
+        self._insns: list[Insn] = []
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(["", "Addr", "Instruction"])
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.verticalHeader().setVisible(False)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setFont(_mono())
+        self._table.cellDoubleClicked.connect(self._toggle)
+        lay = QGridLayout(self)
+        lay.addWidget(self._table, 0, 0)
+
+    def _toggle(self, row: int, _col: int):
+        if row < len(self._insns):
+            self._breaks.toggle(self._insns[row].addr)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None:
+            if self._key is not None:
+                self._key = None
+                self._insns = []
+                self._table.setRowCount(0)
+            return
+        if sim.state in (State.RUNNING, State.SLEEPING):
+            self._table.setEnabled(False)       # the PC is only readable while stopped
+            return
+        try:
+            pc = sim.cpu.pc
+            size = sim.mem_size(Space.FLASH)
+            key = (sim.mmcu, pc, sim.cycle, tuple(self._breaks.addresses))
+            if key == self._key:
+                self._table.setEnabled(True)
+                return
+            insns = disasm_window(lambda a, n: sim.read(Space.FLASH, a, n), pc, size)
+        except SimavrError:
+            return              # resumed (or reset) between the state read and the fetch
+        self._key, self._insns = key, insns
+        self._table.setEnabled(True)
+        bps = set(self._breaks.addresses)
+        self._table.setRowCount(len(insns))
+        for row, ins in enumerate(insns):
+            for col, text in enumerate(("●" if ins.addr in bps else "",
+                                        f"0x{ins.addr:05X}", ins.text)):
+                item = QTableWidgetItem(text)
+                if ins.addr == pc:
+                    item.setBackground(QBrush(self.CURRENT))
+                self._table.setItem(row, col, item)
+            if ins.addr == pc:
+                self._table.scrollToItem(self._table.item(row, 0),
+                                         QTableWidget.ScrollHint.PositionAtCenter)
+        self._table.resizeColumnToContents(0)
+        self._table.resizeColumnToContents(1)
+
+
 class UartConsole(QWidget):
     def __init__(self):
         super().__init__()
@@ -519,6 +595,7 @@ class MainWindow(QMainWindow):
         self.mem = MemoryView()
         self.watch = WatchPane()
         self.breaks = BreakpointPane()
+        self.disasm = DisasmView(self.breaks)
         self.uart = UartConsole()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -528,6 +605,7 @@ class MainWindow(QMainWindow):
         for title, w, area in (("Board", self.board, Qt.DockWidgetArea.TopDockWidgetArea),
                                ("CPU", self.cpu, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Disassembly", self.disasm, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Breakpoints", self.breaks, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -657,6 +735,7 @@ class MainWindow(QMainWindow):
         self.pins.refresh()
         self.board.refresh()
         self.cpu.refresh(sim)
+        self.disasm.refresh(sim)
         self.mem.refresh(sim)
         self.watch.refresh(sim)
         self._update_actions()

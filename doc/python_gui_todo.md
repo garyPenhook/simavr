@@ -184,7 +184,17 @@ metadata table).
 simulator, highlights the one that stopped the run, and saves them in the
 session (format version 3). Addresses beyond the device's flash stay listed but
 show unarmed. Data watchpoints are blocked on the native `avr_host_watch_add`
-(not implemented); source/disassembly correlation is not started.
+(not implemented); disassembly landed (below); source correlation is not started.
+
+**Disassembly (slice 2, 2026-10-19):** `simavr_py.disasm` (Qt-free) decodes the
+AVRe+/AVRxt set and is checked opcode-for-opcode against `avr-objdump` (all
+65,536 words; XCH/LAS/LAC/LAT/DES stay `.word` because no core implements them).
+The "Disassembly" dock shows instructions around the PC while stopped, reading
+flash on each stop (so SPM-modified code shows correctly); double-click a row to
+toggle a PC breakpoint. Rows before the PC are best-effort (variable-length code
+can't be decoded backwards; the decoder resyncs onto the PC), rows from the PC
+on are exact. Branch/call targets are shown as absolute addresses; no symbol
+names yet (that needs the ELF symbol table, with source correlation).
 
 1. Breakpoints:
    * PC breakpoints

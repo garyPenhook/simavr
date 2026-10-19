@@ -323,3 +323,48 @@ def test_breakpoint_pane(tmp_path):
     r = subprocess.run([sys.executable, "-c", BREAK_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+DISASM_SCRIPT = r"""
+import sys
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.load(sys.argv[1])
+win.step(); assert win._sim.wait_stopped(5)
+win.refresh()
+t = win.disasm._table
+pc = win._sim.cpu.pc
+rows = [r for r in range(t.rowCount()) if t.item(r, 1).text() == f"0x{pc:05X}"]
+assert len(rows) == 1 and t.item(rows[0], 2).text(), "PC row missing"
+assert t.isEnabled()
+t.cellDoubleClicked.emit(rows[0], 0)                 # toggle a breakpoint on the PC row
+assert win.breaks.addresses == [pc]
+win.refresh()
+assert t.item(rows[0], 0).text() == "●"
+t.cellDoubleClicked.emit(rows[0], 0)
+assert win.breaks.addresses == []
+win.run(); win.refresh()
+assert not t.isEnabled()                              # PC unreadable while running
+win.pause(); assert win._sim.wait_stopped(5)
+win.close()
+win.refresh()
+assert t.rowCount() == 0
+"""
+
+
+def test_disassembly_dock(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(FIRMWARE)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", DISASM_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
