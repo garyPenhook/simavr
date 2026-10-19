@@ -361,6 +361,9 @@ static inline void _avr_set_ram(avr_t * avr, uint16_t addr, uint8_t v)
 	if (unlikely(addr < AVR_LOWIO_REDIRECT_SIZE) && avr->lowio_redirect[addr])
 		addr = avr->lowio_redirect[addr];
 
+	if (unlikely(avr->cpu_watch))
+		avr->cpu_watch(avr, addr, v, 1, avr->cpu_watch_param);
+
 	if (addr <= avr->ioend)
 		_avr_set_r(avr, addr, v);
 	else if (unlikely(avr->arch.flashmap_start) &&
@@ -385,6 +388,9 @@ static inline uint8_t _avr_get_ram(avr_t * avr, uint16_t addr)
 	// Modern low-I/O redirect (e.g. VPORT -> PORT); see _avr_set_ram().
 	if (unlikely(addr < AVR_LOWIO_REDIRECT_SIZE) && avr->lowio_redirect[addr])
 		addr = avr->lowio_redirect[addr];
+
+	if (unlikely(avr->cpu_watch))
+		avr->cpu_watch(avr, addr, 0, 0, avr->cpu_watch_param);
 
 	if (addr == avr->arch.sreg_addr) {
 		/*

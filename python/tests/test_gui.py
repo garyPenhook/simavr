@@ -433,3 +433,64 @@ def test_interrupt_pane(tmp_path):
     r = subprocess.run([sys.executable, "-c", IRQ_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
+
+
+DATABREAK_SCRIPT = r"""
+import json, sys
+from PySide6.QtWidgets import QApplication
+from simavr_py import State, WatchFlag
+from simavr_py.gui.window import MainWindow, parse_data_break
+
+assert parse_data_break("0x0407") == (0x407, 1, WatchFlag.WRITE)
+assert parse_data_break("3f:2 RW") == (0x3F, 2, WatchFlag.READ | WatchFlag.WRITE)
+assert parse_data_break("40 c") == (0x40, 1, WatchFlag.WRITE | WatchFlag.CHANGE)
+for bad in ("", "zz", "40 x", "40:0", "10000", "1 2 3", "4_0", "40:-1"):
+    try:
+        parse_data_break(bad)
+    except ValueError:
+        continue
+    raise AssertionError(f"accepted {bad!r}")
+
+app = QApplication([])
+win = MainWindow("atmega4809", 3333333, speed=0)
+win.databreaks.set_items([(0x407, 1, WatchFlag.WRITE), (0xFFFF, 4, WatchFlag.WRITE)])
+win.load(sys.argv[1])
+t = win.databreaks._table
+assert t.item(0, 3).text() == "yes" and t.item(1, 3).text() == "no"
+win.run()
+assert win._sim.wait_stopped(5), "watchpoint did not fire"
+win._drain()
+assert win._sim.state == State.PAUSED and win.databreaks._hit == (0x407, 1, WatchFlag.WRITE)
+assert t.item(0, 0).background().color().name() == "#f4a6a6"
+win.run()                                    # next OUTTGL comes around again
+assert win._sim.wait_stopped(5)
+win._drain()
+assert win.databreaks._hit is not None
+win.step()
+assert win.databreaks._hit is None
+d = json.loads(json.dumps(win.session_dict()))
+assert d["watchpoints"] == [[0x407, 1, 2], [0xFFFF, 4, 2]]
+t.selectRow(1); win.databreaks._remove_selected()
+assert win.databreaks.items == [(0x407, 1, WatchFlag.WRITE)]
+win.close()
+
+win2 = MainWindow(None, 0)
+win2.apply_session(d)
+assert len(win2.databreaks.items) == 2
+win2.close()
+"""
+
+
+def test_data_breakpoint_pane(tmp_path):
+    if not shutil.which("avr-gcc"):
+        pytest.skip("avr-gcc not installed")
+    src, elf = tmp_path / "fw.c", tmp_path / "fw.elf"
+    src.write_text(FIRMWARE)
+    r = subprocess.run(["avr-gcc", "-mmcu=atmega4809", "-Os", "-o", elf, src],
+                       capture_output=True)
+    if r.returncode:
+        pytest.skip("avr-gcc lacks atmega4809 support")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", DATABREAK_SCRIPT, str(elf)], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr

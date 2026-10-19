@@ -17,14 +17,14 @@ from PySide6.QtWidgets import (
 from ..boards import BoardError, load_board
 from ..core import (
     InterruptEvent, OverflowEvent, PinEvent, Simulator, SimavrError, Space, State, StateEvent,
-    StopReason, UartTxEvent,
+    StopReason, UartTxEvent, WatchFlag,
 )
 from ..disasm import Insn
 from ..disasm import window as disasm_window
 from ..symbols import SymbolTable, read_elf_symbols
 from .board import BoardCanvas
 
-SESSION_VERSION = 3          # 3 added "breakpoints", 2 "board"; older files still load
+SESSION_VERSION = 4          # 4 added "watchpoints", 3 "breakpoints", 2 "board"; older files still load
 REFRESH_MS = 50          # repaint cadence, independent of simulated time
 DRAIN_LIMIT = 1024
 
@@ -578,6 +578,150 @@ class DisasmView(QWidget):
         self._table.resizeColumnToContents(2)
 
 
+def parse_data_break(text: str) -> tuple[int, int, WatchFlag]:
+    """'hexaddr[:len] [r|w|rw|c]' -> (addr, length, flags). Hex is always hex.
+    Modes: r read, w write (default), rw both, c write that changes the value."""
+    parts = text.split()
+    if not 1 <= len(parts) <= 2:
+        raise ValueError(f"bad data breakpoint {text!r}: expected hexaddr[:len] [r|w|rw|c]")
+    spec, _, ln = parts[0].partition(":")
+    try:
+        if "_" in parts[0]:
+            raise ValueError(spec)
+        addr = int(spec, 16)
+        length = int(ln) if ln else 1
+    except ValueError:
+        raise ValueError(f"bad data breakpoint {text!r}: expected hexaddr[:decimal len]") from None
+    modes = {"r": WatchFlag.READ, "w": WatchFlag.WRITE,
+             "rw": WatchFlag.READ | WatchFlag.WRITE, "c": WatchFlag.WRITE | WatchFlag.CHANGE}
+    mode = parts[1].lower() if len(parts) == 2 else "w"
+    if mode not in modes:
+        raise ValueError(f"bad data breakpoint {text!r}: mode must be r, w, rw or c")
+    if not 0 <= addr <= 0xFFFF or not 1 <= length <= 0xFFFF:
+        raise ValueError(f"bad data breakpoint {text!r}: address/length out of range")
+    return addr, length, modes[mode]
+
+
+def _mode_text(flags: WatchFlag) -> str:
+    if flags & WatchFlag.CHANGE:
+        return "c"
+    return ("r" if flags & WatchFlag.READ else "") + ("w" if flags & WatchFlag.WRITE else "")
+
+
+class DataBreakPane(QWidget):
+    """Data-space watchpoints that pause the run. CPU accesses only (peripheral
+    writes are not seen); the stop lands after the accessing instruction. Owns
+    the list and re-arms it on every new simulator."""
+
+    HIT = QColor("#f4a6a6")
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._items: list[tuple[int, int, WatchFlag]] = []
+        self._ids: dict[tuple[int, int, WatchFlag], int] = {}
+        self._hit: tuple[int, int, WatchFlag] | None = None
+        self._edit = QLineEdit()
+        self._edit.setPlaceholderText("hexaddr[:len] [r|w|rw|c], e.g. 0x0400, 3f:2 rw (Enter)")
+        self._edit.returnPressed.connect(self._add_from_edit)
+        rm = QPushButton("Remove")
+        rm.clicked.connect(self._remove_selected)
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Addr", "Len", "Mode", "Armed"])
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setFont(_mono())
+        top = QHBoxLayout()
+        top.addWidget(self._edit)
+        top.addWidget(rm)
+        lay = QGridLayout(self)
+        lay.addLayout(top, 0, 0)
+        lay.addWidget(self._table, 1, 0)
+
+    @property
+    def items(self) -> list[tuple[int, int, WatchFlag]]:
+        return list(self._items)
+
+    def set_sim(self, sim: Simulator | None):
+        self._sim = sim
+        self._ids.clear()
+        self._hit = None
+        for it in self._items:
+            self._arm(it)
+        self._render()
+
+    def set_items(self, items):
+        for it in list(self._items):
+            self._disarm(it)
+        self._items = list(dict.fromkeys(items))
+        self._hit = None
+        for it in self._items:
+            self._arm(it)
+        self._render()
+
+    def add(self, item: tuple[int, int, WatchFlag]):
+        if item not in self._items:
+            self._items.append(item)
+            self._arm(item)
+            self._render()
+
+    def _arm(self, item):
+        if self._sim is None:
+            return
+        try:
+            self._ids[item] = self._sim.add_watchpoint(*item)
+        except SimavrError:
+            pass            # outside this device's data space, or table full: shown unarmed
+
+    def _disarm(self, item):
+        wp = self._ids.pop(item, None)
+        if wp is not None and self._sim is not None:
+            try:
+                self._sim.remove_watchpoint(wp)
+            except SimavrError:
+                pass
+
+    def mark_hit(self, wp_id: int):
+        self._hit = next((it for it, i in self._ids.items() if i == wp_id), None)
+        self._render()
+
+    def clear_hit(self):
+        if self._hit is not None:
+            self._hit = None
+            self._render()
+
+    def _add_from_edit(self):
+        try:
+            item = parse_data_break(self._edit.text())
+        except ValueError as e:
+            QMessageBox.warning(self, "Data breakpoint", str(e))
+            return
+        self.add(item)
+        self._edit.clear()
+
+    def _remove_selected(self):
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        gone = [it for i, it in enumerate(self._items) if i in rows]
+        for it in gone:
+            self._disarm(it)
+        self._items = [it for it in self._items if it not in gone]
+        if self._hit in gone:
+            self._hit = None
+        self._render()
+
+    def _render(self):
+        self._table.setRowCount(len(self._items))
+        for row, it in enumerate(self._items):
+            addr, length, flags = it
+            armed = "yes" if it in self._ids else ("-" if self._sim is None else "no")
+            for col, text in enumerate((f"0x{addr:04X}", str(length), _mode_text(flags), armed)):
+                item = QTableWidgetItem(text)
+                if it == self._hit:
+                    item.setBackground(QBrush(self.HIT))
+                self._table.setItem(row, col, item)
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -683,6 +827,7 @@ class MainWindow(QMainWindow):
         self.mem = MemoryView()
         self.watch = WatchPane()
         self.breaks = BreakpointPane()
+        self.databreaks = DataBreakPane()
         self.disasm = DisasmView(self.breaks)
         self.uart = UartConsole()
         self.irqs = InterruptPane()
@@ -696,6 +841,8 @@ class MainWindow(QMainWindow):
                                ("Watch", self.watch, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Disassembly", self.disasm, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Breakpoints", self.breaks, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Data Breakpoints", self.databreaks,
+                                Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Interrupts", self.irqs, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -770,6 +917,7 @@ class MainWindow(QMainWindow):
         self.uart.set_sim(sim)
         self.board.set_sim(sim)
         self.breaks.set_sim(sim)
+        self.databreaks.set_sim(sim)
         symbols = read_elf_symbols(path) if is_elf else SymbolTable()
         self.disasm.set_symbols(symbols)
         self.breaks.set_symbols(symbols)
@@ -787,6 +935,7 @@ class MainWindow(QMainWindow):
         self.pins.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
+        self.databreaks.set_sim(None)
         self.board.set_sim(None)     # releases held pins while the sim is still open
         if sim is not None:
             try:
@@ -824,6 +973,10 @@ class MainWindow(QMainWindow):
                     # mark while the sim is actually stopped.
                     if sim.state not in (State.RUNNING, State.SLEEPING):
                         self.breaks.mark_hit(bp)
+                    self._update_actions()
+                case StateEvent(reason=StopReason.WATCHPOINT, id=wp):
+                    if sim.state not in (State.RUNNING, State.SLEEPING):
+                        self.databreaks.mark_hit(wp)
                     self._update_actions()
                 case StateEvent():
                     self._update_actions()
@@ -880,12 +1033,13 @@ class MainWindow(QMainWindow):
             "layout": b64(self.saveState()),
             "watches": [list(w) for w in self.watch.watches],
             "breakpoints": self.breaks.addresses,
+            "watchpoints": [[a, n, int(f)] for a, n, f in self.databreaks.items],
             "driven": self.pins.driven(),
         }
 
     def apply_session(self, d: dict, load_firmware: bool = True):
         """Restore a session dict. Raises ValueError on a file we can't read."""
-        if not isinstance(d, dict) or d.get("version") not in (1, 2, SESSION_VERSION):
+        if not isinstance(d, dict) or d.get("version") not in (1, 2, 3, SESSION_VERSION):
             raise ValueError("not a simavr session file (or unsupported version)")
         self._mmcu = d.get("mmcu") or self._mmcu
         self._freq = int(d.get("freq", self._freq))
@@ -893,6 +1047,8 @@ class MainWindow(QMainWindow):
         self.watch.set_watches((str(l), int(a), int(w)) for l, a, w in d.get("watches", []))
         self.breaks.set_addresses(parse_breakpoint(f"{int(a):x}")
                                   for a in d.get("breakpoints", []))
+        self.databreaks.set_items((int(a), int(n), WatchFlag(int(f)))
+                                  for a, n, f in d.get("watchpoints", []))
         for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
             if d.get(key):
                 restore(QByteArray(base64.b64decode(d[key])))
@@ -946,6 +1102,7 @@ class MainWindow(QMainWindow):
             self._guard(self._sim.resume)
             if self._sim.state in (State.RUNNING, State.SLEEPING):
                 self.breaks.clear_hit()
+                self.databreaks.clear_hit()
 
     def pause(self):
         if self._sim:
@@ -955,6 +1112,7 @@ class MainWindow(QMainWindow):
         if self._sim:
             self._guard(self._sim.step)
             self.breaks.clear_hit()
+            self.databreaks.clear_hit()
 
     def reset(self):
         if self._sim:

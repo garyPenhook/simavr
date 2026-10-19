@@ -54,6 +54,7 @@ DEFINE_FIFO(uint8_t, usart_rx_fifo);
 extern avr_kind_t * avr_kind[];
 
 #define HOST_MAX_BREAKS	64
+#define HOST_MAX_WATCHES	32
 #define HOST_EVQ_SIZE	4096
 #define HOST_MAX_UARTS	8
 #define HOST_MAX_PORTS	8		/* PORTA .. PORTH */
@@ -109,6 +110,15 @@ struct avr_host_t {
 	int					nbreaks;
 	uint32_t			break_pc[HOST_MAX_BREAKS];
 	int					break_id[HOST_MAX_BREAKS];
+	int					nwatches;
+	struct {
+		int				id;
+		uint16_t		addr, len;
+		uint32_t		flags;
+	}					watch[HOST_MAX_WATCHES];
+	int					in_run;		/* inside avr_run(): host peeks/pokes must not hit watches */
+	int					watch_hit;	/* id of the watch that fired this instruction */
+	uint16_t			watch_addr;
 
 	host_sub_t *		subs;
 
@@ -457,9 +467,17 @@ host_exec(
 			if (hit)
 				break;
 		}
+		h->in_run = 1;
 		int st = avr_run(avr);
+		h->in_run = 0;
 		if (executed)
 			h->skip_break = 0;
+		if (h->watch_hit) {
+			int id = h->watch_hit;
+			h->watch_hit = 0;
+			host_set_mode(h, AVR_HOST_PAUSED, AVR_HOST_STOP_WATCHPOINT, id);
+			break;
+		}
 		if (st == cpu_Done) {
 			host_set_mode(h, AVR_HOST_DONE, AVR_HOST_STOP_DONE, 0);
 			break;
@@ -1439,6 +1457,36 @@ avr_host_symbol_at(
 	return NULL;
 }
 
+/* Runs on the sim thread, lock held, inside the instruction that accesses
+ * data space. Only records the hit; host_exec() pauses once the instruction
+ * has completed (so PC is the instruction after the access). */
+static void
+host_cpu_watch(
+		avr_t * avr,
+		uint16_t addr,
+		uint8_t v,
+		int write,
+		void * param)
+{
+	avr_host_t * h = param;
+
+	if (!h->in_run || h->watch_hit)
+		return;
+	for (int i = 0; i < h->nwatches; i++) {
+		uint32_t f = h->watch[i].flags;
+		if (addr < h->watch[i].addr ||
+			addr >= (uint32_t)h->watch[i].addr + h->watch[i].len)
+			continue;
+		if (!(f & (write ? AVR_HOST_WATCH_WRITE : AVR_HOST_WATCH_READ)))
+			continue;
+		if (write && (f & AVR_HOST_WATCH_CHANGE) && avr->data[addr] == v)
+			continue;
+		h->watch_hit = h->watch[i].id;
+		h->watch_addr = addr;
+		return;
+	}
+}
+
 int
 avr_host_watch_add(
 		avr_host_t * h,
@@ -1446,7 +1494,25 @@ avr_host_watch_add(
 		uint16_t len,
 		uint32_t flags)
 {
-	return host_error(h, AVR_HOST_ENOTSUP, "watchpoints not implemented");
+	int res;
+	host_lock(h);
+	if (!len || (uint32_t)addr + len > (uint32_t)h->avr->ramend + 1)
+		res = host_error(h, AVR_HOST_ERANGE, "bad watch range %#x+%u", addr, len);
+	else if (!(flags & (AVR_HOST_WATCH_READ | AVR_HOST_WATCH_WRITE)))
+		res = host_error(h, AVR_HOST_EINVAL, "watch needs READ and/or WRITE");
+	else if (h->nwatches == HOST_MAX_WATCHES)
+		res = host_error(h, AVR_HOST_ENOMEM, "too many watchpoints");
+	else {
+		res = h->next_id++;
+		h->watch[h->nwatches].id = res;
+		h->watch[h->nwatches].addr = addr;
+		h->watch[h->nwatches].len = len;
+		h->watch[h->nwatches++].flags = flags;
+		h->avr->cpu_watch = host_cpu_watch;
+		h->avr->cpu_watch_param = h;
+	}
+	host_unlock(h);
+	return res;
 }
 
 int
@@ -1454,7 +1520,20 @@ avr_host_watch_remove(
 		avr_host_t * h,
 		int id)
 {
-	return host_error(h, AVR_HOST_ENOTSUP, "watchpoints not implemented");
+	int res = host_error(h, AVR_HOST_ENOENT, "no watchpoint %d", id);
+	host_lock(h);
+	for (int i = 0; i < h->nwatches; i++)
+		if (h->watch[i].id == id) {
+			h->watch[i] = h->watch[--h->nwatches];
+			res = 0;
+			break;
+		}
+	if (!h->nwatches) {
+		h->avr->cpu_watch = NULL;
+		h->watch_hit = 0;
+	}
+	host_unlock(h);
+	return res;
 }
 
 int

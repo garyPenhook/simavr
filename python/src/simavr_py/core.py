@@ -43,6 +43,12 @@ class StopReason(enum.IntEnum):
     CRASH = 6
 
 
+class WatchFlag(enum.IntFlag):
+    READ = 1
+    WRITE = 2
+    CHANGE = 4          # with WRITE: only when the value differs
+
+
 class Space(enum.IntEnum):
     DATA = 0
     FLASH = 1
@@ -428,6 +434,20 @@ class Simulator:
 
     def remove_breakpoint(self, bp: int) -> None:
         self._check(self._L.avr_host_break_remove(self._handle(), bp))
+
+    # -- data watchpoints ------------------------------------------------------
+
+    def add_watchpoint(self, addr: int, length: int = 1,
+                       flags: WatchFlag = WatchFlag.WRITE) -> int:
+        """Pause when the CPU accesses data-space [addr, addr+length). The stop
+        is reported (StopReason.WATCHPOINT, id) after the accessing instruction
+        completes. Peripheral-model writes are not seen."""
+        return self._check(self._L.avr_host_watch_add(
+            self._handle(), _uint("addr", addr, 0xFFFF), _uint("length", length, 0xFFFF),
+            int(flags)))
+
+    def remove_watchpoint(self, wp: int) -> None:
+        self._check(self._L.avr_host_watch_remove(self._handle(), wp))
 
     # -- pins ----------------------------------------------------------------
 

@@ -283,8 +283,71 @@ test_memory(void)
 	cpu.pc = 0x11;
 	CHECK("odd pc rejected", avr_host_set_cpu(h, &cpu) == AVR_HOST_ERANGE);
 
-	CHECK("unimplemented returns ENOTSUP",
-		  avr_host_watch_add(h, 0x100, 1, AVR_HOST_WATCH_WRITE) == AVR_HOST_ENOTSUP);
+	avr_host_free(h);
+}
+
+static void
+test_watch(void)
+{
+	printf("== data watchpoints ==\n");
+	avr_host_t * h = avr_host_new("atmega4809", 16000000);
+	CHECK("instance created", h != NULL);
+	if (!h)
+		return;
+	CHECK("load flash", load_blink(h) == 0);
+
+	avr_host_cpu_t cpu;
+	avr_host_event_t ev;
+
+	CHECK("watch without READ/WRITE rejected",
+		  avr_host_watch_add(h, PORTA_DIR, 1, 0) == AVR_HOST_EINVAL);
+	CHECK("zero-length watch rejected",
+		  avr_host_watch_add(h, PORTA_DIR, 0, AVR_HOST_WATCH_WRITE) == AVR_HOST_ERANGE);
+	CHECK("watch beyond data space rejected",
+		  avr_host_watch_add(h, 0xffff, 1, AVR_HOST_WATCH_WRITE) == AVR_HOST_ERANGE);
+
+	/* The STS to PORTA.DIR is the second instruction; the stop is after it. */
+	int w = avr_host_watch_add(h, PORTA_DIR, 1, AVR_HOST_WATCH_WRITE);
+	CHECK("watch add", w > 0);
+	CHECK("run_cycles", avr_host_run_cycles(h, 1000) == 0);
+	avr_host_get_cpu(h, &cpu);
+	CHECK("stopped after the STS", cpu.pc == 0x06);
+	CHECK("watchpoint STATE event",
+		  count_events(h, AVR_HOST_EV_STATE, 0, &ev) >= 1 &&
+		  ev.b == AVR_HOST_STOP_WATCHPOINT && ev.c == (uint32_t)w);
+
+	/* Resuming does not re-hit; the loop never writes DIR again. */
+	avr_host_run_cycles(h, 200);
+	avr_host_get_cpu(h, &cpu);
+	CHECK("no re-hit without another access",
+		  count_events(h, AVR_HOST_EV_STATE, 0, &ev) >= 1 &&
+		  ev.b == AVR_HOST_STOP_STEP && cpu.cycle >= 200);
+	CHECK("watch remove", avr_host_watch_remove(h, w) == 0);
+	CHECK("watch remove twice fails", avr_host_watch_remove(h, w) < 0);
+
+	/* SBI/CBI on VPORTA.OUT are redirected to PORTA.OUT: the watch sees the
+	 * effective address. READ|WRITE both hit; WRITE|CHANGE skips a rewrite of
+	 * the same value. */
+	avr_host_reset(h);
+	count_events(h, AVR_HOST_EV_STATE, -1, NULL);
+	w = avr_host_watch_add(h, PORTA_DIR + 4, 1, AVR_HOST_WATCH_WRITE | AVR_HOST_WATCH_CHANGE);
+	avr_host_run_cycles(h, 1000);
+	avr_host_get_cpu(h, &cpu);
+	CHECK("redirected SBI hits PORTA.OUT", cpu.pc == 0x08);
+	avr_host_watch_remove(h, w);
+
+	/* Host peeks/pokes (GUI memory panes) are not CPU accesses: they must
+	 * neither record a hit nor pause the next run. */
+	w = avr_host_watch_add(h, 0x2800, 1, AVR_HOST_WATCH_READ | AVR_HOST_WATCH_WRITE);
+	uint8_t b = 0x55;
+	avr_host_mem_write(h, AVR_HOST_MEM_DATA, 0x2800, &b, 1, 0);
+	avr_host_mem_read(h, AVR_HOST_MEM_DATA, 0x2800, &b, 1, 0);
+	count_events(h, AVR_HOST_EV_STATE, -1, NULL);
+	avr_host_run_cycles(h, 100);
+	CHECK("host peek/poke does not trigger a watch",
+		  count_events(h, AVR_HOST_EV_STATE, 0, &ev) >= 1 && ev.b == AVR_HOST_STOP_STEP);
+	avr_host_watch_remove(h, w);
+
 	avr_host_free(h);
 }
 
@@ -643,6 +706,7 @@ main(void)
 	test_manual();
 	test_memory();
 	test_uart();
+	test_watch();
 	test_threaded();
 	test_hex();
 	test_regressions();

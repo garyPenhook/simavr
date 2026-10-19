@@ -414,6 +414,13 @@ typedef struct avr_t {
 	void (*flashmap_write)(struct avr_t * avr, uint16_t addr, uint8_t v, void * param);
 	void *				flashmap_write_param;
 
+	// Optional observer of CPU data-space accesses (LD/ST/LDS/STS/IN/OUT...),
+	// called with the effective address after the low-I/O redirect and before
+	// the access takes effect. NULL (the default) costs one branch. Used by
+	// sim_host for data watchpoints; peripheral-model accesses are not seen.
+	void (*cpu_watch)(struct avr_t * avr, uint16_t addr, uint8_t v, int write, void * param);
+	void *				cpu_watch_param;
+
 	/*
 	 * This block allows sharing of the IO write/read on addresses between
 	 * multiple callbacks. In 99% of case it's not needed, however on the tiny*

@@ -218,9 +218,20 @@ state, vector names (blocked on the register metadata table), a timeline, and
 test coverage of LVL1/NMI levels and nested-return filtering (only LVL0 is
 exercised).
 
+**Data breakpoints (slice 6, 2026-10-19):** `avr_host_watch_add/remove` are
+implemented as pausing watches over a data-space range (READ / WRITE /
+WRITE|CHANGE), via a new `avr->cpu_watch` hook called from the CPU's
+`_avr_get_ram/_avr_set_ram` (one NULL check when unused). CPU accesses only:
+peripheral-model writes and host peeks/pokes are not seen, so this is not yet a
+"peripheral register changed" trigger. The stop lands after the accessing
+instruction (STOP_WATCHPOINT, id). Non-pausing `AVR_HOST_EV_WATCH` events are
+not produced. Python: `Simulator.add_watchpoint/remove_watchpoint`, `WatchFlag`;
+GUI: a "Data Breakpoints" dock (`hexaddr[:len] [r|w|rw|c]`), saved in the
+session (format version 4).
+
 1. Breakpoints:
    * PC breakpoints
-   * data watchpoints if the core can surface them cheaply
+   * data watchpoints (CPU accesses done; peripheral-register triggers not)
    * peripheral-register change triggers
 2. Add disassembly and source correlation from ELF/DWARF where available.
 3. Show interrupt activity:

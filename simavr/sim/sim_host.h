@@ -407,12 +407,14 @@ enum {
 	AVR_HOST_WATCH_CHANGE	= 1 << 2,
 };
 
-/* Not implemented yet.
- * Data-space watch over [addr, addr+len). Covers CPU accesses (which go
- * through avr_core_watch_*). Intended to double as a "peripheral register
- * changed" trigger, but many peripheral models still write avr->data
- * directly; those updates are missed until they are routed through
- * avr_core_watch_write(). */
+/* Pausing data-space watch over [addr, addr+len) (addr is a data-space
+ * address: registers, I/O and SRAM). Fires on CPU accesses only (LD/ST/LDS/
+ * STS/IN/OUT/SBI/PUSH/CALL/interrupt entry/...); writes made by peripheral models are not seen. The
+ * instruction completes first, so the instance stops with PC at the next
+ * instruction (AVR_HOST_STOP_WATCHPOINT, id = the watch id). A read-modify-
+ * write instruction (SBI/CBI) counts as both a read and a write. The
+ * non-pausing AVR_HOST_EV_WATCH event is not produced. Errors: ERANGE (outside
+ * data space), EINVAL (neither READ nor WRITE), ENOMEM (32 watches). */
 int
 avr_host_watch_add(
 		avr_host_t * h,

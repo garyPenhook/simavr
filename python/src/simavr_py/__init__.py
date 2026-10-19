@@ -26,6 +26,7 @@ lazy from .core import (
     StateEvent,
     StopReason,
     UartTxEvent,
+    WatchFlag,
     api_version,
     cores,
     ioctl_def,
@@ -35,6 +36,6 @@ __all__ = [
     "Cpu", "Event", "InterruptEvent", "InvalidArgument", "IrqEvent", "LoadError", "NotFound",
     "NotSupported", "OutOfRange", "OverflowEvent", "PinEvent", "PinState",
     "RawEvent", "Simulator", "SimavrError", "Space", "State", "StateError",
-    "StateEvent", "StopReason", "UartTxEvent", "api_version", "cores",
+    "StateEvent", "StopReason", "UartTxEvent", "WatchFlag", "api_version", "cores",
     "ioctl_def",
 ]

@@ -349,3 +349,18 @@ def test_error_messages_are_per_thread(sim):
     sim.pause()
     sim.wait_stopped(timeout=1.0)
     assert not results, f"cross-thread error messages: {results}"
+
+
+def test_watchpoint(sim):
+    wp = sim.add_watchpoint(PORTA_DIR, 1, sa.WatchFlag.WRITE)
+    sim.run_cycles(1000)
+    assert sim.cpu.pc == 0x06               # after the STS
+    st = [e for e in sim.events() if isinstance(e, sa.StateEvent)][-1]
+    assert st.reason is sa.StopReason.WATCHPOINT and st.id == wp
+    sim.remove_watchpoint(wp)
+    with pytest.raises(sa.NotFound):
+        sim.remove_watchpoint(wp)
+    with pytest.raises(sa.InvalidArgument):
+        sim.add_watchpoint(PORTA_DIR, 1, sa.WatchFlag(0))
+    with pytest.raises(sa.OutOfRange):
+        sim.add_watchpoint(0xFFFF, 4)
