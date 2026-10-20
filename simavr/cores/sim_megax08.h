@@ -391,8 +391,9 @@ megax08_init(struct avr_t * avr)
 						  AVR_EVSYS_IRQ_USER0 + 19 /* USERTCA0 */),
 			avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_EV_IN));
 
-	/* PORTMUX (peripheral pin routing) config store at 0x05E0. */
-	avr_portmux_init(avr, &mcu->portmux, 0x05e0, '0');
+	/* PORTMUX (peripheral pin routing) config store at 0x05E0: six *ROUTEA
+	 * registers, EVSYS..TCB (DS40002173C 15.2). */
+	avr_portmux_init_n(avr, &mcu->portmux, 0x05e0, 6, '0');
 
 	/* VREF at 0x00A0; its ADC0 reference feeds ADC0 (INTREF). */
 	avr_vref_init(avr, &mcu->vref, 0x00a0, '0');

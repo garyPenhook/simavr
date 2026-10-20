@@ -128,6 +128,8 @@ CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **Breakpoints**: hex address or symbol (`main`, `main+0x4`); `0xadd` forces an address over a symbol.
 - **Data Breakpoints**: `hexaddr[:len] [r|w|rw|c|p]` (read/write/either/change/any peripheral-register change), e.g. `0x0400`, `3f:2 rw`.
 - **Interrupts**: per-vector count, level and last cycle, vector names, and which CPUINT level is executing.
+- **Ports**: per pin, direction, OUT latch, input level, invert, pull-up and sense config from the PORT registers.
+- **PORTMUX**: each routing field (USART0, TCB2, ...) with its register value, the option selected and the pins it names (tinyAVR 0/1 headers say only "Default/Alternate pins"). Bold = not the reset routing. Display only: the simulator stores PORTMUX but does not re-route peripherals.
 - **Timeline**: type a pin (`PA0`), timer output (`TCA0.WO1`) or bus (`SPI0`, `TWI0`, `USART1`) + Enter; wheel zooms, drag pans, click/right-click set cursors A/B, `Export VCD…` writes a GTKWave file. Also shows UART0 TX and interrupt vectors.
 - **Memory**: data / flash / eeprom hex view at an address.
 - **UART**: console for USART0; type a line + Enter to send it to the firmware.

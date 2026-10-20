@@ -3996,6 +3996,26 @@ int main(void)
 		check("PORTMUX reset clears TCBROUTEA", m->data[P + 5], 0);
 	}
 
+	printf("== megaAVR-0 PORTMUX (six *ROUTEA registers) ==\n");
+	{
+		avr_t *m = avr_make_mcu_by_name("atmega4809");
+		if (!m) { printf("cannot make atmega4809 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		const avr_io_addr_t P = 0x05e0;
+		for (int i = 0; i < 6; i++)
+			cpu_write(m, P + i, 0x10 + i);
+		for (int i = 0; i < 6; i++) {
+			char w[40]; snprintf(w, sizeof(w), "4809 PORTMUX reg %d stores", i);
+			check(w, cpu_read(m, P + i), 0x10 + i);
+		}
+		check("4809 PORTMUX TCAROUTEA hooked", HAS_W(m, P + 4), 1);
+		check("4809 PORTMUX TCBROUTEA hooked", HAS_W(m, P + 5), 1);
+		avr_reset(m);
+		check("4809 PORTMUX reset clears TCAROUTEA", m->data[P + 4], 0);
+		check("4809 PORTMUX reset clears TCBROUTEA", m->data[P + 5], 0);
+	}
+
 	printf("== tinyAVR 2-series VREF + AC0 (AC0REFSEL, DACREF, AINN2, hysteresis) ==\n");
 	{
 		avr_t *m = avr_make_mcu_by_name("attiny3226");

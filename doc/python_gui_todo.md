@@ -176,6 +176,17 @@ or aborts. Tests run the real `board_atmega4809_oled` firmware over I2C and SPI
 two OLEDs on one bus are untested; the inspection widgets stay blocked on the
 register metadata table (the Ports dock covers PORT state).
 
+**PORTMUX view (2026-10-19):** a "PORTMUX" dock decodes every routing field of the
+device (`simavr_py.portmux.routes`, Qt-free) from the avr-libc header's
+`PORTMUX_<field>_<option>_gc` enums (so a smaller package lists fewer options),
+showing register value, option name and pin text. Bit positions and reset values
+were checked against DS40002173C (megaAVR-0) and DS40002205A/04A/287A (tinyAVR
+0/1); tinyAVR 0/1 `EVOUTn` bits are enables there, not pin selects, and are shown
+as OFF/ON. Limits: tinyAVR 0/1 headers give no pin lists ("Default pins"); it
+is a display only, because the engine stores PORTMUX without re-routing. The work
+found and fixed an engine gap: megaAVR-0 registered 4 of its 6 PORTMUX registers
+(TCAROUTEA/TCBROUTEA weren't reset); covered in `test_avrxt_engine.c`.
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
