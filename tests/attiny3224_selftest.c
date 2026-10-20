@@ -10,9 +10,8 @@
 	written 0xA5 when done. The host harness (test_attiny3224_selftest.c) runs it
 	and checks the result.
 
-	OUT is a fixed SRAM block rather than GPIOR0-3: on the modern cores
-	simavr keeps the CPU register file in data[0..31], so GPIOR0-3 (0x1C-0x1F)
-	alias r28-r31 and cannot carry a result reliably.
+	OUT is a fixed SRAM block rather than GPIOR0-3: it was written when GPIOR0-3
+	(0x1C-0x1F) still aliased r28-r31 in the engine (fixed since).
 
 	Every subtest is self-contained (internal inputs only: VDD/10, AC0 DACREF,
 	the temperature sensor):

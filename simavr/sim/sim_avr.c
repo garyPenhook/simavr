@@ -161,6 +161,14 @@ avr_init(
 		avr->arch.sp_addr = R_SPL;
 		avr->arch.sreg_addr = R_SREG;
 	}
+	// Modern cores keep the CPU register file in data[0..31], but on AVRxt data
+	// 0x1C-0x1F is GPIOR0-3, not r28-r31. Memory accesses there are redirected to
+	// a reserved, otherwise unused backing range (0x20-0x23, cleared on reset);
+	// register operands (r28-r31, the X/Y/Z pointers) still use data[28..31].
+	if (avr->arch.flags & AVR_ARCH_F_MODERN) {
+		for (int i = 0; i < 4; i++)
+			avr->lowio_redirect[0x1C + i] = 0x20 + i;
+	}
 	// Allocate the IO callback dispatch table, sized to cover the whole IO
 	// register region (data 32 .. ioend). At least MAX_IOs for safety.
 	avr->io_count = AVR_DATA_TO_IO(avr->ioend) + 1;

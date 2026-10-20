@@ -870,6 +870,23 @@ int main(void)
 		/* The redirect must NOT have touched GP register r1 (VPORTA.OUT==addr1). */
 		check("GP register r1 untouched by VPORT", m->data[1], 0);
 
+		/* ---- GPIOR0-3 (data 0x1C-0x1F) must not alias r28-r31 ---- */
+		m->data[28] = 0x11; m->data[31] = 0x22;
+		m->data[16] = 0x5a;
+		m->pc = 0; put16(m, 0, 0x9300); put16(m, 2, 0x001c); m->pc = avr_run_one(m);	/* STS GPIOR0,r16 */
+		check("STS GPIOR0 leaves r28 alone", m->data[28], 0x11);
+		m->data[16] = 0xc3;
+		m->pc = 0; put16(m, 0, 0x9300); put16(m, 2, 0x001f); m->pc = avr_run_one(m);	/* STS GPIOR3,r16 */
+		check("STS GPIOR3 leaves r31 alone", m->data[31], 0x22);
+		m->data[17] = 0;
+		m->pc = 0; put16(m, 0, 0x9110); put16(m, 2, 0x001c); m->pc = avr_run_one(m);	/* LDS r17,GPIOR0 */
+		check("LDS GPIOR0 reads back 0x5A, not r28", m->data[17], 0x5a);
+		m->pc = 0; put16(m, 0, 0x9110); put16(m, 2, 0x001f); m->pc = avr_run_one(m);	/* LDS r17,GPIOR3 */
+		check("LDS GPIOR3 reads back 0xC3, not r31", m->data[17], 0xc3);
+		m->data[28] = 0x77;	/* a register write must not change GPIOR0 */
+		m->pc = 0; put16(m, 0, 0x9110); put16(m, 2, 0x001c); m->pc = avr_run_one(m);
+		check("r28 write does not change GPIOR0", m->data[17], 0x5a);
+
 		/* ---- Pin-change interrupt via PINnCTRL.ISC ---- */
 		enum { ISC_RISING_VAL = 2 };
 		cpu_write(m, PA + PORTM_DIR, 0x00);			/* all inputs */

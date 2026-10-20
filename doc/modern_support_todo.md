@@ -247,11 +247,12 @@ Remaining gaps (all [P] unless noted):
 
 Defects found while doing this work that are **not** specific to the 2-series (left as is):
 
-* **[F] GPIOR0-3 alias r28-r31 on every modern core.** simavr keeps the register file in
-  `data[0..31]`; the low-I/O redirect only covers the VPORTs, so firmware that uses
-  `GPIOR0..3` (0x1C-0x1F) and also uses `Y`/`Z` corrupts both. `tests/attiny3217_selftest.c`
-  only survives because of register allocation; `tests/attiny3224_selftest.c` uses SRAM
-  for its result block for this reason.
+* ~~**[F] GPIOR0-3 alias r28-r31 on every modern core.**~~ **Fixed:** `avr_init()` now redirects
+  data 0x1C-0x1F memory accesses to a reserved backing range (0x20-0x23, cleared on reset) via
+  `lowio_redirect`, so GPIOR no longer shares storage with r28-r31 (register operands still use
+  `data[28..31]`). Host code must read GPIOR through the redirect (`avr->data[avr->lowio_redirect[0x1C]]`,
+  or the `avr_host_*` data accessors). Covered in `test_avrxt_engine.c`. A data watchpoint on
+  0x1C-0x1F reports the backing address (same as VPORT).
 * `avr_evsys_init_mega()` instantiates 6 channels, but `iom4809.h` defines `CHANNEL0..7`.
 * The megaAVR-0 AC uses the tinyAVR-1 model (no `DACREF`, no AINN2); `iom4809.h` defines
   `AC0.DACREF`. The 2-series `avr_ac_init_dacref()` is a candidate once DS40002173C is checked.

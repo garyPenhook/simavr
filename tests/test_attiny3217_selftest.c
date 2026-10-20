@@ -60,17 +60,17 @@ main(int argc, char **argv)
 		avr->frequency = 8000000;
 
 	long i;
-	for (i = 0; i < 50000000 && avr->data[GPIOR1_ADDR] != DONE_SENTINEL &&
+	for (i = 0; i < 50000000 && avr->data[avr->lowio_redirect[GPIOR1_ADDR]] != DONE_SENTINEL &&
 		 avr->state != cpu_Crashed && avr->state != cpu_Done; i++)
 		avr_run(avr);
 
-	if (avr->data[GPIOR1_ADDR] != DONE_SENTINEL) {
+	if (avr->data[avr->lowio_redirect[GPIOR1_ADDR]] != DONE_SENTINEL) {
 		printf("FAIL: firmware did not finish (no done sentinel) after %ld cycles\n",
 			   (long)avr->cycle);
 		return 1;
 	}
 
-	uint8_t result = avr->data[GPIOR0_ADDR];
+	uint8_t result = avr->data[avr->lowio_redirect[GPIOR0_ADDR]];
 	printf("attiny3217 self-test on %s @ %u Hz (%llu cycles):\n",
 		   mmcu, avr->frequency, (unsigned long long)avr->cycle);
 	for (int s = 0; s < N_SUBTESTS; s++) {

@@ -1180,5 +1180,6 @@ accumulation/FREERUN/trigger/window/vector/event groups). `tests/attiny3224_self
 including three real ISRs through the vector table; it was also run on all 12 cores.
 `examples/board_modern_avr` now boots 46 cores.
 
-**Known limitation found on the way:** GPIOR0-3 alias r28-r31 (see the TODO doc), so the
-2-series self-test reports through SRAM, not GPIOR.
+**Limitation found on the way (since fixed):** GPIOR0-3 aliased r28-r31, so the 2-series
+self-test reports through SRAM, not GPIOR. `avr_init()` now redirects data 0x1C-0x1F to a
+reserved backing range (0x20-0x23) for every modern core; see the TODO doc.
