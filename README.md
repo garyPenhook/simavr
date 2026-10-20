@@ -278,7 +278,7 @@ Emulated Cores (very easy to add new ones!)
 + ATTiny25/45/85
 + ATTIny44/84
 + ATTiny2313/2313v
-+ ATTiny13/13a
++ ATTiny13/13a (audited against DS40002307A, see [doc/attiny13a_audit.md](doc/attiny13a_audit.md))
 + Many more!
 
 Extras:
