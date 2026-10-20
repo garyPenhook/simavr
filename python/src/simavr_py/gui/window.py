@@ -12,7 +12,7 @@ from PySide6.QtGui import QAction, QBrush, QColor, QFont, QTextCursor, QTextForm
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDockWidget, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
+    QPushButton, QScrollArea, QSpinBox, QTabWidget, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
 from ..analog import analog, decode as decode_analog
@@ -943,8 +943,8 @@ class RegisterPane(QWidget):
         self.refresh(self._sim)
 
     def refresh(self, sim: Simulator | None):
-        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
-            return                          # values are read only while stopped
+        if sim is None:
+            return
         key = (sim.cycle, self._edit.text())
         if key == self._key:
             return
@@ -1015,7 +1015,7 @@ class PortPane(QWidget):
         self.refresh(sim)
 
     def refresh(self, sim: Simulator | None):
-        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+        if sim is None:
             return
         try:                                # no cycle-keyed cache: pokes don't advance the cycle
             for pi, p in enumerate(self._ports):
@@ -1078,7 +1078,7 @@ class PortmuxPane(QWidget):
         self.refresh(sim)
 
     def refresh(self, sim: Simulator | None):
-        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+        if sim is None:
             return
         try:
             regs: dict[int, int] = {}
@@ -1136,7 +1136,7 @@ class TimerPane(QWidget):
         self.refresh(sim)
 
     def refresh(self, sim: Simulator | None):
-        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+        if sim is None:
             return
         def read(addr: int, size: int) -> int:
             return int.from_bytes(sim.read(Space.DATA, addr, size), "little")
@@ -1190,7 +1190,7 @@ class EvsysPane(QWidget):
         self.refresh(sim)
 
     def refresh(self, sim: Simulator | None):
-        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+        if sim is None:
             return
         try:
             rows = evsys_rows(sim.mmcu, lambda a: sim.read(Space.DATA, a, 1)[0])
@@ -1268,7 +1268,7 @@ class AnalogPane(QWidget):
         self.refresh(sim)
 
     def refresh(self, sim: Simulator | None):
-        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+        if sim is None:
             return
         def read(addr: int, size: int) -> int:
             return int.from_bytes(sim.read(Space.DATA, addr, size), "little")
@@ -1574,15 +1574,15 @@ class MainWindow(QMainWindow):
                                ("Data Breakpoints", self.databreaks,
                                 Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Interrupts", self.irqs, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("Registers", self.regs, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("Ports", self.portpane, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("PORTMUX", self.portmux, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("Timers", self.timerpane, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Registers", self.regs, Qt.DockWidgetArea.LeftDockWidgetArea),
+                               ("Ports", self.portpane, Qt.DockWidgetArea.LeftDockWidgetArea),
+                               ("PORTMUX", self.portmux, Qt.DockWidgetArea.LeftDockWidgetArea),
+                               ("Timers", self.timerpane, Qt.DockWidgetArea.LeftDockWidgetArea),
                                ("Events", self.evpane, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("Analog", self.analogpane, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("Serial", self.serialpane, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("Clock", self.clockpane, Qt.DockWidgetArea.RightDockWidgetArea),
-                               ("System", self.syspane, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Analog", self.analogpane, Qt.DockWidgetArea.LeftDockWidgetArea),
+                               ("Serial", self.serialpane, Qt.DockWidgetArea.LeftDockWidgetArea),
+                               ("Clock", self.clockpane, Qt.DockWidgetArea.LeftDockWidgetArea),
+                               ("System", self.syspane, Qt.DockWidgetArea.LeftDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1633,17 +1633,26 @@ class MainWindow(QMainWindow):
     def _arrange_docks(self):
         """Default layout: related panes share tab groups so each gets room."""
         d = self._docks
-        right = ("Disassembly", "Source", "Watch", "Breakpoints", "Data Breakpoints", "Interrupts",
-                 "Registers", "Ports", "PORTMUX")
-        for other in right[1:]:
-            self.tabifyDockWidget(d[right[0]], d[other])
-        d[right[0]].raise_()
+        # Debugger panes tab together on the right (under CPU); hardware/peripheral
+        # views tab together on the left, so neither group is a wall of stacked docks.
+        for group in (("Disassembly", "Source", "Watch", "Breakpoints", "Data Breakpoints",
+                       "Interrupts", "Events"),
+                      ("Registers", "Ports", "PORTMUX", "Timers", "Analog", "Serial", "Clock",
+                       "System")):
+            for other in group[1:]:
+                self.tabifyDockWidget(d[group[0]], d[other])
+            d[group[0]].raise_()
         self.tabifyDockWidget(d["Memory"], d["UART"])
         d["Memory"].raise_()
-        for corner in (Qt.Corner.TopRightCorner, Qt.Corner.BottomRightCorner):
-            self.setCorner(corner, Qt.DockWidgetArea.RightDockWidgetArea)   # right column full height
+        for corner, area in ((Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea),
+                             (Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea),
+                             (Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea),
+                             (Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)):
+            self.setCorner(corner, area)    # side columns run full height
         self.resizeDocks([d["Board"], d["Timeline"]], [300, 170], Qt.Orientation.Vertical)
-        self.resizeDocks([d["CPU"]], [480], Qt.Orientation.Horizontal)
+        self.resizeDocks([d["CPU"], d["Registers"]], [560, 560], Qt.Orientation.Horizontal)
+        for area in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea):
+            self.setTabPosition(area, QTabWidget.TabPosition.North)     # tabs above, not below
         self.resizeDocks([d["Timeline"], d["Memory"]], [600, 600], Qt.Orientation.Horizontal)
 
     # -- target selection ----------------------------------------------------
@@ -1791,7 +1800,7 @@ class MainWindow(QMainWindow):
         Opt-in so tests and embedders never touch the user's config; explicit
         constructor/command-line values win over the remembered ones."""
         self._settings = settings
-        for key, restore in (("geometry", self.restoreGeometry), ("layout", self.restoreState)):
+        for key, restore in (("geometry", self.restoreGeometry), ("layout2", self.restoreState)):
             blob = settings.value(key)
             if isinstance(blob, QByteArray) and not blob.isEmpty():
                 restore(blob)
@@ -1810,7 +1819,7 @@ class MainWindow(QMainWindow):
         if st is None:
             return
         st.setValue("geometry", self.saveGeometry())
-        st.setValue("layout", self.saveState())
+        st.setValue("layout2", self.saveState())
         st.setValue("mmcu", self._mmcu or "")
         st.setValue("freq", self._freq)
         st.sync()

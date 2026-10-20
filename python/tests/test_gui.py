@@ -42,6 +42,8 @@ assert win._sim is not None
 win.run()
 assert win._sim.wait_events(5)            # UART bytes arrive
 win._drain()
+win.refresh()                         # peripheral panes update while running
+assert win.portpane._table.item(0, 1).text() == "out", win.portpane._table.item(0, 1).text()
 win.pause()
 assert win._sim.wait_stopped(5), 'pause did not take effect'
 win.refresh()
