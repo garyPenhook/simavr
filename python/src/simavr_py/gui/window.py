@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
+from ..ports import PortRegs, decode_pin, ports
 from ..registers import Register, interrupt_flag_pairs, registers
 from ..vectors import vector_label, vector_names
 from ..boards import BoardError, load_board
@@ -976,6 +977,59 @@ class RegisterPane(QWidget):
         self.refresh(sim)
 
 
+class PortPane(QWidget):
+    """Live PORT state by pin: direction, OUT latch, pin level (IN), invert, pull-up and
+    sense config, from PORTx.DIR/OUT/IN/PINnCTRL. Read while stopped; changed levels are
+    highlighted. All eight bits of each port are listed, whether or not the package has them."""
+
+    CHANGED = QColor(255, 235, 150)
+    COLS = ["Pin", "Dir", "OUT", "IN", "Inv", "Pull-up", "Sense"]
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._ports: tuple[PortRegs, ...] = ()
+        self._prev: dict[str, tuple] = {}
+        self._table = QTableWidget(0, len(self.COLS))
+        self._table.setHorizontalHeaderLabels(self.COLS)
+        self._table.setFont(_mono())
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        lay = QGridLayout(self)
+        lay.addWidget(self._table, 0, 0)
+
+    def set_sim(self, sim: Simulator | None):
+        self._sim = sim
+        self._ports = ports(sim.mmcu) if sim is not None else ()
+        self._prev.clear()
+        self._table.setRowCount(8 * len(self._ports))
+        for i in range(self._table.rowCount()):
+            for c in range(len(self.COLS)):
+                self._table.setItem(i, c, QTableWidgetItem(""))
+        self.refresh(sim)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+            return
+        try:                                # no cycle-keyed cache: pokes don't advance the cycle
+            for pi, p in enumerate(self._ports):
+                d, o, i = (sim.read(Space.DATA, a, 1)[0] for a in (p.dir, p.out, p.inp))
+                for n in range(8):
+                    ctrl = sim.read(Space.DATA, p.pinctrl[n], 1)[0]
+                    st = decode_pin(p.name, n, d, o, i, ctrl)
+                    cells = (st.name, "out" if st.output else "in", int(st.out), int(st.level),
+                             "yes" if st.inverted else "", "yes" if st.pullup else "", st.sense)
+                    row = pi * 8 + n
+                    changed = self._prev.get(st.name, cells)[3] != cells[3]
+                    for c, v in enumerate(cells):
+                        item = self._table.item(row, c)
+                        item.setText(str(v))
+                        item.setBackground(QBrush(self.CHANGED if changed and c == 3
+                                                  else QColor(0, 0, 0, 0)))
+                    self._prev[st.name] = cells
+        except SimavrError:
+            pass                            # resumed meanwhile
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -1168,6 +1222,7 @@ class MainWindow(QMainWindow):
         self.uart = UartConsole()
         self.irqs = InterruptPane()
         self.regs = RegisterPane()
+        self.portpane = PortPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1187,6 +1242,7 @@ class MainWindow(QMainWindow):
                                 Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Interrupts", self.irqs, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Registers", self.regs, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Ports", self.portpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1238,7 +1294,7 @@ class MainWindow(QMainWindow):
         """Default layout: related panes share tab groups so each gets room."""
         d = self._docks
         right = ("Disassembly", "Source", "Watch", "Breakpoints", "Data Breakpoints", "Interrupts",
-                 "Registers")
+                 "Registers", "Ports")
         for other in right[1:]:
             self.tabifyDockWidget(d[right[0]], d[other])
         d[right[0]].raise_()
@@ -1334,6 +1390,7 @@ class MainWindow(QMainWindow):
         self.timeline.set_sim(sim)
         self.irqs.set_names(vector_names(sim.mmcu))
         self.regs.set_sim(sim)
+        self.portpane.set_sim(sim)
         self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
@@ -1359,6 +1416,7 @@ class MainWindow(QMainWindow):
             self._notifier = None
         self.pins.set_sim(None)
         self.regs.set_sim(None)
+        self.portpane.set_sim(None)
         self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
@@ -1469,6 +1527,7 @@ class MainWindow(QMainWindow):
         self.irqs.refresh()
         self.irqs.refresh_exec(sim)
         self.regs.refresh(sim)
+        self.portpane.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 
