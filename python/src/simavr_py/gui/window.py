@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..portmux import RouteField, routes
+from ..timers import Timer, decode as decode_timer, timers
 from ..ports import PortRegs, decode_pin, ports
 from ..registers import Register, interrupt_flag_pairs, registers
 from ..vectors import vector_label, vector_names
@@ -1095,6 +1096,64 @@ class PortmuxPane(QWidget):
                 item.setFont(bold if value else self._table.font())
 
 
+class TimerPane(QWidget):
+    """TCA/TCB/TCD register state, one row per field (enable, clock, mode, counter, period,
+    compares, output enables, interrupt enables/flags), decoded from the device header.
+    Read while stopped; a value that changed since the previous stop is highlighted. A
+    register view, not a waveform: the Timeline dock draws the outputs."""
+
+    CHANGED = QColor(255, 235, 150)
+    COLS = ["Timer", "Field", "Value"]
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._timers: tuple[Timer, ...] = ()
+        self._rows: list[tuple[str, str]] = []      # (timer, field) per table row
+        self._prev: dict[tuple[str, str], str] = {}
+        self._table = QTableWidget(0, len(self.COLS))
+        self._table.setHorizontalHeaderLabels(self.COLS)
+        self._table.setFont(_mono())
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._note = QLabel("")
+        lay = QGridLayout(self)
+        lay.addWidget(self._note, 0, 0)
+        lay.addWidget(self._table, 1, 0)
+
+    def set_sim(self, sim: Simulator | None):
+        self._sim = sim
+        self._timers = timers(sim.mmcu) if sim is not None else ()
+        self._prev.clear()
+        self._rows = []
+        self._table.setRowCount(0)
+        self._note.setText("" if self._timers or sim is None else "no timers for this device")
+        self.refresh(sim)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+            return
+        def read(addr: int, size: int) -> int:
+            return int.from_bytes(sim.read(Space.DATA, addr, size), "little")
+        try:
+            decoded = [(t.name, decode_timer(sim.mmcu, t, read)) for t in self._timers]
+        except SimavrError:
+            return                          # resumed meanwhile
+        rows = [(name, k, v) for name, fields in decoded for k, v in fields]
+        if [(n, k) for n, k, _ in rows] != self._rows:      # layout depends on TCA split mode
+            self._rows = [(n, k) for n, k, _ in rows]
+            self._table.setRowCount(len(rows))
+            for i, (n, k, _) in enumerate(rows):
+                for c, text in enumerate((n, k, "")):
+                    self._table.setItem(i, c, QTableWidgetItem(text))
+        for i, (n, k, v) in enumerate(rows):
+            changed = self._prev.get((n, k), v) != v
+            self._prev[(n, k)] = v
+            item = self._table.item(i, 2)
+            item.setText(v)
+            item.setBackground(QBrush(self.CHANGED if changed else QColor(0, 0, 0, 0)))
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -1289,6 +1348,7 @@ class MainWindow(QMainWindow):
         self.regs = RegisterPane()
         self.portpane = PortPane()
         self.portmux = PortmuxPane()
+        self.timerpane = TimerPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1310,6 +1370,7 @@ class MainWindow(QMainWindow):
                                ("Registers", self.regs, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Ports", self.portpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("PORTMUX", self.portmux, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Timers", self.timerpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1459,6 +1520,7 @@ class MainWindow(QMainWindow):
         self.regs.set_sim(sim)
         self.portpane.set_sim(sim)
         self.portmux.set_sim(sim)
+        self.timerpane.set_sim(sim)
         self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
@@ -1486,6 +1548,7 @@ class MainWindow(QMainWindow):
         self.regs.set_sim(None)
         self.portpane.set_sim(None)
         self.portmux.set_sim(None)
+        self.timerpane.set_sim(None)
         self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
@@ -1598,6 +1661,7 @@ class MainWindow(QMainWindow):
         self.regs.refresh(sim)
         self.portpane.refresh(sim)
         self.portmux.refresh(sim)
+        self.timerpane.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 

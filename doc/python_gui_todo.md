@@ -187,6 +187,12 @@ is a display only, because the engine stores PORTMUX without re-routing. The wor
 found and fixed an engine gap: megaAVR-0 registered 4 of its 6 PORTMUX registers
 (TCAROUTEA/TCBROUTEA weren't reset); covered in `test_avrxt_engine.c`.
 
+**Timer view (2026-10-19):** a "Timers" dock decodes TCA (single and split), TCB and TCD
+registers (`simavr_py.timers`, Qt-free) from the avr-libc header's `TC*_gm/_bm` masks and
+`_gc` enums; no behaviour is asserted beyond what the header names. Read while stopped,
+changed values highlighted. Limits: TCD WGMODE/CNTPRES show a number when the header has no
+enum; it is a register view, not a waveform (Timeline lanes cover outputs).
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
@@ -195,7 +201,7 @@ found and fixed an engine gap: megaAVR-0 registered 4 of its 6 PORTMUX registers
 2. Add modern-AVR-specific inspection widgets:
    * PORT/VPORT live state by physical pin
    * PORTMUX routing view
-   * TCA/TCB/TCD waveform state
+   * TCA/TCB/TCD waveform state (register view done; waveform = Timeline lanes)
    * EVSYS channel/user routing
    * ADC/VREF/AC analog state summaries
 3. Make widget wiring declarative so a board definition is mostly data, not

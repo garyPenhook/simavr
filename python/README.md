@@ -130,6 +130,7 @@ CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **Interrupts**: per-vector count, level and last cycle, vector names, and which CPUINT level is executing.
 - **Ports**: per pin, direction, OUT latch, input level, invert, pull-up and sense config from the PORT registers.
 - **PORTMUX**: each routing field (USART0, TCB2, ...) with its register value, the option selected and the pins it names (tinyAVR 0/1 headers say only "Default/Alternate pins"). Bold = not the reset routing. Display only: the simulator stores PORTMUX but does not re-route peripherals.
+- **Timers**: TCA (single and split mode), TCB and TCD register state, one row per field: enable, clock, mode, CNT/PER/compares, output enables, interrupt enables and flags. Names and masks come from the device header (TCD WGMODE has no enum there, so it shows the header's name only where one exists). A register view only; the Timeline draws the actual outputs.
 - **Timeline**: type a pin (`PA0`), timer output (`TCA0.WO1`) or bus (`SPI0`, `TWI0`, `USART1`) + Enter; wheel zooms, drag pans, click/right-click set cursors A/B, `Export VCD…` writes a GTKWave file. Also shows UART0 TX and interrupt vectors.
 - **Memory**: data / flash / eeprom hex view at an address.
 - **UART**: console for USART0; type a line + Enter to send it to the firmware.
