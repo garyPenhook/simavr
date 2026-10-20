@@ -605,6 +605,11 @@ tl.place_cursor(0, 100, 500); tl.place_cursor(1, 300, 500)
 assert None not in tl.cursors and tl.cursors[1] > tl.cursors[0] and "Δ" in tl._info.text()
 tl.export_vcd(sys.argv[1] + ".vcd")
 assert "$var wire 1 ! PA0 $end" in open(sys.argv[1] + ".vcd").read()
+assert tl._export_range.isEnabled()
+tl.export_vcd(sys.argv[1] + ".ab.vcd", *sorted(tl.cursors))
+ab = open(sys.argv[1] + ".ab.vcd").read().splitlines()
+assert ab[ab.index("$enddefinitions $end") + 1] == "#0"      # rebased to cursor A
+tl.cursors[1] = None; tl._update_info(); assert not tl._export_range.isEnabled()
 tl.clear(); assert len(tl.traces["PA0"]) == 1 and not tl._uart
 tl.remove("PA0"); assert tl.names == [] and tl.wanted == []
 win.apply_session(d, load_firmware=True)

@@ -157,7 +157,7 @@ CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **Serial**: USART, SPI and TWI register state, decoded like Analog (value plus every field the device header defines; reads have no side effects, so RXDATA is not consumed). Each USART gets a **Baud rate** row from BAUD by DS40002173C Table 23-1 (`64 x fCLK_PER / (S x BAUD)`, S = 16 normal, 8 CLK2X; synchronous uses BAUD[15:6]), assuming CLK_PER equals the simulated CPU clock (no CLKCTRL prescaler is read). A register view only.
 - **Clock**: CLKCTRL register state decoded like Analog (value plus every header-defined field), with derived rows for the main clock source (CLKSEL), the prescaler (PEN/PDIV, DS40002205A 10.5.1-10.5.2) and the resulting CLK_PER (the simulated CPU clock) and CLK_MAIN (CLK_PER x division). A register view.
 - **System**: RSTCTRL, SLPCTRL, BOD, WDT, CPUINT, CRCSCAN, RTC/PIT, CCL, NVMCTRL and SYSCFG register state decoded like Analog (value plus every header-defined field), for the blocks the device has. A register view, no derived values.
-- **Timeline**: type a pin (`PA0`), timer output (`TCA0.WO1`) or bus (`SPI0`, `TWI0`, `USART1`) + Enter; wheel zooms, drag pans, click/right-click set cursors A/B, `Export VCD…` writes a GTKWave file. Also shows UART0 TX and interrupt vectors.
+- **Timeline**: type a pin (`PA0`), timer output (`TCA0.WO1`) or bus (`SPI0`, `TWI0`, `USART1`) + Enter; wheel zooms, drag pans, click/right-click set cursors A/B, `Export VCD…` writes a GTKWave file (`Export A–B…` only the cycles between the cursors). Also shows UART0 TX and interrupt vectors.
 - **Memory**: data / flash / eeprom hex view at an address.
 - **UART**: console for USART0; type a line + Enter to send it to the firmware.
 

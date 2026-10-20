@@ -174,6 +174,7 @@ also shown.</li>
 <li><b>Double-click</b> a trace label to remove it.</li>
 <li><b>Follow</b> keeps the newest activity in view. <b>Clear</b> empties the history.</li>
 <li><b>Export VCD&hellip;</b> writes a GTKWave-compatible file.</li>
+<li><b>Export A&ndash;B&hellip;</b> writes only the cycles between the two cursors.</li>
 </ul>
 """),
     ("Memory & UART", """

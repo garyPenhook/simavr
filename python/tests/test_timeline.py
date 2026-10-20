@@ -60,6 +60,21 @@ def test_write_vcd(tmp_path):
     assert body == ["#0", "0!", "1\"", "#1000000", "1!", "#2000000", "b01101000 #", "#3000000"]
 
 
+def test_write_vcd_range(tmp_path):
+    a = PinTrace(0, False)
+    a.record(1000, True)
+    a.record(4000, False)
+    late = PinTrace(2500, True)             # unknown before cycle 2500
+    out = tmp_path / "r.vcd"
+    # cycles 1500..3000 at 1 MHz (1 cycle = 1000 ns), rebased so 1500 is time 0; the
+    # reversed bounds (end < start) are swapped
+    write_vcd(str(out), {"PA0": a, "L": late}, 1_000_000, 1500,
+              uart=[(500, 1), (2000, 0x68), (6000, 2)], start=3000)
+    body = out.read_text(encoding="utf-8").splitlines()
+    body = body[body.index("$enddefinitions $end") + 1:]
+    assert body == ["#0", "1!", "#500000", "b01101000 #", "#1000000", "1\"", "#1500000"]
+
+
 def test_timer_output_names():
     assert timer_output("TCA0.WO1") == ("tca", "0", 1)
     assert timer_output("TCB3.WO") == ("tcb", "3", 2)

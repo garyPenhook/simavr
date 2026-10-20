@@ -132,10 +132,18 @@ def measure(a: int | None, b: int | None, frequency: int) -> str:
 def write_vcd(path: str, traces: dict[str, "PinTrace"], frequency: int, end: int,
               uart: list[tuple[int, int]] | None = None,
               vectors: list[tuple[int, int]] | None = None,
-              extra: dict[str, tuple[int, list[tuple[int, int]]]] | None = None) -> None:
+              extra: dict[str, tuple[int, list[tuple[int, int]]]] | None = None,
+              start: int | None = None) -> None:
     """Dump pin traces (and optionally UART TX bytes, interrupt vectors) as a 1 ns-resolution VCD.
-    Without a known frequency the timescale is one cycle per tick (reported as 1 ns)."""
-    ns = (lambda c: round(c * 1e9 / frequency)) if frequency > 0 else (lambda c: c)
+    Without a known frequency the timescale is one cycle per tick (reported as 1 ns).
+    With `start`, only the cycles [start, end] are written, rebased so `start` is time 0; each
+    pin begins at its level at `start` (a pin unknown that early begins at its first edge)."""
+    if start is not None and end < start:
+        start, end = end, start
+    base = start or 0
+    ns = ((lambda c: round((c - base) * 1e9 / frequency)) if frequency > 0
+          else (lambda c: c - base))
+    keep = ((lambda c: start <= c <= end) if start is not None else (lambda c: True))
     ids = {name: chr(33 + i) for i, name in enumerate(traces)}
     uart_id = chr(33 + len(traces)) if uart is not None else None
     vec_id = chr(34 + len(traces)) if vectors is not None else None
@@ -143,15 +151,21 @@ def write_vcd(path: str, traces: dict[str, "PinTrace"], frequency: int, end: int
     extra_ids = {n: chr(35 + len(traces) + i) for i, n in enumerate(extra)}
     changes: list[tuple[int, int, str]] = []        # (time, order, line)
     for name, tr in traces.items():
+        if start is not None and (lv0 := tr.level_at(start)) is not None:
+            changes.append((0, 0, f"{int(lv0)}{ids[name]}"))
         for c, lv in zip(tr._cycles, tr._levels):
-            changes.append((ns(c), 0, f"{int(lv)}{ids[name]}"))
+            if start is None or start < c <= end:
+                changes.append((ns(c), 0, f"{int(lv)}{ids[name]}"))
     for c, byte in uart or ():
-        changes.append((ns(c), 1, f"b{byte:08b} {uart_id}"))
+        if keep(c):
+            changes.append((ns(c), 1, f"b{byte:08b} {uart_id}"))
     for c, vec in vectors or ():
-        changes.append((ns(c), 1, f"b{vec:08b} {vec_id}"))
+        if keep(c):
+            changes.append((ns(c), 1, f"b{vec:08b} {vec_id}"))
     for n, (width, events) in extra.items():
         for c, val in events:
-            changes.append((ns(c), 1, f"b{val & ((1 << width) - 1):0{width}b} {extra_ids[n]}"))
+            if keep(c):
+                changes.append((ns(c), 1, f"b{val & ((1 << width) - 1):0{width}b} {extra_ids[n]}"))
     changes.sort(key=lambda t: (t[0], t[1]))
     with open(path, "w", encoding="utf-8") as f:
         f.write("$timescale 1 ns $end\n$scope module simavr $end\n")

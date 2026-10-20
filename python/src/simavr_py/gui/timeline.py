@@ -153,6 +153,10 @@ class TimelineView(QWidget):
         clear.clicked.connect(self.clear)
         export = QPushButton("Export VCD…")
         export.clicked.connect(self.export_dialog)
+        self._export_range = QPushButton("Export A–B…")
+        self._export_range.setToolTip("Export only the cycles between cursors A and B")
+        self._export_range.clicked.connect(lambda: self.export_dialog(ranged=True))
+        self._export_range.setEnabled(False)
         self._info = QLabel(measure(None, None, 0))
         self._canvas = _Canvas(self)
         lay = QGridLayout(self)
@@ -161,8 +165,9 @@ class TimelineView(QWidget):
         lay.addWidget(self._follow, 0, 2)
         lay.addWidget(clear, 0, 3)
         lay.addWidget(export, 0, 4)
-        lay.addWidget(self._canvas, 1, 0, 1, 5)
-        lay.addWidget(self._info, 2, 0, 1, 5)
+        lay.addWidget(self._export_range, 0, 5)
+        lay.addWidget(self._canvas, 1, 0, 1, 6)
+        lay.addWidget(self._info, 2, 0, 1, 6)
         self._resize_canvas()
 
     # -- model ---------------------------------------------------------------
@@ -403,17 +408,20 @@ class TimelineView(QWidget):
 
     def _update_info(self):
         self._info.setText(measure(*self.cursors, self.frequency))
+        self._export_range.setEnabled(None not in self.cursors and self.cursors[0] != self.cursors[1])
 
-    def export_dialog(self):
+    def export_dialog(self, ranged: bool = False):
         path, _ = QFileDialog.getSaveFileName(self, "Export VCD", "timeline.vcd", "VCD (*.vcd)")
         if path:
             try:
-                self.export_vcd(path)
+                self.export_vcd(path, *(sorted(self.cursors) if ranged else ()))
             except OSError as e:
                 QMessageBox.warning(self, "Export VCD", str(e))
 
-    def export_vcd(self, path: str):
-        end = self.window()[1]
+    def export_vcd(self, path: str, start: int | None = None, end: int | None = None):
+        """Write the retained history, or only cycles [start, end] when both are given."""
+        if end is None:
+            start, end = None, self.window()[1]
         extra = {}
         for name in self.buses:
             _, _, dirs = bus_lane(name)
@@ -423,7 +431,7 @@ class TimelineView(QWidget):
                     [(c, v) for c, r, v in self._bus_events[name] if r == row])
         write_vcd(path, self.traces, self.frequency, end,
                   self._uart if self.show_uart else None,
-                  self._vectors if self.show_irq else None, extra)
+                  self._vectors if self.show_irq else None, extra, start)
 
     def _follow_toggled(self, on: bool):
         self._end = None if on else self.window()[1]
