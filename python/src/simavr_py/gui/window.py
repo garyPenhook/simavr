@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
+from ..analog import analog, decode as decode_analog
 from ..evsys import evsys, rows as evsys_rows
 from ..portmux import RouteField, routes
 from ..timers import Timer, decode as decode_timer, timers
@@ -1209,6 +1210,77 @@ class EvsysPane(QWidget):
                 item.setFont(bold if meaning != "OFF" else self._table.font())
 
 
+class AnalogPane(QWidget):
+    """ADC, VREF, AC and DAC register state: one row per register with its value and every field
+    the device header defines for it (reference, prescaler, input mux, hysteresis, interrupt
+    enables and flags ...). Read while stopped; a value that changed since the previous stop is
+    highlighted. Also derived rows from data-sheet arithmetic: reference voltages, the ADC result
+    in volts and the DACREF output (VDD references use the supply set in the spin box), and mux
+    options name their pad. A register view: nothing here changes the simulation."""
+
+    CHANGED = QColor(255, 235, 150)
+    COLS = ["Block", "Register", "Value", "Fields"]
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._blocks = ()
+        self._rows: list[tuple[str, str]] = []      # (block, register) per table row
+        self._prev: dict[tuple[str, str], tuple[str, str]] = {}
+        self._table = QTableWidget(0, len(self.COLS))
+        self._table.setHorizontalHeaderLabels(self.COLS)
+        self._table.setFont(_mono())
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._note = QLabel("")
+        self._vdd = QDoubleSpinBox()
+        self._vdd.setRange(1.8, 5.5)
+        self._vdd.setSingleStep(0.1)
+        self._vdd.setDecimals(2)
+        self._vdd.setValue(3.3)
+        self._vdd.setSuffix(" V")
+        self._vdd.setToolTip("Supply voltage used where a reference is VDD (the simulator has no supply register)")
+        self._vdd.valueChanged.connect(lambda _: self.refresh(self._sim))
+        lay = QGridLayout(self)
+        lay.addWidget(self._note, 0, 0)
+        lay.addWidget(QLabel("VDD"), 0, 1)
+        lay.addWidget(self._vdd, 0, 2)
+        lay.addWidget(self._table, 1, 0, 1, 3)
+
+    def set_sim(self, sim: Simulator | None):
+        self._sim = sim
+        self._blocks = analog(sim.mmcu) if sim is not None else ()
+        self._prev.clear()
+        self._rows = []
+        self._table.setRowCount(0)
+        self._note.setText("" if self._blocks or sim is None else "no analog peripherals for this device")
+        self.refresh(sim)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+            return
+        def read(addr: int, size: int) -> int:
+            return int.from_bytes(sim.read(Space.DATA, addr, size), "little")
+        try:
+            rows = [(b.name, reg, value, fields) for b in self._blocks
+                    for reg, value, fields in decode_analog(sim.mmcu, b, read, round(self._vdd.value() * 1000))]
+        except SimavrError:
+            return                          # resumed meanwhile
+        if [(b, r) for b, r, *_ in rows] != self._rows:
+            self._rows = [(b, r) for b, r, *_ in rows]
+            self._table.setRowCount(len(rows))
+            for i, (b, r, _, _) in enumerate(rows):
+                for c, text in enumerate((b, r, "", "")):
+                    self._table.setItem(i, c, QTableWidgetItem(text))
+        for i, (b, r, value, fields) in enumerate(rows):
+            changed = self._prev.get((b, r), (value, fields)) != (value, fields)
+            self._prev[(b, r)] = (value, fields)
+            for c, t in ((2, value), (3, fields)):
+                item = self._table.item(i, c)
+                item.setText(t)
+                item.setBackground(QBrush(self.CHANGED if changed else QColor(0, 0, 0, 0)))
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -1405,6 +1477,7 @@ class MainWindow(QMainWindow):
         self.portmux = PortmuxPane()
         self.timerpane = TimerPane()
         self.evpane = EvsysPane()
+        self.analogpane = AnalogPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1428,6 +1501,7 @@ class MainWindow(QMainWindow):
                                ("PORTMUX", self.portmux, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timers", self.timerpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Events", self.evpane, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Analog", self.analogpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1579,6 +1653,7 @@ class MainWindow(QMainWindow):
         self.portmux.set_sim(sim)
         self.timerpane.set_sim(sim)
         self.evpane.set_sim(sim)
+        self.analogpane.set_sim(sim)
         self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
@@ -1608,6 +1683,7 @@ class MainWindow(QMainWindow):
         self.portmux.set_sim(None)
         self.timerpane.set_sim(None)
         self.evpane.set_sim(None)
+        self.analogpane.set_sim(None)
         self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
@@ -1722,6 +1798,7 @@ class MainWindow(QMainWindow):
         self.portmux.refresh(sim)
         self.timerpane.refresh(sim)
         self.evpane.refresh(sim)
+        self.analogpane.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 

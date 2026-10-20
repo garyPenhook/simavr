@@ -202,6 +202,25 @@ the tinyAVR 2-series mapping follows its header's `EVSYS_USER_CHANNELn` enum and
 checked against a 2-series data sheet (none in `datasheets/`). Generator and user names come from
 the header, a user value that selects nothing shows `?`. Display only; no event activity.
 
+**Analog view (2026-10-19):** an "Analog" dock (`simavr_py.analog`, Qt-free) shows one row per
+ADC / VREF / AC / DAC register with its value and every field the header defines for it. Fields
+are the `_gm`/`_bm` masks under each `/* ADC.CTRLA  bit masks ... */` banner (a register that
+reuses another's bits, like ADC INTFLAGS, is `/* ADC_RESRDY is already defined. */` and is
+resolved to the first definition); option names are the `_gc` enum entries, a value with no enum
+entry shows as a number. Derived rows, each from the data sheet: VREF levels (the option name
+carries the voltage; the header's `4V34` is **4.3 V** in DS40002173C/205A/204A, 4.34 V is only a
+BOD level); ADC result in volts (megaAVR-0/tinyAVR 0/1: RES = 1023 x VIN / VREF, DS40002173C
+29.3.2.5, averaged over SAMPNUM, 8-bit = top 8 bits; tinyAVR 2-series: SAMPLE per DS40002345B
+30.3.3.3, 12/8-bit, differential, PGA gain only when PGAEN and VIA=PGA, LEFTADJ); AC DACREF
+output (DACREF x VREF / 256). Mux options name their pad from `analog_pins.json`, generated from
+the ATDF device files (`python/tools/gen_analog_pins.py`; 45 of 46 devices, ATtiny3214 has no
+ATDF). VDD references use a VDD spin box (the simulator has no supply register); an external
+VREFA has no known voltage so no result. Limits: only the latest SAMPLE (2-series) or RES is
+converted, never the 32-bit accumulated RESULT; DAC output volts and the temperature sensor are
+not converted. **Open engine question:** `avr_adc_modern.c` converts with `Vin * 1024 / VREF`
+(clamped) while the data sheet says `1023 * VIN / VREF`, so a simulated input can read up to one
+count off the dock's volts.
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
@@ -212,7 +231,7 @@ the header, a user value that selects nothing shows `?`. Display only; no event 
    * PORTMUX routing view
    * TCA/TCB/TCD waveform state (register view done; waveform = Timeline lanes)
    * EVSYS channel/user routing (done)
-   * ADC/VREF/AC analog state summaries
+   * ADC/VREF/AC analog state summaries (register view done; DAC included)
 3. Make widget wiring declarative so a board definition is mostly data, not
    custom glue code.
 
