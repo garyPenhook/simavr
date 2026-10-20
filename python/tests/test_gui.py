@@ -381,7 +381,11 @@ assert src._text.toPlainText().splitlines()[line - src._shown[1]].startswith("â—
 src._text.lineDoubleClicked.emit(line - src._shown[1])
 assert win.breaks.addresses == []
 win.run(); win.refresh()
-assert not t.isEnabled() and not src._text.isEnabled()   # PC unreadable while running
+assert t.isEnabled() and src._text.isEnabled()   # live: follows the sampled PC while running
+for _ in range(20):
+    win.refresh()
+    cur = [r for r in range(t.rowCount()) if t.item(r, 0).background().color() == win.disasm.CURRENT]
+    assert len(cur) <= 1
 win.pause(); assert win._sim.wait_stopped(5)
 win.close()
 win.refresh()

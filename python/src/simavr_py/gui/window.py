@@ -520,6 +520,7 @@ class DisasmView(QWidget):
         self._breaks = breaks
         self._key = None            # what the table currently shows
         self._insns: list[Insn] = []
+        self._marked: int | None = None     # PC row currently highlighted
         self._symbols = SymbolTable()
         self._lines = LineTable()
         self._table = QTableWidget(0, 5)
@@ -560,13 +561,15 @@ class DisasmView(QWidget):
                 self._insns = []
                 self._table.setRowCount(0)
             return
-        if sim.state in (State.RUNNING, State.SLEEPING):
-            self._table.setEnabled(False)       # the PC is only readable while stopped
-            return
+        running = sim.state in (State.RUNNING, State.SLEEPING)
         try:
-            pc = sim.cpu.pc
+            pc = sim.sample_cpu().pc if running else sim.cpu.pc
+            if running and self._move_marker(pc):
+                self._table.setEnabled(True)
+                return
             size = sim.mem_size(Space.FLASH)
-            key = (sim.mmcu, pc, sim.cycle, tuple(self._breaks.addresses))
+            # the cycle count only matters while stopped; running, the PC alone keys it
+            key = (sim.mmcu, pc, None if running else sim.cycle, tuple(self._breaks.addresses))
             if key == self._key:
                 self._table.setEnabled(True)
                 return
@@ -600,6 +603,23 @@ class DisasmView(QWidget):
         self._table.resizeColumnToContents(1)
         self._table.resizeColumnToContents(2)
         self._table.resizeColumnToContents(3)
+        self._marked = pc
+
+    def _move_marker(self, pc: int) -> bool:
+        """Live path: re-highlight within the rows already shown. False if `pc` is outside them."""
+        row = next((r for r, i in enumerate(self._insns) if i.addr == pc), None)
+        if row is None:
+            return False
+        if pc != self._marked:
+            for r, i in enumerate(self._insns):
+                if i.addr == self._marked or r == row:
+                    for col in range(self._table.columnCount()):
+                        if item := self._table.item(r, col):
+                            item.setBackground(QBrush(self.CURRENT) if r == row else QBrush())
+            self._marked = pc
+            self._table.scrollToItem(self._table.item(row, 0),
+                                     QTableWidget.ScrollHint.PositionAtCenter)
+        return True
 
 
 class _SourceText(QPlainTextEdit):
@@ -696,11 +716,8 @@ class SourceView(QWidget):
         if sim is None:
             self._show(None, "", "")
             return
-        if sim.state in (State.RUNNING, State.SLEEPING):
-            self._text.setEnabled(False)        # the PC is only readable while stopped
-            return
         try:
-            pc = sim.cpu.pc
+            pc = sim.sample_cpu().pc if sim.state in (State.RUNNING, State.SLEEPING) else sim.cpu.pc
         except SimavrError:
             return              # resumed between the state read and the fetch
         self._text.setEnabled(True)

@@ -121,8 +121,8 @@ external pull-up on SW0, so the firmware must enable the internal one.
 
 **Docks** (drag to rearrange; related ones share tabs, the default is right column =
 CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
-- **CPU**: state, cycle, time, PC/SP/SREG and r0-r31 (refreshed while paused; shown stale while running).
-- **Disassembly**: instructions around PC with symbols and source lines; double-click a row to toggle a breakpoint, right-click for **Run to here**.
+- **CPU**: state, cycle, time, PC/SP/SREG and r0-r31 (live while running, from a consistent snapshot).
+- **Disassembly**: instructions around PC with symbols and source lines; the PC marker (and the Source pane's current line) follows the PC while running; double-click a row to toggle a breakpoint, right-click for **Run to here**.
 - **Source**: the C source with the current line (needs `-g`); double-click toggles a breakpoint, right-click offers **Run to line**.
 - **Watch**: `[label=]hexaddr[:width]`, e.g. `porta_out=0x0405`, live data-space values.
 - **Breakpoints**: hex address or symbol (`main`, `main+0x4`); `0xadd` forces an address over a symbol.
