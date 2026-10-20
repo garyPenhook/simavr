@@ -536,6 +536,18 @@ tinyx1_init(struct avr_t * avr)
 		}
 	}
 #endif
+#ifdef SIM_PORTMUX_TCA0_WO345
+	/* Split-mode high-byte outputs WO3-5 (PORTMUX.CTRLC TCA03-TCA05). */
+	{
+		static const avr_portmux_pin_t wo[3][2] = SIM_PORTMUX_TCA0_WO345;
+		for (int ch = 0; ch < 3; ch++) {
+			int fn = avr_portmux_add_func(&mcu->portmux, 2 /* CTRLC */, 8 << ch, 3 + ch,
+										  wo[ch], 2, 0);
+			avr_portmux_bind_irq(&mcu->portmux, fn,
+				avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_PIN3 + ch));
+		}
+	}
+#endif
 
 	/* VREF (voltage reference selection) at 0x00A0; DAC0REFSEL feeds DAC0/AC0. */
 	avr_vref_init(avr, &mcu->vref, 0x00a0, '0');

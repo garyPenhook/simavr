@@ -125,8 +125,9 @@ follow-up work is:
   EVSYS EVENT0/1, and non-combinational details such as filter variants and sequencer corner cases
 * `SPI`: any remaining pin-contention / electrical-behavior realism beyond the buffered protocol model
 * `USART`: more exact one-wire / line-level behavior; sync timing is implemented
-* `TCA0`/`TCB`: FRQ and dual-slope (TCA0) and Single-Shot (TCB) waveform outputs are
-  not yet modelled (single-slope PWM and 8-bit PWM are); they need their counter paths first
+* `TCB`: the Single-Shot waveform output is not yet modelled (8-bit PWM is); it needs an event-triggered
+  one-shot counter path. TCA0 is complete: all WGMODEs (FRQ, single- and dual-slope), double-buffered
+  PER/CMPn, CTRLE/CTRLF commands, up/down event counting and split mode
 * robustness / fidelity follow-ups:
   `TCB` first-period scheduling when enabled with non-zero `CNT`,
   `CCL` filter/edge timer callback cost when left running on static inputs,

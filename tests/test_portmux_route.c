@@ -151,6 +151,36 @@ int main(void)
 		check("PB3 follows OUT again", b3, 1);
 	}
 
+	printf("== TCA0 split-mode WO3 on its routed pin (attiny3217) ==\n");
+	{
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+		avr_reset(m);
+		int a3 = -1, c3 = -1;
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_IOPORT_GETIRQ('A'), 3), rec, &a3);
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_IOPORT_GETIRQ('C'), 3), rec, &c3);
+		const uint16_t TA = 0x0a00;
+		cpu_write(m, PORTA + DIR, 0x08);
+		cpu_write(m, PORTC + DIR, 0x08);
+		cpu_write(m, TA + 0x03, 0x01);			/* CTRLD.SPLITM */
+		cpu_write(m, TA + 0x26, 99);			/* LPER */
+		cpu_write(m, TA + 0x27, 49);			/* HPER */
+		cpu_write(m, TA + 0x29, 20);			/* HCMP0 */
+		cpu_write(m, TA + TCAR_CTRLB, 0x10);		/* HCMP0EN */
+		cpu_write(m, TA + TCAR_CTRLA, 0x01);
+		long hi = 0;
+		for (int i = 0; i < 50; i++) { avr_run(m); hi += a3 == 1; }
+		check("WO3 reaches PA3 (duty ~20 of 50)", hi >= 18 && hi <= 22, 1);
+		check("PC3 untouched on default routing", c3, 0);
+		cpu_write(m, 0x0200 + 2, 0x08);			/* PORTMUX.CTRLC: TCA03 -> PC3 */
+		check("alternate: PA3 released", a3, 0);
+		hi = 0;
+		for (int i = 0; i < 50; i++) { avr_run(m); hi += c3 == 1; }
+		check("alternate: WO3 reaches PC3", hi >= 18 && hi <= 22, 1);
+	}
+
 	printf("== USART0 TXD frame on its routed pin (attiny3217) ==\n");
 	{
 		avr_t *m = avr_make_mcu_by_name("attiny3217");

@@ -40,6 +40,11 @@
                               { { 'B', 1 }, { 'B', 4 } }, \
                               { { 'B', 2 }, { 'B', 5 } } }
 
+/* Split mode WO3-5 (PORTMUX.CTRLC TCA03-TCA05): PA3-5 by default, PC3-5 alternate. */
+#define SIM_PORTMUX_TCA0_WO345 { { { 'A', 3 }, { 'C', 3 } }, \
+                                 { { 'A', 4 }, { 'C', 4 } }, \
+                                 { { 'A', 5 }, { 'C', 5 } } }
+
 /* DS40002205A Table 5-1 / PORTMUX.CTRLB: USART0 TxD default (PB2), alternate (PA1). */
 #define SIM_PORTMUX_USART0_TXD { { 'B', 2 }, { 'A', 1 } }
 

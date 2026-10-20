@@ -1220,6 +1220,264 @@ int main(void)
 		check("no OVF after disable", fired, 0);
 	}
 
+	printf("== modern TCA0 buffering / commands / FRQ / dual-slope / DIR / split (sim_tiny3217) ==\n");
+	{
+		const avr_io_addr_t TA = 0xa00;
+		enum { ENABLE = 0x01, LUPD = 0x02, DIR = 0x01, CMD_UPDATE = 0x04,
+			   CMD_RESTART = 0x08, CMD_RESET = 0x0c };
+		enum { CMP0EN = 0x10, CMP1EN = 0x20, WG_FRQ = 0x01, WG_SS = 0x03,
+			   WG_DSTOP = 0x05, WG_DSBOTH = 0x06, WG_DSBOTTOM = 0x07 };
+		enum { CTRLECLR = 0x04, CTRLESET = 0x05, CTRLFCLR = 0x06, CTRLFSET = 0x07,
+			   PERBUF = 0x36, CMP0BUF = 0x38, CMP1BUF = 0x3a };
+		enum { F_OVF = 0x01, F_HUNF = 0x02, F_CMP0 = 0x10 };
+		#define RUN_TO(mm, c) do { avr_cycle_count_t _end = (c); while ((mm)->cycle < _end) avr_run(mm); } while (0)
+		#define W16(mm, a, v) do { cpu_write(mm, a, (v) & 0xff); cpu_write(mm, (a) + 1, (v) >> 8); } while (0)
+		#define R16(mm, a) (cpu_read(mm, a) | (cpu_read(mm, (a) + 1) << 8))
+
+		avr_t *m = avr_make_mcu_by_name("attiny3217");
+		if (!m) { printf("cannot make attiny3217 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		memset(m->flash, 0, 0x2000);
+
+		/* --- double buffering: PERBUF / CMPnBUF transfer on the wrap --- */
+		W16(m, TA + TCAR_PERL, 99);
+		W16(m, TA + TCAR_CMP0L, 30);
+		cpu_write(m, TA + TCAR_CTRLB, WG_SS | CMP0EN);
+		cpu_write(m, TA + TCAR_CTRLA, ENABLE);
+		W16(m, TA + PERBUF, 49);
+		W16(m, TA + CMP0BUF, 10);
+		check("PERBV and CMP0BV set by buffer writes", cpu_read(m, TA + TCAR_CTRLFSET), 0x03);
+		check("CTRLFCLR reads the same flags", cpu_read(m, TA + TCAR_CTRLFCLR), 0x03);
+		check("PER unchanged before the update", R16(m, TA + TCAR_PERL), 99);
+		RUN_TO(m, 110);
+		check("PER loaded from PERBUF at the wrap", R16(m, TA + TCAR_PERL), 49);
+		check("CMP0 loaded from CMP0BUF at the wrap", R16(m, TA + TCAR_CMP0L), 10);
+		check("buffer valid flags cleared by the update", cpu_read(m, TA + TCAR_CTRLFSET), 0);
+
+		/* LUPD blocks the transfer; the UPDATE command ignores it. */
+		cpu_write(m, TA + CTRLESET, LUPD);
+		check("LUPD reads back", cpu_read(m, TA + CTRLESET) & LUPD, LUPD);
+		W16(m, TA + PERBUF, 29);
+		RUN_TO(m, 300);
+		check("LUPD keeps PER", R16(m, TA + TCAR_PERL), 49);
+		check("PERBV stays set under LUPD", cpu_read(m, TA + TCAR_CTRLFSET), 0x01);
+		cpu_write(m, TA + CTRLESET, CMD_UPDATE);
+		check("UPDATE command loads PER despite LUPD", R16(m, TA + TCAR_PERL), 29);
+		cpu_write(m, TA + CTRLESET, CMD_UPDATE);
+		check("CMD bits read as 0", cpu_read(m, TA + CTRLESET) & 0x0c, 0);
+		cpu_write(m, TA + CTRLECLR, LUPD);
+		W16(m, TA + PERBUF, 19);
+		cpu_write(m, TA + CTRLFCLR, 0x01);
+		check("CTRLFCLR clears PERBV", cpu_read(m, TA + TCAR_CTRLFSET), 0);
+
+		/* RESTART zeroes the counter; RESET needs the timer stopped. */
+		RUN_TO(m, m->cycle + 7);
+		cpu_write(m, TA + CTRLESET, CMD_RESTART);
+		check("RESTART zeroes CNT", R16(m, TA + TCAR_CNTL) <= 1, 1);
+		cpu_write(m, TA + CTRLESET, CMD_RESET);
+		check("RESET ignored while enabled", cpu_read(m, TA + TCAR_CTRLB), WG_SS | CMP0EN);
+		cpu_write(m, TA + TCAR_CTRLA, 0);
+		cpu_write(m, TA + CTRLESET, CMD_RESET);
+		check("RESET clears CTRLB", cpu_read(m, TA + TCAR_CTRLB), 0);
+		check("RESET restores PER to 0xFFFF", R16(m, TA + TCAR_PERL), 0xffff);
+		check("RESET restores PERBUF to 0xFFFF", R16(m, TA + PERBUF), 0xffff);
+
+		/* --- CTRLC.CMPnOV drives WOn while the timer is stopped --- */
+		uint8_t wo0 = 0xff, pin0 = 0xff;
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0), rec_irq, &wo0);
+		avr_irq_register_notify(avr_io_getirq(m, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_PIN0), rec_irq, &pin0);
+		cpu_write(m, TA + TCAR_CTRLB, WG_SS | CMP0EN);
+		cpu_write(m, TA + TCAR_CTRLC, 0x01);
+		check("CMP0OV drives WO0 while stopped", wo0, 1);
+		check("pin overridden, level 1", pin0, 3);
+		cpu_write(m, TA + TCAR_CTRLC, 0x00);
+		check("CMP0OV clear drops WO0", wo0, 0);
+
+		/* --- FRQ: WO0 toggles every CMP0+1 ticks --- */
+		cpu_write(m, TA + TCAR_CTRLB, WG_FRQ | CMP0EN);
+		W16(m, TA + TCAR_PERL, 0xffff);
+		W16(m, TA + TCAR_CMP0L, 9);
+		W16(m, TA + TCAR_CNTL, 0);
+		avr_cycle_count_t t0 = m->cycle;
+		cpu_write(m, TA + TCAR_CTRLA, ENABLE);
+		int edges = 0; uint8_t last = wo0;
+		avr_cycle_count_t e1 = 0, e2 = 0;
+		while (m->cycle < t0 + 105) {
+			avr_run(m);
+			if (wo0 != last) {
+				last = wo0;
+				if (++edges == 1) e1 = m->cycle;
+				if (edges == 2) e2 = m->cycle;
+			}
+		}
+		check("FRQ toggles ~10 times in 105 cycles", edges >= 9 && edges <= 11, 1);
+		check("FRQ half period ~10 cycles", (long)(e2 - e1) >= 9 && (long)(e2 - e1) <= 11, 1);
+		cpu_write(m, TA + TCAR_CTRLA, 0);
+		cpu_write(m, TA + CTRLESET, CMD_RESET);
+
+		/* --- dual-slope: period 2*PER, OVF position per mode --- */
+		for (int mode = 0; mode < 3; mode++) {
+			static const uint8_t wg[3] = { WG_DSTOP, WG_DSBOTTOM, WG_DSBOTH };
+			avr_t *d = avr_make_mcu_by_name("attiny3217");
+			d->log = LOG_ERROR;
+			avr_init(d);
+			memset(d->flash, 0, 0x2000);
+			wo0 = 0xff;
+			avr_irq_register_notify(avr_io_getirq(d, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0), rec_irq, &wo0);
+			W16(d, TA + TCAR_PERL, 20);
+			W16(d, TA + TCAR_CMP0L, 5);
+			cpu_write(d, TA + TCAR_CTRLB, wg[mode] | CMP0EN);
+			cpu_write(d, TA + TCAR_CTRLA, ENABLE);
+			avr_cycle_count_t s = d->cycle;
+			long first_ovf = -1, second_ovf = -1, high = 0, ovfs = 0;
+			uint32_t cmpmatches = 0; uint8_t prev = 0;
+			while (d->cycle < s + 80) {
+				avr_run(d);
+				if (d->data[TA + TCAR_INTFLAGS] & F_OVF) {
+					cpu_write(d, TA + TCAR_INTFLAGS, F_OVF);
+					if (++ovfs == 1) first_ovf = d->cycle - s;
+					if (ovfs == 2) second_ovf = d->cycle - s;
+				}
+				if (d->data[TA + TCAR_INTFLAGS] & F_CMP0) {
+					cpu_write(d, TA + TCAR_INTFLAGS, F_CMP0);
+					cmpmatches++;
+				}
+				if (d->cycle >= s + 40 && d->cycle < s + 80)
+					high += wo0 == 1;
+				(void)prev;
+			}
+			const char *nm[3] = { "DSTOP", "DSBOTTOM", "DSBOTH" };
+			char buf[96];
+			if (mode == 0) {
+				snprintf(buf, sizeof buf, "%s first OVF at TOP (~20)", nm[mode]);
+				check(buf, first_ovf >= 19 && first_ovf <= 23, 1);
+				snprintf(buf, sizeof buf, "%s OVF cadence 40", nm[mode]);
+				check(buf, second_ovf - first_ovf >= 39 && second_ovf - first_ovf <= 41, 1);
+			} else if (mode == 1) {
+				snprintf(buf, sizeof buf, "%s first OVF at BOTTOM (~40)", nm[mode]);
+				check(buf, first_ovf >= 39 && first_ovf <= 43, 1);
+			} else {
+				snprintf(buf, sizeof buf, "%s OVF at both TOP and BOTTOM (2 in 45)", nm[mode]);
+				check(buf, first_ovf >= 19 && first_ovf <= 23 && second_ovf >= 39 && second_ovf <= 43, 1);
+			}
+			snprintf(buf, sizeof buf, "%s WO0 duty = 10 of 40 ticks", nm[mode]);
+			check(buf, high >= 9 && high <= 11, 1);
+			snprintf(buf, sizeof buf, "%s CMP0 matches up and down (>=2 in 80)", nm[mode]);
+			check(buf, cmpmatches >= 2, 1);
+		}
+
+		/* --- software DIR: counter counts down and reloads PER --- */
+		{
+			avr_t *d = avr_make_mcu_by_name("attiny3217");
+			d->log = LOG_ERROR;
+			avr_init(d);
+			memset(d->flash, 0, 0x2000);
+			W16(d, TA + TCAR_PERL, 99);
+			W16(d, TA + TCAR_CNTL, 50);
+			cpu_write(d, TA + CTRLESET, DIR);
+			cpu_write(d, TA + TCAR_CTRLA, ENABLE);
+			RUN_TO(d, 11);
+			long c = R16(d, TA + TCAR_CNTL);
+			check("DIR=1 counts down (~40 after 10 ticks)", c >= 38 && c <= 41, 1);
+			check("DIR reads back 1", cpu_read(d, TA + CTRLESET) & DIR, DIR);
+			RUN_TO(d, 70);
+			c = R16(d, TA + TCAR_CNTL);
+			check("down-count reloads PER at BOTTOM", c > 70 && c <= 99, 1);
+			check("underflow raised OVF", d->data[TA + TCAR_INTFLAGS] & F_OVF, F_OVF);
+		}
+
+		/* --- EVACT UPDOWN: event level high counts down --- */
+		{
+			avr_t *d = avr_make_mcu_by_name("attiny3217");
+			d->log = LOG_ERROR;
+			avr_init(d);
+			memset(d->flash, 0, 0x2000);
+			avr_irq_t *ev = avr_io_getirq(d, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_EV_IN);
+			W16(d, TA + TCAR_PERL, 999);
+			W16(d, TA + TCAR_CNTL, 100);
+			cpu_write(d, TA + TCAR_EVCTRL, 0x01 | (3 << 1));	/* CNTEI, UPDOWN */
+			cpu_write(d, TA + TCAR_CTRLA, ENABLE);
+			RUN_TO(d, 21);
+			long up = R16(d, TA + TCAR_CNTL);
+			check("UPDOWN counts up while event low", up >= 118 && up <= 122, 1);
+			avr_raise_irq(ev, 1);
+			RUN_TO(d, 41);
+			long dn = R16(d, TA + TCAR_CNTL);
+			check("UPDOWN counts down while event high", dn >= 98 && dn <= 102, 1);
+			avr_raise_irq(ev, 0);
+			RUN_TO(d, 51);
+			long up2 = R16(d, TA + TCAR_CNTL);
+			check("UPDOWN resumes up when event drops", up2 > dn, 1);
+		}
+
+		/* --- CNT written while running takes effect --- */
+		{
+			avr_t *d = avr_make_mcu_by_name("attiny3217");
+			d->log = LOG_ERROR;
+			avr_init(d);
+			memset(d->flash, 0, 0x2000);
+			W16(d, TA + TCAR_PERL, 999);
+			cpu_write(d, TA + TCAR_CTRLA, ENABLE);
+			RUN_TO(d, 20);
+			W16(d, TA + TCAR_CNTL, 500);
+			RUN_TO(d, 30);
+			long c = R16(d, TA + TCAR_CNTL);
+			check("CNT write while running re-anchors the count", c >= 505 && c <= 512, 1);
+		}
+
+		/* --- split mode: two independent 8-bit down-counters, WO0-5 --- */
+		{
+			avr_t *d = avr_make_mcu_by_name("attiny3217");
+			d->log = LOG_ERROR;
+			avr_init(d);
+			memset(d->flash, 0, 0x2000);
+			uint8_t lwo0 = 0xff, hwo0 = 0xff, hpin = 0xff;
+			avr_irq_register_notify(avr_io_getirq(d, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0), rec_irq, &lwo0);
+			avr_irq_register_notify(avr_io_getirq(d, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO3), rec_irq, &hwo0);
+			avr_irq_register_notify(avr_io_getirq(d, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_PIN3), rec_irq, &hpin);
+			cpu_write(d, TA + 0x03, 0x01);		/* CTRLD.SPLITM */
+			check("LPER resets to 0xFF", cpu_read(d, TA + 0x26), 0xff);
+			cpu_write(d, TA + 0x26, 99);		/* LPER */
+			cpu_write(d, TA + 0x27, 49);		/* HPER */
+			cpu_write(d, TA + 0x28, 30);		/* LCMP0 */
+			cpu_write(d, TA + 0x29, 10);		/* HCMP0 */
+			cpu_write(d, TA + 0x0a, 0x13);		/* LUNF | HUNF | LCMP0 enable */
+			cpu_write(d, TA + TCAR_CTRLB, 0x01 | 0x10);	/* LCMP0EN | HCMP0EN */
+			check("HCMP0EN overrides the WO3 pin", hpin & 2, 2);
+			avr_cycle_count_t s = d->cycle;
+			cpu_write(d, TA + TCAR_CTRLA, ENABLE);
+			long lhigh = 0, hhigh = 0, hunf = -1, lunf = -1;
+			while (d->cycle < s + 100) {
+				avr_run(d);
+				lhigh += lwo0 == 1;
+				hhigh += hwo0 == 1;
+				if (hunf < 0 && (d->data[TA + TCAR_INTFLAGS] & F_HUNF)) hunf = d->cycle - s;
+				if (lunf < 0 && (d->data[TA + TCAR_INTFLAGS] & F_OVF)) lunf = d->cycle - s;
+			}
+			long lcnt = cpu_read(d, TA + 0x20), hcnt = cpu_read(d, TA + 0x21);
+			check("HUNF fires at the high-byte BOTTOM (~49)", hunf >= 48 && hunf <= 52, 1);
+			check("LUNF fires at the low-byte BOTTOM (~99)", lunf >= 98 && lunf <= 102, 1);
+			check("low timer WO0 duty ~30 of 100", lhigh >= 28 && lhigh <= 32, 1);
+			check("high timer WO3 duty ~10 of 50 (2 periods)", hhigh >= 19 && hhigh <= 23, 1);
+			check("LCNT within 0..LPER", lcnt <= 99, 1);
+			check("HCNT within 0..HPER", hcnt <= 49, 1);
+			check("LCMP0 flag set", d->data[TA + TCAR_INTFLAGS] & F_CMP0, F_CMP0);
+			cpu_write(d, TA + TCAR_INTFLAGS, 0x73);
+			check("split flags clear by W1C", d->data[TA + TCAR_INTFLAGS], 0);
+			/* HUNF uses the vector after OVF. */
+			RUN_TO(d, d->cycle + 60);
+			check("HUNF interrupt pending", avr_has_pending_interrupts(d), 1);
+			/* Split-mode RESET (both halves) returns to normal mode. */
+			cpu_write(d, TA + TCAR_CTRLA, 0);
+			cpu_write(d, TA + CTRLESET, CMD_RESET | 0x03);
+			check("split RESET clears SPLITM", cpu_read(d, TA + 0x03), 0);
+		}
+		#undef RUN_TO
+		#undef W16
+		#undef R16
+	}
+
 	printf("== modern TCA0 single-slope PWM WO -> CCL (sim_tiny3217) ==\n");
 	{
 		const avr_io_addr_t TA = 0xa00, L = 0x1c0;

@@ -1183,3 +1183,19 @@ including three real ISRs through the vector table; it was also run on all 12 co
 **Limitation found on the way (since fixed):** GPIOR0-3 aliased r28-r31, so the 2-series
 self-test reports through SRAM, not GPIOR. `avr_init()` now redirects data 0x1C-0x1F to a
 reserved backing range (0x20-0x23) for every modern core; see the TODO doc.
+
+### TCA0 completion (2026-10-20)
+`avr_tca.c` was rebuilt around a *phase* model so the ATtiny3217's TCA0 (and every other
+modern core's) matches DS40002205A chapter 20: a period is `TOP+1` ticks (NORMAL/FRQ/
+SINGLESLOPE, either direction) or `2*TOP` ticks (dual slope); CNT and direction derive from
+the phase and one cycle timer is aimed at the next compare/TOP/wrap. Added: FRQ and the three
+dual-slope WGMODEs; PERBUF/CMPnBUF double buffering (CTRLF BV flags, CTRLE.LUPD, CTRLB.ALUPD,
+UPDATE on the wrap or by command); CTRLECLR/SET at 0x04/0x05 (DIR, RESTART, RESET) and
+CTRLFCLR/SET at 0x06/0x07; CTRLC.CMPnOV; EVACT UPDOWN direction; and split mode (two 8-bit
+down-counters, WO0-5, LUNF/HUNF at OVF vector+1). Register writes that move the schedule now
+latch the live counter *before* storing, which also fixes CNT writes while running being
+overwritten. WO3-5 are routed on the 3217 through `SIM_PORTMUX_TCA0_WO345`. Tests: the
+"buffering / commands / FRQ / dual-slope / DIR / split" group in `tests/test_avrxt_engine.c`
+and "split-mode WO3" in `tests/test_portmux_route.c`.
+Assumptions the data sheet does not settle: split-mode PWM polarity (modelled high while
+CNT<CMPn); TEMP-register semantics for 16-bit writes (not modelled).
