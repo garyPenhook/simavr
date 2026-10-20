@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..analog import analog, decode as decode_analog
+from ..comms import comms, decode as decode_comms
 from ..evsys import evsys, rows as evsys_rows
 from ..portmux import RouteField, routes
 from ..timers import Timer, decode as decode_timer, timers
@@ -1220,6 +1221,14 @@ class AnalogPane(QWidget):
 
     CHANGED = QColor(255, 235, 150)
     COLS = ["Block", "Register", "Value", "Fields"]
+    WHAT = "analog peripherals"
+
+    @staticmethod
+    def _find(mmcu: str):
+        return analog(mmcu)
+
+    def _decode(self, sim: Simulator, block, read):
+        return decode_analog(sim.mmcu, block, read, round(self._vdd.value() * 1000))
 
     def __init__(self):
         super().__init__()
@@ -1249,11 +1258,11 @@ class AnalogPane(QWidget):
 
     def set_sim(self, sim: Simulator | None):
         self._sim = sim
-        self._blocks = analog(sim.mmcu) if sim is not None else ()
+        self._blocks = self._find(sim.mmcu) if sim is not None else ()
         self._prev.clear()
         self._rows = []
         self._table.setRowCount(0)
-        self._note.setText("" if self._blocks or sim is None else "no analog peripherals for this device")
+        self._note.setText("" if self._blocks or sim is None else f"no {self.WHAT} for this device")
         self.refresh(sim)
 
     def refresh(self, sim: Simulator | None):
@@ -1263,7 +1272,7 @@ class AnalogPane(QWidget):
             return int.from_bytes(sim.read(Space.DATA, addr, size), "little")
         try:
             rows = [(b.name, reg, value, fields) for b in self._blocks
-                    for reg, value, fields in decode_analog(sim.mmcu, b, read, round(self._vdd.value() * 1000))]
+                    for reg, value, fields in self._decode(sim, b, read)]
         except SimavrError:
             return                          # resumed meanwhile
         if [(b, r) for b, r, *_ in rows] != self._rows:
@@ -1279,6 +1288,26 @@ class AnalogPane(QWidget):
                 item = self._table.item(i, c)
                 item.setText(t)
                 item.setBackground(QBrush(self.CHANGED if changed else QColor(0, 0, 0, 0)))
+
+
+class SerialPane(AnalogPane):
+    """USART, SPI and TWI register state, decoded like the Analog dock (value plus every header-defined
+    field), with the USART baud rate derived from BAUD at the simulated CPU clock (assumed equal to
+    CLK_PER). A register view: nothing here changes the simulation."""
+
+    WHAT = "serial peripherals"
+
+    def __init__(self):
+        super().__init__()
+        self._vdd.hide()
+        self.layout().itemAtPosition(0, 1).widget().hide()      # the "VDD" label
+
+    @staticmethod
+    def _find(mmcu: str):
+        return comms(mmcu)
+
+    def _decode(self, sim: Simulator, block, read):
+        return decode_comms(sim.mmcu, block, read, sim.frequency)
 
 
 class InterruptPane(QWidget):
@@ -1478,6 +1507,7 @@ class MainWindow(QMainWindow):
         self.timerpane = TimerPane()
         self.evpane = EvsysPane()
         self.analogpane = AnalogPane()
+        self.serialpane = SerialPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1502,6 +1532,7 @@ class MainWindow(QMainWindow):
                                ("Timers", self.timerpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Events", self.evpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Analog", self.analogpane, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Serial", self.serialpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1654,6 +1685,7 @@ class MainWindow(QMainWindow):
         self.timerpane.set_sim(sim)
         self.evpane.set_sim(sim)
         self.analogpane.set_sim(sim)
+        self.serialpane.set_sim(sim)
         self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
@@ -1684,6 +1716,7 @@ class MainWindow(QMainWindow):
         self.timerpane.set_sim(None)
         self.evpane.set_sim(None)
         self.analogpane.set_sim(None)
+        self.serialpane.set_sim(None)
         self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
@@ -1799,6 +1832,7 @@ class MainWindow(QMainWindow):
         self.timerpane.refresh(sim)
         self.evpane.refresh(sim)
         self.analogpane.refresh(sim)
+        self.serialpane.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 

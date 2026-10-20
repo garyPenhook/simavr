@@ -221,6 +221,8 @@ not converted. **Open engine question:** `avr_adc_modern.c` converts with `Vin *
 (clamped) while the data sheet says `1023 * VIN / VREF`, so a simulated input can read up to one
 count off the dock's volts.
 
+**Serial view (2026-10-19):** a "Serial" dock (`simavr_py.comms`, Qt-free, reuses the Analog field decoder) shows USART, SPI and TWI registers with every header-defined field, plus a USART **Baud rate** row (`64 x fCLK_PER / (S x BAUD)`, S = 16 / 8 with RXMODE=CLK2X; synchronous `fCLK_PER / (2 x BAUD[15:6])`; DS40002173C Table 23-1). Limits: CLK_PER is taken as the simulated CPU clock (the CLKCTRL prescaler is not read); no TWI/SPI derived rates; the TWI baud formula needs rise time and was not added. Display only.
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
