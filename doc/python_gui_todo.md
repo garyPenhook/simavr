@@ -193,6 +193,15 @@ registers (`simavr_py.timers`, Qt-free) from the avr-libc header's `TC*_gm/_bm` 
 changed values highlighted. Limits: TCD WGMODE/CNTPRES show a number when the header has no
 enum; it is a register view, not a waveform (Timeline lanes cover outputs).
 
+**Event System view (2026-10-19):** an "Events" dock (`simavr_py.evsys`, Qt-free) shows each
+channel's generator and the channel each user listens to. Two layouts, found from the
+register names: `CHANNELn` + `USER*` (user value 0 = OFF, n = CHANNEL(n-1)) and tinyAVR 0/1
+`ASYNCCHn`/`SYNCCHn` + `ASYNCUSERn`/`SYNCUSERn` (1-2 = SYNCCH0-1, 3-6 = ASYNCCH0-3). Verified
+against DS40002173C 14.5.2/14.5.3 (megaAVR-0) and DS40002205A 14.5.5/14.5.6 (tinyAVR 1);
+the tinyAVR 2-series mapping follows its header's `EVSYS_USER_CHANNELn` enum and is **not**
+checked against a 2-series data sheet (none in `datasheets/`). Generator and user names come from
+the header, a user value that selects nothing shows `?`. Display only; no event activity.
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
@@ -202,7 +211,7 @@ enum; it is a register view, not a waveform (Timeline lanes cover outputs).
    * PORT/VPORT live state by physical pin
    * PORTMUX routing view
    * TCA/TCB/TCD waveform state (register view done; waveform = Timeline lanes)
-   * EVSYS channel/user routing
+   * EVSYS channel/user routing (done)
    * ADC/VREF/AC analog state summaries
 3. Make widget wiring declarative so a board definition is mostly data, not
    custom glue code.

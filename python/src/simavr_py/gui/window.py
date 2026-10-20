@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QPushButton, QScrollArea, QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QWidget,
 )
 
+from ..evsys import evsys, rows as evsys_rows
 from ..portmux import RouteField, routes
 from ..timers import Timer, decode as decode_timer, timers
 from ..ports import PortRegs, decode_pin, ports
@@ -1154,6 +1155,60 @@ class TimerPane(QWidget):
             item.setBackground(QBrush(self.CHANGED if changed else QColor(0, 0, 0, 0)))
 
 
+class EvsysPane(QWidget):
+    """Event System routing: each channel's generator and, per user (CCL LUT inputs, ADC, TCA,
+    TCB, USART, EVOUT ...), the channel it listens to. Decoded from the registers with the
+    device header's names; read while stopped, a value that changed since the previous stop
+    is highlighted. A register view: it doesn't show events in flight."""
+
+    CHANGED = QColor(255, 235, 150)
+    COLS = ["Kind", "Name", "Value", "Connected to"]
+
+    def __init__(self):
+        super().__init__()
+        self._sim: Simulator | None = None
+        self._prev: dict[tuple[str, str], tuple[str, str]] = {}
+        self._table = QTableWidget(0, len(self.COLS))
+        self._table.setHorizontalHeaderLabels(self.COLS)
+        self._table.setFont(_mono())
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._note = QLabel("")
+        lay = QGridLayout(self)
+        lay.addWidget(self._note, 0, 0)
+        lay.addWidget(self._table, 1, 0)
+
+    def set_sim(self, sim: Simulator | None):
+        self._sim = sim
+        self._prev.clear()
+        self._table.setRowCount(0)
+        self._note.setText("" if sim is None or evsys(sim.mmcu) else "no EVSYS table for this device")
+        self.refresh(sim)
+
+    def refresh(self, sim: Simulator | None):
+        if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
+            return
+        try:
+            rows = evsys_rows(sim.mmcu, lambda a: sim.read(Space.DATA, a, 1)[0])
+        except SimavrError:
+            return                          # resumed meanwhile
+        if self._table.rowCount() != len(rows):
+            self._table.setRowCount(len(rows))
+            for i, (kind, name, _, _) in enumerate(rows):
+                for c, text in enumerate((kind, name, "", "")):
+                    self._table.setItem(i, c, QTableWidgetItem(text))
+        bold = self._table.font()
+        bold.setBold(True)
+        for i, (kind, name, value, meaning) in enumerate(rows):
+            changed = self._prev.get((kind, name), (value, meaning)) != (value, meaning)
+            self._prev[(kind, name)] = (value, meaning)
+            for c, t in ((2, value), (3, meaning)):
+                item = self._table.item(i, c)
+                item.setText(t)
+                item.setBackground(QBrush(self.CHANGED if changed else QColor(0, 0, 0, 0)))
+                item.setFont(bold if meaning != "OFF" else self._table.font())
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -1349,6 +1404,7 @@ class MainWindow(QMainWindow):
         self.portpane = PortPane()
         self.portmux = PortmuxPane()
         self.timerpane = TimerPane()
+        self.evpane = EvsysPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1371,6 +1427,7 @@ class MainWindow(QMainWindow):
                                ("Ports", self.portpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("PORTMUX", self.portmux, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timers", self.timerpane, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Events", self.evpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1521,6 +1578,7 @@ class MainWindow(QMainWindow):
         self.portpane.set_sim(sim)
         self.portmux.set_sim(sim)
         self.timerpane.set_sim(sim)
+        self.evpane.set_sim(sim)
         self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
@@ -1549,6 +1607,7 @@ class MainWindow(QMainWindow):
         self.portpane.set_sim(None)
         self.portmux.set_sim(None)
         self.timerpane.set_sim(None)
+        self.evpane.set_sim(None)
         self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
@@ -1662,6 +1721,7 @@ class MainWindow(QMainWindow):
         self.portpane.refresh(sim)
         self.portmux.refresh(sim)
         self.timerpane.refresh(sim)
+        self.evpane.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 
