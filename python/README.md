@@ -49,6 +49,12 @@ input, log text, VCD) aren't wrapped. Watchpoints and interrupt events are
 A desktop front-end (PySide6/Qt) for loading firmware, running it, poking pins and
 debugging, with no VCD/GTKWave step needed for everyday work.
 
+![simavr GUI running an ATtiny3217 that drives an SSD1306 OLED over TWI0](../doc/img/gui-attiny3217-oled.png)
+
+*The GUI running `examples/demo_3217_oled.c` on an ATtiny3217 with the `boards/oled_3217.json`
+board: the SSD1306 on TWI0 (PB0/PB1) shows a title and a live counter, LED0 on PA0 toggles with
+each update, and the dock tabs show registers, ports, CPU state and disassembly.*
+
 ### Starting it
 
 From the repo root:
@@ -112,12 +118,27 @@ Shipped boards in `boards/`:
 | `demo_3217.json` | attiny3217 | 3 LEDs, 2 buttons, encoder, 16x2 LCD |
 | `demo_1614.json` | attiny1614 | 3 LEDs, 2 buttons, encoder |
 | `demo_212.json` | attiny212 | 2 LEDs, 2 buttons |
+| `oled_3217.json` | attiny3217 | LED0 + SSD1306 on TWI0 at 0x3C (matches `examples/demo_3217_oled.c`, pictured above) |
+| `demo_13a.json` | attiny13a | 2 LEDs, 1 button (matches `examples/demo_13a.c`: Timer0 blink, pull-up button, ADC) |
 | `curiosity_nano_4809.json` | atmega4809 | ATmega4809 Curiosity Nano: LED0 on PF5 (active low), SW0 on PF6 |
 | `curiosity_nano_3217.json` | attiny3217 | ATtiny3217 Curiosity Nano: LED0 on PA3 (active low), SW0 on PB7 (matches `examples/demo_3217_nano.c`) |
 
-The `demo_*` layouts are generic; only `demo_4809` has matching firmware (the Nano boards: `curiosity_nano_3217` has `demo_3217_nano`). The
+The `demo_*` layouts are generic; only `demo_4809`, `demo_13a` and `oled_3217` have matching firmware (the Nano boards: `curiosity_nano_3217` has `demo_3217_nano`). The
 Curiosity Nano pins come from Microchip's board user guides. Neither Nano has an
 external pull-up on SW0, so the firmware must enable the internal one.
+
+**Classic AVRs (ATtiny13A and the other pre-modern cores):** the register, port, timer, analog,
+serial, clock, system and interrupt docks also work there, read from the flat `_SFR_IO8` form of the
+device header (`simavr_py.classic`): registers keep their header names (`PORTB`, `TCCR0B`),
+consecutive bit names that share a stem form one field (`CS00..CS02` -> `CS0=n`), and the Ports dock
+lists only the pins the header defines (ATtiny13A: PB0-PB5) with the pull-up derived from DDxn,
+PORTxn and PUD. On the ATtiny13A the Timers dock adds derived rows from DS40002307A Tables
+11-2..11-9 (clock source and tick rate, mode and TOP, what OC0A/OC0B do, counter cycle) and the
+Clock dock decodes CLKPS; CLKPR writes really rescale the simulated clock (CLKPCE sequence, CKDIV8
+reset value 3, restored on reset). The Interrupts dock lists TIFRn/GIFR flags with their masks and
+the flags that share a register with their enable (ADIF, ACI, WDTIF) as enabled/masked. There are
+no CPUINT levels, PORTMUX or Events on these parts, and those docks say so. The core name you
+asked for (`attiny13a`, not the shared `attiny13` descriptor) is what `Simulator.mmcu` reports.
 
 **Docks** (drag to rearrange; related ones share tabs, the default is right column =
 CPU plus tabs, bottom = Timeline plus Memory/UART tabs):

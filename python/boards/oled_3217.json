@@ -1,0 +1,9 @@
+{
+  "name": "ATtiny3217 + SSD1306 OLED (TWI0)",
+  "mmcu": "attiny3217",
+  "freq": 3333333,
+  "widgets": [
+    {"type": "led", "pin": "PA0", "label": "LED0", "color": "red"},
+    {"type": "oled", "label": "SSD1306 128x64 on TWI0 (0x3C)", "bus": "twi", "instance": 0, "addr": 60}
+  ]
+}
