@@ -1357,6 +1357,10 @@ class InterruptPane(QWidget):
         clear.clicked.connect(self.clear)
         self._total = QLabel("0 interrupts")
         self._exec = QLabel("executing: -")
+        self._pending = QLabel("pending: -")
+        self._pending.setWordWrap(True)
+        self._pending.setToolTip("Vectors raised and enabled but not yet taken (the engine's queue).\n"
+                                 "Whether one is taken next depends on the I flag and the CPUINT level.")
         self._flags = QLabel("flags set: -")
         self._flags.setWordWrap(True)
         self._flags.setToolTip("Peripherals whose INTFLAGS register is non-zero while stopped.\n"
@@ -1375,8 +1379,9 @@ class InterruptPane(QWidget):
         lay = QGridLayout(self)
         lay.addLayout(top, 0, 0)
         lay.addWidget(self._exec, 1, 0)
-        lay.addWidget(self._flags, 2, 0)
-        lay.addWidget(self._table, 3, 0)
+        lay.addWidget(self._pending, 2, 0)
+        lay.addWidget(self._flags, 3, 0)
+        lay.addWidget(self._table, 4, 0)
 
     @staticmethod
     def flags_text(rows: list[tuple[str, int, int | None]]) -> str:
@@ -1385,10 +1390,15 @@ class InterruptPane(QWidget):
                  for name, fl, en in rows if fl]
         return "flags set: " + (", ".join(parts) if parts else "none")
 
+    def pending_text(self, vectors: list[int]) -> str:
+        return "pending: " + (", ".join(vector_label(self._names, v) for v in vectors)
+                              if vectors else "none")
+
     def set_sim(self, sim: Simulator | None):
         self._pairs = interrupt_flag_pairs(sim.mmcu) if sim is not None else ()
         self._flags_key = None
         self._flags.setText("flags set: -")
+        self._pending.setText("pending: -")
 
     def set_names(self, names: dict[int, str]):
         self._names = names
@@ -1425,6 +1435,7 @@ class InterruptPane(QWidget):
             return
         try:
             self._exec.setText(self.exec_text(sim.peek(self.CPUINT_STATUS)))
+            self._pending.setText(self.pending_text(sim.pending_interrupts()))
             key = sim.cycle
             if self._pairs and key != self._flags_key:
                 self._flags_key = key

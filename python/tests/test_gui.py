@@ -693,6 +693,8 @@ assert IP.flags_text([("TCA0", 0, 1), ("USART0", 0x40, 0x80), ("X", 2, None)]) =
     "flags set: USART0 flags 0x40 (enable 0x80), X flags 0x02"
 assert IP.flags_text([("A", 0, 0)]) == "flags set: none"
 assert win.irqs._flags.text().startswith("flags set: "), win.irqs._flags.text()
+assert win.irqs._pending.text() == "pending: none", win.irqs._pending.text()
+assert win.irqs.pending_text([vec]) == f"pending: {vec} USART0_RXC"
 win.irqs.clear()
 assert win.irqs.stats == {} and win.irqs._table.rowCount() == 0
 win.close()

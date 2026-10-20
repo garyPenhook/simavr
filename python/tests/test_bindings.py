@@ -220,6 +220,38 @@ def test_interrupt_events():
         s.unsubscribe(sub)
 
 
+def test_pending_interrupts():
+    with sa.Simulator("atmega4809") as s:
+        s.load_flash(_irq_firmware())
+        sub = s.subscribe_interrupts()
+        s.poke(USART0 + U_CTRLB, U_RXEN)
+        s.run_cycles(200)                       # RXC enabled, SEI executed
+        assert s.pending_interrupts() == []
+        c = s.cpu
+        s.cpu = sa.Cpu(c.pc, c.sp, c.sreg & 0x7F, c.r, c.cycle)    # I = 0
+        s.uart_send(0, "A")
+        s.run_cycles(500)
+        pend = s.pending_interrupts()
+        assert len(pend) == 1 and pend[0] > 0
+        assert not [e for e in s.events() if isinstance(e, sa.InterruptEvent)]
+        c = s.cpu
+        s.cpu = sa.Cpu(c.pc, c.sp, c.sreg | 0x80, c.r, c.cycle)    # I = 1
+        s.run_cycles(500)
+        ints = [e for e in s.events() if isinstance(e, sa.InterruptEvent)]
+        assert [e.vector for e in ints] == pend
+        assert s.pending_interrupts() == []
+        s.unsubscribe(sub)
+
+
+def test_pending_interrupts_needs_enable():
+    with sa.Simulator("atmega4809") as s:
+        s.load_flash(words(rjmp(-1)))
+        s.poke(USART0 + U_CTRLB, U_RXEN)        # RXC flag can be set, but RXCIE is clear
+        s.uart_send(0, "A")
+        s.run_cycles(100)
+        assert s.pending_interrupts() == []
+
+
 # ---------------------------------------------------------------- threaded
 
 

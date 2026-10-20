@@ -289,6 +289,19 @@ avr_host_set_cpu(
 		avr_host_t * h,
 		const avr_host_cpu_t * in);
 
+/* Interrupt vectors that are raised, enabled and waiting to be taken (the
+ * engine's pending queue), by ascending vector number. Writes up to 'max'
+ * numbers into 'vectors' and returns how many are pending in total (may
+ * exceed 'max'). A raised flag whose enable bit is clear is not pending, and
+ * a vector already running is not pending again until re-raised. Whether a
+ * pending vector is taken next still depends on SREG.I and the CPUINT level.
+ * Only while paused, else AVR_HOST_ESTATE. */
+int
+avr_host_pending_interrupts(
+		avr_host_t * h,
+		uint8_t * vectors,
+		int max);
+
 /* ---------------------------------------------------------------------
  * Memory
  * Addresses are in each space's native byte addressing. DATA is the data

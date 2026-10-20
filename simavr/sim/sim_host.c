@@ -1211,6 +1211,40 @@ avr_host_get_cpu(
 }
 
 int
+avr_host_pending_interrupts(
+		avr_host_t * h,
+		uint8_t * vectors,
+		int max)
+{
+	int res = 0;
+	host_lock(h);
+	if (h->mode == AVR_HOST_RUNNING)
+		res = host_error(h, AVR_HOST_ESTATE, "pause first");
+	else {
+		avr_int_table_t * t = &h->avr->interrupts;
+		uint8_t seen[256 / 8] = { 0 };
+		for (int i = 0; i < t->vector_count; i++) {
+			avr_int_vector_t * v = t->vector[i];
+			if (!v->pending || (seen[v->vector >> 3] & (1 << (v->vector & 7))))
+				continue;
+			seen[v->vector >> 3] |= 1 << (v->vector & 7);
+			res++;
+		}
+		/* second pass in vector order, so the output is sorted */
+		int n = 0;
+		for (int vec = 1; vec < 256 && n < res; vec++) {
+			if (!(seen[vec >> 3] & (1 << (vec & 7))))
+				continue;
+			if (vectors && n < max)
+				vectors[n] = vec;
+			n++;
+		}
+	}
+	host_unlock(h);
+	return res;
+}
+
+int
 avr_host_set_cpu(
 		avr_host_t * h,
 		const avr_host_cpu_t * in)

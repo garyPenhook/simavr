@@ -403,8 +403,15 @@ number; the VCD still carries the number.
 **CPUINT state (slice 19, 2026-10-19):** the Interrupts pane shows `executing: ...`
 from CPUINT.STATUS (data 0x0111: NMIEX bit 7, LVL1EX bit 1, LVL0EX bit 0, checked
 against DS40002205A 13.5.2), innermost level first (`NMI > LVL1 > LVL0`, or `none`).
-It is read on each refresh while stopped and left as-is while running. Not done:
-pending (flag-set but not yet taken) sources, which need per-peripheral INTFLAGS.
+It is read on each refresh while stopped and left as-is while running.
+
+**Pending interrupts (slice 20, 2026-10-19):** `avr_host_pending_interrupts` returns the
+vectors the engine has queued (raised *and* enabled, not yet taken), ascending, only while
+paused. Python: `Simulator.pending_interrupts()`; the Interrupts pane shows
+`pending: 12 TCA0_OVF, ...` above the `flags set:` line (which is the raw INTFLAGS view,
+including flags whose enable bit is clear). A pending vector still needs SREG.I and a
+sufficient CPUINT level to be taken, so the pane does not claim it is next. Not done:
+per-vector level in the pending list, and dispatch order.
 
 1. Breakpoints:
    * PC breakpoints

@@ -416,6 +416,13 @@ class Simulator:
                                           "sreg": cpu.sreg, "r": list(cpu.r)})
         self._check(self._L.avr_host_set_cpu(self._handle(), c))
 
+    def pending_interrupts(self) -> list[int]:
+        """Vectors raised and enabled but not yet taken, ascending. Only while paused.
+        Whether one is taken next still depends on SREG.I and the CPUINT level."""
+        buf = ffi.new("uint8_t[256]")
+        n = self._check(self._L.avr_host_pending_interrupts(self._handle(), buf, 256))
+        return list(buf[0:min(n, 256)])
+
     def mem_size(self, space: Space) -> int:
         n = ffi.new("uint32_t *")
         self._check(self._L.avr_host_mem_size(self._handle(), space, n))

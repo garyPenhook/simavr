@@ -104,6 +104,7 @@ uint64_t avr_host_time_ns(avr_host_t * h);
 
 int avr_host_get_cpu(avr_host_t * h, avr_host_cpu_t * out);
 int avr_host_set_cpu(avr_host_t * h, const avr_host_cpu_t * in);
+int avr_host_pending_interrupts(avr_host_t * h, uint8_t * vectors, int max);
 
 int avr_host_mem_size(avr_host_t * h, int space, uint32_t * out_size);
 int avr_host_mem_read(avr_host_t * h, int space, uint32_t addr,
