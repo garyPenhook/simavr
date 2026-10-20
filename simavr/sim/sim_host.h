@@ -290,16 +290,21 @@ avr_host_set_cpu(
 		const avr_host_cpu_t * in);
 
 /* Interrupt vectors that are raised, enabled and waiting to be taken (the
- * engine's pending queue), by ascending vector number. Writes up to 'max'
- * numbers into 'vectors' and returns how many are pending in total (may
- * exceed 'max'). A raised flag whose enable bit is clear is not pending, and
- * a vector already running is not pending again until re-raised. Whether a
- * pending vector is taken next still depends on SREG.I and the CPUINT level.
+ * engine's pending queue), in dispatch order: highest CPUINT level first
+ * (modern AVR: 2 NMI, 1 LVL1VEC, 0 normal; classic is always 0), then by the
+ * engine's rank within a level (lowest vector, or LVL0PRI-relative for level
+ * 0). Writes up to 'max' vector numbers into 'vectors' and their levels into
+ * 'levels' (either may be NULL) and returns how many are pending in total
+ * (may exceed 'max'). A raised flag whose enable bit is clear is not pending,
+ * and a vector already running is not pending again until re-raised. Whether
+ * the first is taken next still depends on SREG.I and the executing level;
+ * with LVL0RR the order of the rest shifts as each is taken.
  * Only while paused, else AVR_HOST_ESTATE. */
 int
 avr_host_pending_interrupts(
 		avr_host_t * h,
 		uint8_t * vectors,
+		uint8_t * levels,
 		int max);
 
 /* ---------------------------------------------------------------------

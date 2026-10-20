@@ -102,6 +102,14 @@ avr_raise_interrupt(
 int
 avr_has_pending_interrupts(
 		struct avr_t * avr);
+// dispatch priority of a vector: higher 'level' first (modern CPUINT: 2 NMI,
+// 1 LVL1VEC, 0 normal; classic is always 0), then lower 'rank'. Returns 0.
+int
+avr_interrupt_dispatch_key(
+		struct avr_t * avr,
+		avr_int_vector_t * v,
+		int * level,
+		int * rank);
 // return nonzero if a specific interrupt vector is pending
 int
 avr_is_interrupt_pending(

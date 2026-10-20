@@ -1214,6 +1214,7 @@ int
 avr_host_pending_interrupts(
 		avr_host_t * h,
 		uint8_t * vectors,
+		uint8_t * levels,
 		int max)
 {
 	int res = 0;
@@ -1221,23 +1222,37 @@ avr_host_pending_interrupts(
 	if (h->mode == AVR_HOST_RUNNING)
 		res = host_error(h, AVR_HOST_ESTATE, "pause first");
 	else {
-		avr_int_table_t * t = &h->avr->interrupts;
-		uint8_t seen[256 / 8] = { 0 };
+		avr_t * avr = h->avr;
+		avr_int_table_t * t = &avr->interrupts;
+		struct { int vec, level, rank; } q[256];
 		for (int i = 0; i < t->vector_count; i++) {
 			avr_int_vector_t * v = t->vector[i];
-			if (!v->pending || (seen[v->vector >> 3] & (1 << (v->vector & 7))))
+			/* the dispatcher skips a pending vector whose enable was cleared */
+			if (!v->pending || !avr_regbit_get(avr, v->enable))
 				continue;
-			seen[v->vector >> 3] |= 1 << (v->vector & 7);
+			int dup = 0;
+			for (int j = 0; j < res; j++)
+				dup |= q[j].vec == v->vector;
+			if (dup)
+				continue;
+			q[res].vec = v->vector;
+			avr_interrupt_dispatch_key(avr, v, &q[res].level, &q[res].rank);
 			res++;
 		}
-		/* second pass in vector order, so the output is sorted */
-		int n = 0;
-		for (int vec = 1; vec < 256 && n < res; vec++) {
-			if (!(seen[vec >> 3] & (1 << (vec & 7))))
-				continue;
-			if (vectors && n < max)
-				vectors[n] = vec;
-			n++;
+		/* dispatch order: higher level first, then lower rank */
+		for (int i = 1; i < res; i++) {
+			typeof(q[0]) k = q[i];
+			int j = i;
+			for (; j > 0 && (q[j-1].level < k.level ||
+					(q[j-1].level == k.level && q[j-1].rank > k.rank)); j--)
+				q[j] = q[j-1];
+			q[j] = k;
+		}
+		for (int i = 0; i < res && i < max; i++) {
+			if (vectors)
+				vectors[i] = q[i].vec;
+			if (levels)
+				levels[i] = q[i].level;
 		}
 	}
 	host_unlock(h);

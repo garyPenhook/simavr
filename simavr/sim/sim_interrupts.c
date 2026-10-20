@@ -327,6 +327,38 @@ _avr_cpuint_level(avr_int_table_p table, avr_int_vector_t * v)
 }
 
 /*
+ * Rank within a level: smaller = higher priority. For level 0 this implements
+ * LVL0PRI wrapping (vector LVL0PRI+1 is highest); for NMI and level 1 it is
+ * simply the lowest vector address.
+ */
+static int
+_avr_cpuint_rank(avr_int_table_p table, avr_int_vector_t * v, int level)
+{
+	int M = table->max_vector ? table->max_vector + 1 : 1;
+	if (level == 0)
+		return (v->vector - 1 - table->cpuint_lvl0pri + 2 * M) % M;
+	return v->vector;
+}
+
+int
+avr_interrupt_dispatch_key(
+		avr_t * avr,
+		avr_int_vector_t * v,
+		int * level,
+		int * rank)
+{
+	avr_int_table_p table = &avr->interrupts;
+	if (avr->arch.flags & AVR_ARCH_F_CPUINT) {
+		*level = _avr_cpuint_level(table, v);
+		*rank = _avr_cpuint_rank(table, v, *level);
+	} else {
+		*level = 0;
+		*rank = v->vector;	// classic: lowest vector number first
+	}
+	return 0;
+}
+
+/*
  * Modern CPUINT interrupt dispatch (AVR_ARCH_F_CPUINT). Differs from classic:
  *   - The I bit is NOT cleared on entry and RETI does NOT set it; nesting is
  *     governed by the execution-level flags in CPUINT.STATUS.
@@ -355,8 +387,6 @@ avr_service_interrupts_modern(avr_t * avr)
 
 	avr_int_table_p table = &avr->interrupts;
 	uint8_t status = table->cpuint_status;
-	int M = table->max_vector ? table->max_vector + 1 : 1;
-
 	int cnt = avr_int_pending_get_read_size(&table->pending);
 	avr_int_vector_t * best = NULL;
 	int best_level = -1;
@@ -385,14 +415,7 @@ avr_service_interrupts_modern(avr_t * avr)
 				continue;
 		}
 
-		// Rank within a level: smaller = higher priority. For level 0 this
-		// implements LVL0PRI wrapping (vector LVL0PRI+1 is highest); for NMI
-		// and level 1 it is simply the lowest vector address.
-		int rank;
-		if (level == 0)
-			rank = (v->vector - 1 - table->cpuint_lvl0pri + 2 * M) % M;
-		else
-			rank = v->vector;
+		int rank = _avr_cpuint_rank(table, v, level);
 
 		if (level > best_level ||
 				(level == best_level && rank < best_rank)) {

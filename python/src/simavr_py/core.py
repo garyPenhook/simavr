@@ -416,12 +416,18 @@ class Simulator:
                                           "sreg": cpu.sreg, "r": list(cpu.r)})
         self._check(self._L.avr_host_set_cpu(self._handle(), c))
 
+    def pending_interrupt_levels(self) -> list[tuple[int, int]]:
+        """(vector, CPUINT level) raised and enabled but not yet taken, in dispatch order
+        (level 2 NMI, 1 LVL1VEC, 0 normal; classic cores are always 0). Only while paused.
+        Whether the first is taken next still depends on SREG.I and the executing level."""
+        vec = ffi.new("uint8_t[256]")
+        lvl = ffi.new("uint8_t[256]")
+        n = self._check(self._L.avr_host_pending_interrupts(self._handle(), vec, lvl, 256))
+        return [(vec[i], lvl[i]) for i in range(min(n, 256))]
+
     def pending_interrupts(self) -> list[int]:
-        """Vectors raised and enabled but not yet taken, ascending. Only while paused.
-        Whether one is taken next still depends on SREG.I and the CPUINT level."""
-        buf = ffi.new("uint8_t[256]")
-        n = self._check(self._L.avr_host_pending_interrupts(self._handle(), buf, 256))
-        return list(buf[0:min(n, 256)])
+        """Pending vectors in dispatch order (see pending_interrupt_levels)."""
+        return [v for v, _ in self.pending_interrupt_levels()]
 
     def mem_size(self, space: Space) -> int:
         n = ffi.new("uint32_t *")

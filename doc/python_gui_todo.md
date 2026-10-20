@@ -406,12 +406,14 @@ against DS40002205A 13.5.2), innermost level first (`NMI > LVL1 > LVL0`, or `non
 It is read on each refresh while stopped and left as-is while running.
 
 **Pending interrupts (slice 20, 2026-10-19):** `avr_host_pending_interrupts` returns the
-vectors the engine has queued (raised *and* enabled, not yet taken), ascending, only while
-paused. Python: `Simulator.pending_interrupts()`; the Interrupts pane shows
+vectors the engine has queued (raised *and* enabled, not yet taken) with their CPUINT level
+(2 NMI / 1 LVL1VEC / 0), in dispatch order (level desc, then LVL0PRI-relative rank; with
+LVL0RR the tail reorders as each is taken), only while paused. Python:
+`Simulator.pending_interrupt_levels()` / `pending_interrupts()`; the Interrupts pane shows
 `pending: 12 TCA0_OVF, ...` above the `flags set:` line (which is the raw INTFLAGS view,
 including flags whose enable bit is clear). A pending vector still needs SREG.I and a
-sufficient CPUINT level to be taken, so the pane does not claim it is next. Not done:
-per-vector level in the pending list, and dispatch order.
+sufficient CPUINT level to be taken, so the pane does not claim it is next. NMI/LVL1 entries
+are tagged `[NMI]`/`[LVL1]`.
 
 1. Breakpoints:
    * PC breakpoints

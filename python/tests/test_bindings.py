@@ -243,6 +243,24 @@ def test_pending_interrupts():
         s.unsubscribe(sub)
 
 
+def test_pending_interrupts_dispatch_order_and_level():
+    CPUINT_LVL1VEC = 0x0113     # CPUINT base 0x0110 + LVL1VEC offset 3
+    with sa.Simulator("atmega4809") as s:
+        s.load_flash(words(rjmp(-1)))
+        for u in (0, 1):
+            s.poke(USART0 + 0x20 * u + U_CTRLB, U_RXEN)
+            s.poke(USART0 + 0x20 * u + 0x05, 0x80)      # CTRLA.RXCIE
+            s.uart_send(u, "A")
+        c = s.cpu
+        s.cpu = sa.Cpu(c.pc, c.sp, c.sreg & 0x7F, c.r, c.cycle)    # I = 0
+        s.run_cycles(500)
+        (v0, l0), (v1, l1) = s.pending_interrupt_levels()
+        assert v0 < v1 and l0 == l1 == 0
+        s.poke(CPUINT_LVL1VEC, v1)                      # elevate the later vector
+        assert s.pending_interrupt_levels() == [(v1, 1), (v0, 0)]
+        assert s.pending_interrupts() == [v1, v0]
+
+
 def test_pending_interrupts_needs_enable():
     with sa.Simulator("atmega4809") as s:
         s.load_flash(words(rjmp(-1)))

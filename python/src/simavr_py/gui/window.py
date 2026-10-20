@@ -1359,7 +1359,8 @@ class InterruptPane(QWidget):
         self._exec = QLabel("executing: -")
         self._pending = QLabel("pending: -")
         self._pending.setWordWrap(True)
-        self._pending.setToolTip("Vectors raised and enabled but not yet taken (the engine's queue).\n"
+        self._pending.setToolTip("Vectors raised and enabled but not yet taken, in dispatch order\n"
+                                 "(NMI, then LVL1, then LVL0 by priority).\n"
                                  "Whether one is taken next depends on the I flag and the CPUINT level.")
         self._flags = QLabel("flags set: -")
         self._flags.setWordWrap(True)
@@ -1390,9 +1391,12 @@ class InterruptPane(QWidget):
                  for name, fl, en in rows if fl]
         return "flags set: " + (", ".join(parts) if parts else "none")
 
-    def pending_text(self, vectors: list[int]) -> str:
-        return "pending: " + (", ".join(vector_label(self._names, v) for v in vectors)
-                              if vectors else "none")
+    LEVEL_TAGS = {2: " [NMI]", 1: " [LVL1]"}
+
+    def pending_text(self, pending: list[tuple[int, int]]) -> str:
+        """pending = (vector, level) in dispatch order; level 0 is untagged."""
+        return "pending: " + (", ".join(vector_label(self._names, v) + self.LEVEL_TAGS.get(lv, "")
+                                        for v, lv in pending) if pending else "none")
 
     def set_sim(self, sim: Simulator | None):
         self._pairs = interrupt_flag_pairs(sim.mmcu) if sim is not None else ()
@@ -1435,7 +1439,7 @@ class InterruptPane(QWidget):
             return
         try:
             self._exec.setText(self.exec_text(sim.peek(self.CPUINT_STATUS)))
-            self._pending.setText(self.pending_text(sim.pending_interrupts()))
+            self._pending.setText(self.pending_text(sim.pending_interrupt_levels()))
             key = sim.cycle
             if self._pairs and key != self._flags_key:
                 self._flags_key = key
