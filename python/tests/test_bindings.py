@@ -102,6 +102,16 @@ def test_discovery():
     assert "atmega4809" in sa.cores()
 
 
+def test_core_list_includes_aliases():
+    """The MCU picker is built from cores(): a core's alias names (attiny13a is attiny13's second
+    name) must be listed, or an ELF built for them can not be selected."""
+    names = sa.cores()
+    assert "attiny13" in names and "attiny13a" in names
+    assert len(names) == len(set(names))
+    with sa.Simulator("attiny13a") as sim:
+        assert sim.mmcu == "attiny13a"
+
+
 def test_unknown_core():
     with pytest.raises(sa.NotFound, match="atmega9999"):
         sa.Simulator("atmega9999")

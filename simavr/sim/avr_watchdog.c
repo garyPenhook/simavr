@@ -29,6 +29,15 @@ static avr_cycle_count_t avr_watchdog_timer(
 {
 	avr_watchdog_t * p = (avr_watchdog_t *)param;
 
+	/* Interrupt and System Reset mode: a time-out while the previous
+	 * interrupt is still unserviced (WDIF set, WDE set) is a reset. */
+	if (p->exact && avr_regbit_get(avr, p->wde) && avr_regbit_get(avr, p->watchdog.raised)
+			&& avr_regbit_get(avr, p->watchdog.enable)) {
+		AVR_LOG(avr, LOG_TRACE,
+				"WATCHDOG: interrupt not serviced before next time-out. Resetting\n");
+		avr_regbit_set(avr, p->wdrf);
+		return TIMER_RESET;
+	}
 	if (avr_regbit_get(avr, p->watchdog.enable)) {
 		AVR_LOG(avr, LOG_TRACE, "WATCHDOG: timer fired.\n");
 		avr_raise_interrupt(avr, &p->watchdog);
@@ -94,10 +103,21 @@ static void avr_watchdog_set_cycle_count_and_timer(
 	}
 }
 
+static int avr_watchdog_always_on(avr_t * avr, avr_watchdog_t * p)
+{
+	return p->wdton_mask && !(avr->fuse[p->wdton_byte] & p->wdton_mask);
+}
+
 static void avr_watchdog_write(
 		avr_t * avr, avr_io_addr_t addr, uint8_t v, void * param)
 {
 	avr_watchdog_t * p = (avr_watchdog_t *)param;
+
+	// WDTON programmed: System Reset mode, WDE locked to 1 and WDTIE to 0
+	if (avr_watchdog_always_on(avr, p)) {
+		v |= 1 << p->wde.bit;
+		v &= ~(1 << p->watchdog.enable.bit);
+	}
 
 	uint8_t old_wde = avr_regbit_get(avr, p->wde);
 	uint8_t old_wdie = avr_regbit_get(avr, p->watchdog.enable);
@@ -106,7 +126,12 @@ static void avr_watchdog_write(
 	uint8_t was_enabled = (old_wde || old_wdie);
 
 	uint8_t old_v = avr->data[addr]; // allow gdb to see write...
+	uint8_t old_wdif = avr_regbit_get(avr, p->watchdog.raised);
 	avr_core_watch_write(avr, addr, v);
+
+	/* WDIF is cleared by writing a logic one to it (not by writing zero);
+	 * the write below must not let a stale/written value stick. */
+	uint8_t wdif_w1c = avr_regbit_from_value(avr, p->watchdog.raised, v);
 
 	if (old_wdce) {
 		uint8_t old_wdp = avr_regbit_get_array(avr, p->wdp, 4);
@@ -137,6 +162,15 @@ static void avr_watchdog_write(
 
 			avr_watchdog_set_cycle_count_and_timer(avr, p, was_enabled, -1);
 		}
+	}
+
+	if (p->exact) {
+		if (wdif_w1c) {
+			p->sw_clear = 1;
+			avr_clear_interrupt(avr, &p->watchdog);
+			p->sw_clear = 0;
+		} else
+			avr_regbit_setto(avr, p->watchdog.raised, old_wdif);
 	}
 }
 
@@ -173,7 +207,7 @@ static void avr_watchdog_irq_notify(
 	 * again when cleared (after servicing), value = 0
 	 */
 
-	if (!value && avr_regbit_get(avr, p->watchdog.raised) && avr_regbit_get(avr, p->wde)) {
+	if (!p->sw_clear && !value && avr_regbit_get(avr, p->watchdog.raised) && avr_regbit_get(avr, p->wde)) {
 		avr_regbit_clear(avr, p->watchdog.enable);
 	}
 }
@@ -192,6 +226,10 @@ static void avr_watchdog_reset(avr_io_t * port)
 		avr_regbit_set(avr, p->wde);
 		avr_regbit_set_array_from_value(avr, p->wdp, 4, 0);
 		
+		avr_watchdog_set_cycle_count_and_timer(avr, p, 0, 0);
+	} else if (avr_watchdog_always_on(avr, p)) {
+		// the "Watchdog always on" fuse starts the watchdog in System Reset mode
+		avr_regbit_set(avr, p->wde);
 		avr_watchdog_set_cycle_count_and_timer(avr, p, 0, 0);
 	}
 	/* TODO could now use the two pending/running IRQs to do the same

@@ -234,6 +234,18 @@ typedef struct avr_t {
 		avr_regbit_t		wdrf;
 	} reset_flags;
 
+	/*
+	 * Optional sleep model (the ATtiny13A uses it); a core that leaves both
+	 * unset keeps the original behaviour where SLEEP always sleeps and any
+	 * interrupt wakes the CPU.
+	 *  - sleep_enable: SLEEP only sleeps while this bit (SE) is set
+	 *  - sleep_source_active: called when an interrupt is requested during
+	 *    sleep; returns 0 if its source has no clock in the current sleep mode,
+	 *    in which case the request is dropped (its flag is not set, no wake-up)
+	 */
+	avr_regbit_t		sleep_enable;
+	int (*sleep_source_active)(struct avr_t * avr, struct avr_int_vector_t * vector);
+
 	// filled by the ELF data, this allow tracking of invalid jumps
 	uint32_t			codeend;
 
@@ -437,7 +449,7 @@ typedef struct avr_t {
 			void * param;
 			void * c;
 		} io[4];
-	} io_shared_io[4];
+	} io_shared_io[24];
 
     // SRAM tracepoint
     #define SRAM_TRACEPOINT_SIZE 16

@@ -39,6 +39,16 @@ typedef struct avr_watchdog_t {
 
 	avr_int_vector_t watchdog;	// watchdog interrupt
 
+	// optional "Watchdog always on" fuse: programmed (bit = 0) forces System Reset mode
+	// (WDE locked to 1, WDTIE to 0). wdton_mask == 0 means the core does not wire it.
+	uint8_t		wdton_byte, wdton_mask;
+
+	// datasheet-exact interrupt flag handling: WDIF cleared by writing a one, and a time-out with
+	// the previous interrupt still unserviced in Interrupt and System Reset mode resets the part.
+	// Opt-in so other classic cores keep their behaviour.
+	uint8_t		exact;
+	uint8_t		sw_clear;	// WDIF is being cleared by software (not by servicing the vector)
+
 	avr_cycle_count_t	cycle_count;
 } avr_watchdog_t;
 

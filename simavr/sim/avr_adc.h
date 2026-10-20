@@ -125,6 +125,14 @@ typedef struct avr_adc_t {
 	avr_regbit_t	adts[4];	// Timing Source
 	avr_adts_type	adts_op[16];    // ADTS type
 	uint8_t		adts_mode;      // the extracted ADTS mode
+	// datasheet-exact conversion: 13 (first: 25) ADC clocks and a single-ended result of
+	// VIN * 1024 / VREF (the original model takes ~2x as long and scales by 1023, a LSB off);
+	// opt-in so other cores keep their results
+	uint8_t		exact;
+	// optional: interrupt vector whose flag, when it rises, auto-triggers a conversion,
+	// per ADTS value (0 = not wired); the ATtiny13A wires its six non free-running sources
+	uint8_t		adts_vec[16];
+	struct avr_irq_t *adts_irq;	// source currently listened to
 	avr_regbit_t 	bin;		// Bipolar Input Mode (tinyx5 have it)
 	avr_regbit_t 	ipr;		// Input Polarity Reversal (tinyx5 have it)
 
@@ -146,7 +154,7 @@ typedef struct avr_adc_t {
 
         uint8_t                 current_muxi;
         uint8_t                 current_refi;
-        uint8_t                 current_prescale;
+        uint16_t                current_prescale;	// ADC clock in CPU cycles; /128 times 14 does not fit a byte
         struct {
                 unsigned int bipolar : 1;      // BIN bit.
                 unsigned int negate : 1;       // IPR bit.

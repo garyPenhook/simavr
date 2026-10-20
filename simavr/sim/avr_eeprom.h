@@ -46,6 +46,18 @@ typedef struct avr_eeprom_t {
 	avr_regbit_t 	eere;	// eeprom read enable
 	
 	avr_int_vector_t ready;	// EERIE vector
+
+	/*
+	 * Opt-in datasheet timing (the ATtiny13A sets it): EEPE stays set for the
+	 * 3.4 ms / 1.8 ms programming time, EEPM selects erase-only / write-only,
+	 * the ready interrupt is level-like (raised whenever EERIE is set and the
+	 * EEPROM is idle) and the CPU is halted 4 cycles on a read, 2 on a write.
+	 */
+	uint8_t		timed;
+	uint8_t		busy;
+	uint8_t		w_mode;
+	uint8_t		w_data;
+	uint16_t	w_addr;
 } avr_eeprom_t;
 
 void avr_eeprom_init(avr_t * avr, avr_eeprom_t * port);

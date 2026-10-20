@@ -86,6 +86,8 @@ avr_ioport_read(
 
 	// made to trigger potential watchpoints
 	v = avr_core_watch_read(avr, addr);
+	if (p->r_didr)		// digital input buffer disabled: the pin reads as zero (the pin state itself is kept)
+		v &= ~avr->data[p->r_didr];
 	return v;
 }
 

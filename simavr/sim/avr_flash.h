@@ -50,6 +50,10 @@ typedef struct avr_flash_t {
 	avr_regbit_t sigrd;		// signature (and serial number) byte read
 
 	avr_int_vector_t flash;	// Interrupt vector
+
+	// optional "SPM enable" fuse (ATtiny13A SELFPRGEN): while it is unprogrammed (bit = 1)
+	// SPMCSR can not be written. enable_fuse_mask == 0 means SPM is always enabled.
+	uint8_t		enable_fuse_byte, enable_fuse_mask;
 } avr_flash_t;
 
 /* Set if the flash supports a Read While Write section */

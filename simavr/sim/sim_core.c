@@ -1161,6 +1161,7 @@ run_one_again:
 					 * in SLPCTRL (classic cores sleep unconditionally). */
 					if ((!(avr->arch.flags & AVR_ARCH_F_MODERN) ||
 							avr->arch.sleep_enabled) &&
+						(!avr->sleep_enable.reg || avr_regbit_get(avr, avr->sleep_enable)) &&
 						(!avr_has_pending_interrupts(avr) || !avr->sreg[S_I]))
 						avr->state = cpu_Sleeping;
 				}	break;

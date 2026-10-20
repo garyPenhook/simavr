@@ -171,6 +171,11 @@ avr_raise_interrupt(
 		printf("IRQ%d raising (enabled %d)\n",
 			vector->vector, avr_regbit_get(avr, vector->enable));
 
+	// a source whose clock is stopped by the current sleep mode can not request anything
+	if (avr->state == cpu_Sleeping && avr->sleep_source_active &&
+			!avr->sleep_source_active(avr, vector))
+		return 0;
+
 	// always mark the 'raised' flag to one, even if the interrupt is disabled
 	// this allow "polling" for the "raised" flag, like for non-interrupt
 	// driven UART and so so. These flags are often "write one to clear"

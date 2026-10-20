@@ -25,6 +25,10 @@
 #include "sim_time.h"
 #include "avr_adc.h"
 
+static void
+avr_adc_write_adcsra(
+		struct avr_t * avr, avr_io_addr_t addr, uint8_t v, void * param);
+
 static avr_cycle_count_t
 avr_adc_int_raise(
 		struct avr_t * avr, avr_cycle_count_t when, void * param)
@@ -133,6 +137,16 @@ avr_adc_convert(struct avr_t * avr, avr_cycle_count_t when, void * param)
                         if (reg < 0 || reg > (int32_t)0x3ff)
                                 clipped = 0x1ff;
                 }
+        } else if (p->exact) {
+            // ADC = VIN * 1024 / VREF, 0x3FF being VREF minus one LSB (datasheet "ADC Conversion Result")
+            reg = (reg * (int32_t)1024) / vref;
+            if (reg < 0 || reg > (int32_t)0x3ff) {
+                if (reg > 1024 || reg < 0) {
+                    clipped = 0x3ff;
+                } else {
+                    reg = 0x3ff;	// exactly full scale is not an error
+                }
+            }
         } else {
             reg = (reg * (int32_t)0x3ff) / vref;	// scale to 10 bits
             if (reg < 0 || reg > (int32_t)0x3ff)
@@ -155,6 +169,39 @@ avr_adc_convert(struct avr_t * avr, avr_cycle_count_t when, void * param)
         avr_cycle_timer_register(avr, p->current_prescale * 11,
                                  avr_adc_int_raise, p);
         return 0;
+}
+
+/*
+ * The ADC is auto triggered by the positive edge of an interrupt flag: the
+ * source vector's "pending" IRQ goes 0 -> 1 when the flag rises and back to 0
+ * when it is cleared, so a flag that is left set does not trigger again.
+ */
+static void
+avr_adc_start_auto(
+		avr_adc_t * p)
+{
+	avr_t * avr = p->io.avr;
+
+	if (!avr_regbit_get(avr, p->adate) || avr_regbit_get(avr, p->adsc))
+		return;		// a trigger during a running conversion is ignored
+	uint8_t addr = p->adsc.reg;
+	if (addr) {
+		uint8_t val = avr->data[addr] | (1 << p->adsc.bit);
+		if (p->adc.raised.reg == addr)
+			val &= ~(1 << p->adc.raised.bit);
+		// write ADSC to ADCSRA
+		avr_adc_write_adcsra(avr, addr, val, p);
+	}
+}
+
+static void
+avr_adc_src_notify(
+		struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avr_adc_t * p = (avr_adc_t *)param;
+
+	if (value && !irq->value)
+		avr_adc_start_auto(p);
 }
 
 /*
@@ -214,16 +261,28 @@ avr_adc_configure_trigger(
 		"psc_module_2_sync_signal",
 	};
 	
+	// the source is only swapped when it changes: this runs from inside the source's own
+	// notify (a trigger writes ADCSRA), and re-registering would free the hook being walked
+	avr_irq_t * want_src = NULL;
+
 	if( adate ) {
 		uint8_t adts = avr_regbit_get_array(avr, p->adts, ARRAY_SIZE(p->adts));
 		p->adts_mode = p->adts_op[adts];
-		
+
 		switch(p->adts_mode) {
 			case avr_adts_free_running: {
 				// do nothing at free running mode
 			}	break;
-			// TODO: implement the other auto trigger modes
 			default: {
+				// a core that wires the source (adts_vec) gets the real trigger: the
+				// rising edge of that interrupt flag
+				avr_irq_t * src = p->adts_vec[adts] ?
+						avr_get_interrupt_irq(avr, p->adts_vec[adts]) : NULL;
+				if (src) {
+					want_src = src + AVR_INT_IRQ_PENDING;
+					break;
+				}
+				// TODO: implement the other auto trigger modes
 				AVR_LOG(avr, LOG_WARNING,
 						"ADC: unimplemented auto trigger mode: %s\n",
 						auto_trigger_names[p->adts_mode]);
@@ -234,7 +293,15 @@ avr_adc_configure_trigger(
 		// TODO: remove previously configured auto triggers
 		p->adts_mode = avr_adts_none;
 	}
-	
+
+	if (want_src != p->adts_irq) {
+		if (p->adts_irq)
+			avr_irq_unregister_notify(p->adts_irq, avr_adc_src_notify, p);
+		if (want_src)
+			avr_irq_register_notify(want_src, avr_adc_src_notify, p);
+		p->adts_irq = want_src;
+	}
+
 	if( old_adts != p->adts_mode )
 		AVR_LOG(avr, LOG_TRACE, "ADC: auto trigger configured: %s\n",
 				auto_trigger_names[p->adts_mode]);
@@ -306,10 +373,19 @@ avr_adc_write_adcsra(
 		if (p->first)
 			AVR_LOG(avr, LOG_TRACE, "ADC: starting at %uKHz\n",
                                 (avr->frequency >> div) / 13 / 100);
+		// one ADC clock in CPU cycles: the sample is taken 2 (14 for the first
+		// conversion, which initialises the ADC) clocks in, the result 11 clocks later
 		div = (1 << div);
-		div *= (p->first ? 14 : 2);	// first conversion is longer
-                p->current_prescale = div;
-                avr_cycle_timer_register(avr, div, avr_adc_convert, p);
+		if (p->exact) {
+			p->current_prescale = div;
+			avr_cycle_timer_register(avr, div * (p->first ? 14 : 2), avr_adc_convert, p);
+		} else {
+			// original model, kept as is for the other classic cores: the 11 ADC clocks are
+			// scaled by the 2 / 14 start-up factor too, and the product is stored in a byte
+			div *= (p->first ? 14 : 2);
+			p->current_prescale = (uint8_t)div;
+			avr_cycle_timer_register(avr, div, avr_adc_convert, p);
+		}
                 p->current_extras.bipolar =
                         p->bin.reg && avr_regbit_get(avr, p->bin);
                 p->current_extras.negate =
@@ -333,7 +409,6 @@ avr_adc_irq_notify(
 		struct avr_irq_t * irq, uint32_t value, void * param)
 {
 	avr_adc_t * p = (avr_adc_t *)param;
-	avr_t * avr = p->io.avr;
 
 	switch (irq->irq) {
 		case ADC_IRQ_ADC0 ... ADC_IRQ_ADC15: {
@@ -343,26 +418,9 @@ avr_adc_irq_notify(
 			p->temp = value;
 		}	break;
 		case ADC_IRQ_IN_TRIGGER: {
-			if (avr_regbit_get(avr, p->adate)) {
-				// start a conversion only if it's not running
-				// otherwise ignore the trigger
-				if(!avr_regbit_get(avr, p->adsc) ) {
-			  		uint8_t addr = p->adsc.reg;
-					if (addr) {
-						uint8_t val = avr->data[addr] | (1 << p->adsc.bit);
-                                                if (p->adc.raised.reg == addr) {
-                                                    uint8_t mask;
-
-                                                    mask = 1 << p->adc.raised.bit;
-                                                    val &= ~mask;
-                                                }
-
-						// write ADSC to ADCSRA
-
-						avr_adc_write_adcsra(avr, addr, val, param);
-					}
-				}
-			}
+			// start a conversion only if it's not running
+			// otherwise ignore the trigger
+			avr_adc_start_auto(p);
 		}
                 break;
 	}

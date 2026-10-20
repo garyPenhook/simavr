@@ -95,6 +95,127 @@ avr_eeprom_write(
 	avr_regbit_clear(avr, p->eere);
 }
 
+/*
+ * Datasheet timing (DS40002307A 5.3, 5.5.3), selected with .timed.
+ */
+
+#define EE_RDY_RETRY_CYCLES	64
+
+static avr_cycle_count_t avr_eeprom_ready_retry(struct avr_t *, avr_cycle_count_t, void *);
+
+static avr_cycle_count_t
+avr_eeprom_done(
+		struct avr_t * avr,
+		avr_cycle_count_t when,
+		void * param)
+{
+	avr_eeprom_t * p = (avr_eeprom_t *)param;
+
+	switch (p->w_mode) {
+		case 1:		// erase only
+			p->eeprom[p->w_addr] = 0xff;
+			break;
+		case 2:		// write only: programming can only clear bits
+			p->eeprom[p->w_addr] &= p->w_data;
+			break;
+		default:	// erase and write
+			p->eeprom[p->w_addr] = p->w_data;
+			break;
+	}
+	p->busy = 0;
+	avr_regbit_clear(avr, p->eepe);
+	// the ready interrupt is requested for as long as EERIE is set and the EEPROM is idle
+	if (!avr_raise_interrupt(avr, &p->ready) && avr_regbit_get(avr, p->ready.enable))
+		avr_cycle_timer_register(avr, EE_RDY_RETRY_CYCLES, avr_eeprom_ready_retry, p);
+	return 0;
+}
+
+/* the request was dropped (the sleep mode has no clock for it): ask again until it is accepted */
+static avr_cycle_count_t
+avr_eeprom_ready_retry(
+		struct avr_t * avr,
+		avr_cycle_count_t when,
+		void * param)
+{
+	avr_eeprom_t * p = (avr_eeprom_t *)param;
+
+	if (p->busy || !avr_regbit_get(avr, p->ready.enable))
+		return 0;
+	return avr_raise_interrupt(avr, &p->ready) ? 0 : when + EE_RDY_RETRY_CYCLES;
+}
+
+static void
+avr_eeprom_write_timed(
+		avr_t * avr,
+		avr_io_addr_t addr,
+		uint8_t v,
+		void * param)
+{
+	avr_eeprom_t * p = (avr_eeprom_t *)param;
+	uint8_t eempe = avr_regbit_get(avr, p->eempe);
+	uint8_t old_eerie = avr_regbit_get(avr, p->ready.enable);
+	uint8_t old = avr->data[addr];
+
+	avr_core_watch_write(avr, addr, v);
+
+	if (p->busy) {
+		// EEPMn can not change, and EEPE / EEMPE can not be set again, while programming
+		for (int i = 0; i < 2; i++)
+			avr_regbit_setto(avr, p->eepm[i], (old >> p->eepm[i].bit) & 1);
+		avr_regbit_set(avr, p->eepe);
+		avr_regbit_setto(avr, p->eempe, eempe);
+	} else if (!eempe && avr_regbit_get(avr, p->eempe)) {
+		avr_cycle_timer_register(avr, 4, avr_eempe_clear, p);
+	}
+
+	uint16_t ee_addr = p->r_eearh ?
+			avr->data[p->r_eearl] | (avr->data[p->r_eearh] << 8) : avr->data[p->r_eearl];
+	if (ee_addr >= p->size)
+		ee_addr &= p->size - 1;
+
+	if (!p->busy && eempe && ((v >> p->eepe.bit) & 1)) {		// write operation
+		uint8_t mode = avr_regbit_get(avr, p->eepm[0]) | (avr_regbit_get(avr, p->eepm[1]) << 1);
+
+		avr_regbit_clear(avr, p->eempe);
+		avr_cycle_timer_cancel(avr, avr_eempe_clear, p);
+		if (mode != 3) {		// 0b11 is reserved: nothing happens
+			p->busy = 1;
+			p->w_mode = mode;
+			p->w_addr = ee_addr;
+			p->w_data = avr->data[p->r_eedr];
+			avr_regbit_set(avr, p->eepe);
+			avr->cycle += 2;	// the CPU is halted for two cycles
+			avr_cycle_timer_register_usec(avr, mode ? 1800 : 3400, avr_eeprom_done, p);
+		}
+	}
+	if (!p->busy && ((v >> p->eere.bit) & 1)) {			// read operation
+		avr->data[p->r_eedr] = p->eeprom[ee_addr];
+		avr->cycle += 4;		// the CPU is halted for four cycles
+	}
+
+	// EERE is a strobe, EEPE reads back as 1 only while programming
+	avr_regbit_clear(avr, p->eere);
+	if (!p->busy)
+		avr_regbit_clear(avr, p->eepe);
+
+	if (!old_eerie && avr_regbit_get(avr, p->ready.enable) && !p->busy)
+		avr_raise_interrupt(avr, &p->ready);
+}
+
+/* servicing the ready interrupt does not clear its cause: request it again while EERIE is set and idle */
+static void
+avr_eeprom_ready_notify(
+		struct avr_irq_t * irq,
+		uint32_t value,
+		void * param)
+{
+	avr_eeprom_t * p = (avr_eeprom_t *)param;
+	avr_t * avr = p->io.avr;
+
+	if (!value && !p->busy && avr_regbit_get(avr, p->ready.enable))
+		avr_raise_interrupt(avr, &p->ready);
+}
+
 static int
 avr_eeprom_ioctl(
 		struct avr_io_t * port,
@@ -145,8 +266,20 @@ avr_eeprom_dealloc(
 	p->eeprom = NULL;
 }
 
+static void
+avr_eeprom_reset(
+		struct avr_io_t * port)
+{
+	avr_eeprom_t * p = (avr_eeprom_t *)port;
+
+	p->busy = 0;
+	if (p->timed)
+		avr_irq_register_notify(p->ready.irq + AVR_INT_IRQ_PENDING, avr_eeprom_ready_notify, p);
+}
+
 static	avr_io_t	_io = {
 	.kind = "eeprom",
+	.reset = avr_eeprom_reset,
 	.ioctl = avr_eeprom_ioctl,
 	.dealloc = avr_eeprom_dealloc,
 };
@@ -166,6 +299,9 @@ avr_eeprom_init(
 	avr_register_io(avr, &p->io);
 	avr_register_vector(avr, &p->ready);
 
-	avr_register_io_write(avr, p->r_eecr, avr_eeprom_write, p);
+	if (p->timed)
+		avr_register_io_write(avr, p->r_eecr, avr_eeprom_write_timed, p);
+	else
+		avr_register_io_write(avr, p->r_eecr, avr_eeprom_write, p);
 }
 

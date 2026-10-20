@@ -157,6 +157,8 @@ typedef struct avr_timer_comp_t {
 		avr_regbit_t		com_pin;		// where comparator output is connected
 		uint64_t			comp_cycles;
                 avr_regbit_t            foc;                    // "force compare match" strobe
+		uint16_t			ocr_act;		// strict: active (double-buffered) OCR
+		uint8_t				ocr_pend;		// strict: OCR written, not yet latched
 } avr_timer_comp_t, *avr_timer_comp_p;
 
 enum {
@@ -197,6 +199,22 @@ typedef struct avr_timer_t {
 	avr_regbit_t	ices;		// input capture edge select
 
 	avr_timer_comp_t comp[AVR_TIMER_COMP_COUNT];
+
+	/*
+	 * Opt-in datasheet-exact PWM (the ATtiny13A sets it): dual-slope period
+	 * of 2*TOP, OCRx latched at TOP (phase correct) / BOTTOM (fast PWM), the
+	 * reserved COM0x=1 PWM encodings left disconnected, and a TCNT write
+	 * blocking the next compare match. Cores that leave it clear keep the
+	 * original (single-slope, immediate-OCR) behaviour.
+	 */
+	uint8_t			strict;
+	uint8_t			down;		// strict dual-slope: counting down
+	uint8_t			block_cmp;	// strict: TCNT was just written
+	uint8_t			restart;	// strict: re-timing at the current count (PSR10), not a TCNT write
+	uint16_t		cur_top;	// strict dual-slope: TOP of the running period
+	avr_regbit_t	psr, tsm;	// GTCCR prescaler reset / timer sync mode
+	uint8_t			halted;		// strict: TSM holds the counter
+	uint16_t		halt_tcnt;
 
 	avr_int_vector_t overflow;	// overflow
 	avr_int_vector_t icr;	// input capture

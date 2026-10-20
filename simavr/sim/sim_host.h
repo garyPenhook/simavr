@@ -95,7 +95,8 @@ enum {
 int
 avr_host_api_version(void);
 
-/* Cores compiled into this libsimavr (same set as run_avr --list-cores). */
+/* Core names compiled into this libsimavr (same set as run_avr --list-cores). Every alias of a
+ * core is listed, so a core with two names (attiny13 / attiny13a) appears twice. */
 int
 avr_host_core_count(void);
 const char *

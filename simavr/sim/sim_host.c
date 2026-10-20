@@ -593,18 +593,26 @@ int
 avr_host_core_count(void)
 {
 	int n = 0;
-	while (avr_kind[n])
-		n++;
+	for (int k = 0; avr_kind[k]; k++)
+		for (int i = 0; i < (int)(sizeof(avr_kind[k]->names) / sizeof(avr_kind[k]->names[0]))
+				&& avr_kind[k]->names[i]; i++)
+			n++;
 	return n;
 }
 
+/* every alias of every core is listed (attiny13 and attiny13a are one core, two names) */
 const char *
 avr_host_core_name(
 		int index)
 {
-	if (index < 0 || index >= avr_host_core_count())
+	if (index < 0)
 		return NULL;
-	return avr_kind[index]->names[0];
+	for (int k = 0; avr_kind[k]; k++)
+		for (int i = 0; i < (int)(sizeof(avr_kind[k]->names) / sizeof(avr_kind[k]->names[0]))
+				&& avr_kind[k]->names[i]; i++)
+			if (index-- == 0)
+				return avr_kind[k]->names[i];
+	return NULL;
 }
 
 static avr_host_t *

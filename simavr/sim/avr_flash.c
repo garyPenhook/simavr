@@ -46,6 +46,9 @@ avr_flash_write(
 {
 	avr_flash_t * p = (avr_flash_t *)param;
 
+	if (p->enable_fuse_mask && (avr->fuse[p->enable_fuse_byte] & p->enable_fuse_mask))
+		return;		// the SPM enable fuse is unprogrammed: SPMCSR ignores writes
+
 	avr_core_watch_write(avr, addr, v);
 
 	// printf("** %s %02x\n", __func__, v);
