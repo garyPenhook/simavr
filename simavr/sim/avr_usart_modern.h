@@ -53,6 +53,18 @@ enum {
 	USARTR_BAUDH = 0x09,
 };
 
+/*
+ * Extra (modern-only) IRQ after the classic UART_IRQ_* set: what the transmitter
+ * does to its TXD pin, value bit 0 = line level, bit 1 = the transmitter
+ * overrides the pin (CTRLB.TXEN set, or a frame still being shifted out). The
+ * level follows the real frame: idle high, Start low, data LSB first, optional
+ * parity, Stop high. PORTMUX routes it to PB2 / PA1 etc.
+ */
+#define USART_MODERN_IRQ_TXD_PIN	UART_IRQ_COUNT
+#define USART_MODERN_IRQ_COUNT		(UART_IRQ_COUNT + 1)
+
+#define USART_TXQ_SIZE	64	/* bytes waiting to be shifted onto the TXD pin */
+
 typedef struct avr_usart_modern_t {
 	avr_io_t	io;
 	char		name;
@@ -68,6 +80,14 @@ typedef struct avr_usart_modern_t {
 	usart_rx_fifo_t	rx;		// bytes received from the outside, awaiting read
 	uint8_t			tx_data;	// last byte written, completes on tx_done
 	uint8_t			tx_loopback;	// deliver tx_data into RX path on tx_done
+
+	/* TXD pin waveform: queued bytes, the frame being shifted (bit 0 first),
+	 * and the last pin state published. */
+	uint8_t			txq[USART_TXQ_SIZE];
+	uint8_t			txq_head, txq_count;
+	uint16_t		frame_bits;
+	uint8_t			frame_len, frame_pos;	// frame_pos == frame_len: not shifting
+	uint8_t			pin_state;
 } avr_usart_modern_t;
 
 /*

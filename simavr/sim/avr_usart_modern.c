@@ -95,6 +95,102 @@ static uint32_t usart_frame_cycles(avr_usart_modern_t *p)
 	return frame ? frame : 80;
 }
 
+static uint32_t usart_bit_cycles(avr_usart_modern_t *p)
+{
+	/* usart_frame_cycles() is ten bit times (an 8N1 frame). */
+	uint32_t b = usart_frame_cycles(p) / 10;
+	return b ? b : 1;
+}
+
+/* ---- TXD pin waveform ---- */
+
+/* CTRLC (DS40002205A 24.5.8): PMODE[5:4], SBMODE[3], CHSIZE[2:0]. */
+#define PMODE_gm	0x30
+#define PMODE_EVEN	0x20
+#define PMODE_ODD	0x30
+#define SBMODE_bm	0x08
+#define CHSIZE_gm	0x07
+
+static void usart_pin_update(avr_usart_modern_t *p)
+{
+	avr_t *avr = p->io.avr;
+	int shifting = p->frame_pos < p->frame_len;
+	int active = (avr->data[p->r_ctrlb] & TXEN_bm) || shifting;
+	int level = shifting ? (p->frame_bits >> p->frame_pos) & 1 : 1;
+	uint8_t st = (active << 1) | level;
+
+	if (st != p->pin_state) {
+		p->pin_state = st;
+		avr_raise_irq(p->io.irq + USART_MODERN_IRQ_TXD_PIN, st);
+	}
+}
+
+/* Build the next queued byte into frame_bits: Start, data, [parity], Stop(s). */
+static int usart_start_frame(avr_usart_modern_t *p)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t ctrlc = avr->data[p->r_ctrlc];
+	/* 9-bit characters need TXDATAH, which is not modelled: sent as 8 bits. */
+	int nbits = (ctrlc & CHSIZE_gm) <= 2 ? 5 + (ctrlc & CHSIZE_gm) : 8;
+	uint8_t data;
+	uint16_t bits = 0;
+	int n = 1;			/* bit 0 is the Start bit, low */
+
+	if (!p->txq_count)
+		return 0;
+	data = p->txq[p->txq_head];
+	p->txq_head = (p->txq_head + 1) % USART_TXQ_SIZE;
+	p->txq_count--;
+
+	data &= (1u << nbits) - 1;
+	bits |= (uint16_t)data << n;
+	n += nbits;
+	if ((ctrlc & PMODE_gm) == PMODE_EVEN || (ctrlc & PMODE_gm) == PMODE_ODD) {
+		int ones = __builtin_popcount(data);
+		/* Even parity makes the total count of ones (data + parity) even. */
+		int parity = (ctrlc & PMODE_gm) == PMODE_EVEN ? (ones & 1) : !(ones & 1);
+		bits |= (uint16_t)parity << n++;
+	}
+	bits |= 1u << n++;		/* Stop bit */
+	if (ctrlc & SBMODE_bm)
+		bits |= 1u << n++;	/* second Stop bit */
+	p->frame_bits = bits;
+	p->frame_len = n;
+	p->frame_pos = 0;
+	return 1;
+}
+
+static avr_cycle_count_t usart_pin_tick(struct avr_t *avr, avr_cycle_count_t when, void *param);
+
+static uint32_t usart_bit_cycles(avr_usart_modern_t *p);
+
+static void usart_pin_kick(avr_usart_modern_t *p)
+{
+	if (p->frame_pos < p->frame_len)
+		return;			/* already shifting; the tick chains the next frame */
+	if (usart_start_frame(p)) {
+		usart_pin_update(p);
+		avr_cycle_timer_register(p->io.avr, usart_bit_cycles(p), usart_pin_tick, p);
+	}
+}
+
+static avr_cycle_count_t
+usart_pin_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
+{
+	avr_usart_modern_t *p = (avr_usart_modern_t *)param;
+
+	p->frame_pos++;
+	if (p->frame_pos >= p->frame_len) {
+		/* Frame done: the next one follows immediately, else the line idles. */
+		if (!usart_start_frame(p)) {
+			usart_pin_update(p);	/* idle high; releases the pin if TXEN is off */
+			return 0;
+		}
+	}
+	usart_pin_update(p);
+	return when + usart_bit_cycles(p);
+}
+
 /* ---- transmit ---- */
 
 static avr_cycle_count_t
@@ -121,6 +217,13 @@ avr_usart_modern_txdata_write(struct avr_t *avr, avr_io_addr_t addr,
 
 	if (!(avr->data[p->r_ctrlb] & TXEN_bm))
 		return;
+
+	/* Queue the byte for the TXD pin waveform (the wire IRQ below is instant). */
+	if (p->txq_count < USART_TXQ_SIZE) {
+		p->txq[(p->txq_head + p->txq_count) % USART_TXQ_SIZE] = v;
+		p->txq_count++;
+		usart_pin_kick(p);
+	}
 
 	/* Emit on the wire immediately. */
 	p->tx_data = v;
@@ -208,22 +311,38 @@ avr_usart_modern_ctrla_write(struct avr_t *avr, avr_io_addr_t addr,
 }
 
 static void
+avr_usart_modern_ctrlb_write(struct avr_t *avr, avr_io_addr_t addr,
+							 uint8_t v, void *param)
+{
+	avr_usart_modern_t *p = (avr_usart_modern_t *)param;
+	avr_core_watch_write(avr, p->r_ctrlb, v);
+	/* Disabling TXEN takes effect once the frame in flight has finished. */
+	usart_pin_update(p);
+}
+
+static void
 avr_usart_modern_reset(avr_io_t *io)
 {
 	avr_usart_modern_t *p = (avr_usart_modern_t *)io;
 	avr_t *avr = p->io.avr;
 	usart_rx_fifo_reset(&p->rx);
+	avr_cycle_timer_cancel(avr, usart_pin_tick, p);
+	p->txq_head = p->txq_count = 0;
+	p->frame_len = p->frame_pos = 0;
+	p->pin_state = 0;
+	avr->data[p->r_ctrlc] = 0x03;	/* reset: asynchronous, no parity, 1 stop, 8 bit */
 	/* Data register starts empty. */
 	avr->data[p->r_status] = DREIF_bm;
 	avr_irq_register_notify(p->io.irq + UART_IRQ_INPUT,
 							avr_usart_modern_irq_input, p);
 }
 
-static const char *irq_names[UART_IRQ_COUNT] = {
+static const char *irq_names[USART_MODERN_IRQ_COUNT] = {
 	[UART_IRQ_INPUT] = "8<usart_in",
 	[UART_IRQ_OUTPUT] = "8>usart_out",
 	[UART_IRQ_OUT_XON] = "<usart_xon",
 	[UART_IRQ_OUT_XOFF] = "<usart_xoff",
+	[USART_MODERN_IRQ_TXD_PIN] = ">usart_txd_pin",
 };
 
 static avr_io_t _io = {
@@ -277,11 +396,12 @@ avr_usart_modern_init(
 	avr_register_vector(avr, &p->dre);
 	avr_register_vector(avr, &p->txc);
 
-	avr_io_setirqs(&p->io, AVR_IOCTL_UART_GETIRQ(p->name), UART_IRQ_COUNT, NULL);
+	avr_io_setirqs(&p->io, AVR_IOCTL_UART_GETIRQ(p->name), USART_MODERN_IRQ_COUNT, NULL);
 
 	avr_register_io_write(avr, p->r_txdatal, avr_usart_modern_txdata_write, p);
 	avr_register_io_read(avr, p->r_rxdatal, avr_usart_modern_rxdatal_read, p);
 	avr_register_io_read(avr, p->r_rxdatah, avr_usart_modern_rxdatah_read, p);
 	avr_register_io_write(avr, p->r_status, avr_usart_modern_status_write, p);
 	avr_register_io_write(avr, p->r_ctrla, avr_usart_modern_ctrla_write, p);
+	avr_register_io_write(avr, p->r_ctrlb, avr_usart_modern_ctrlb_write, p);
 }

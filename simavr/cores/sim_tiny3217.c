@@ -35,6 +35,14 @@
 #define _SFR_IO16(x)	(x)
 #include "avr/iotn3217.h"
 
+/* DS40002205A Table 5-1 / PORTMUX.CTRLC: TCA0 WOn default pin, alternate pin. */
+#define SIM_PORTMUX_TCA0_WO { { { 'B', 0 }, { 'B', 3 } }, \
+                              { { 'B', 1 }, { 'B', 4 } }, \
+                              { { 'B', 2 }, { 'B', 5 } } }
+
+/* DS40002205A Table 5-1 / PORTMUX.CTRLB: USART0 TxD default (PB2), alternate (PA1). */
+#define SIM_PORTMUX_USART0_TXD { { 'B', 2 }, { 'A', 1 } }
+
 #include "sim_tinyx1.h"
 
 avr_kind_t tiny3217 = {

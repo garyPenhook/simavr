@@ -946,3 +946,30 @@ def test_run_for_and_run_to(tmp_path):
     r = subprocess.run([sys.executable, "-c", RUNTO_SCRIPT, str(elf)], env=env,
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_help_menu():
+    code = """
+import os
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+from PySide6.QtWidgets import QApplication
+from simavr_py.gui.window import MainWindow
+from simavr_py.gui.help import TOPICS, HelpDialog
+app = QApplication([])
+win = MainWindow(None, 0)
+menus = {a.text().replace("&", ""): a for a in win.menuBar().actions()}
+assert "Help" in menus
+acts = {a.text().replace("&", "") for a in menus["Help"].menu().actions()}
+assert {"Contents", "About"} <= acts
+win.show_help()
+h = win._help
+assert h.isVisible() and h._list.count() == len(TOPICS)
+for i in range(len(TOPICS)):
+    h._list.setCurrentRow(i)
+    assert h._view.toPlainText().strip()
+win.show_help(topic="Timeline")
+assert h._list.currentItem().text() == "Timeline" and win._help is h
+"""
+    import subprocess, sys
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

@@ -35,6 +35,7 @@ from ..disasm import window as disasm_window
 from ..lines import LineTable, read_elf_lines
 from ..symbols import SymbolTable, read_elf_symbols
 from .board import BoardCanvas
+from .help import HelpDialog
 from .timeline import TimelineView
 
 SESSION_VERSION = 5          # 5 added "timeline", 4 added "watchpoints", 3 "breakpoints", 2 "board"; older files still load
@@ -1610,6 +1611,16 @@ class MainWindow(QMainWindow):
             act.triggered.connect(slot)
             menu.addAction(act)
 
+        self._help: HelpDialog | None = None
+        hmenu = self.menuBar().addMenu("&Help")
+        act = QAction("&Contents", self)
+        act.setShortcut("F1")
+        act.triggered.connect(self.show_help)
+        hmenu.addAction(act)
+        act = QAction("&About", self)
+        act.triggered.connect(self.show_about)
+        hmenu.addAction(act)
+
         tb = self.addToolBar("Run")
         self._acts = {}
         for key, label, slot in (("open", "Open…", self.open_dialog),
@@ -1638,6 +1649,21 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
         self._timer.start(REFRESH_MS)
+
+    def show_help(self, *_, topic: str | None = None):
+        if self._help is None:
+            self._help = HelpDialog(self, topic)
+        elif topic is not None:
+            self._help._list.setCurrentRow(HelpDialog.index_of(topic))
+        self._help.show()
+        self._help.raise_()
+        self._help.activateWindow()
+
+    def show_about(self, *_):
+        QMessageBox.about(self, "About simavr GUI",
+                          "simavr GUI: a front end for the simavr AVR simulator with "
+                          "modern AVR (tinyAVR / megaAVR 0-series) support.\n\n"
+                          "Help > Contents (F1) describes every pane.")
 
     def _arrange_docks(self):
         """Default layout: related panes share tab groups so each gets room."""

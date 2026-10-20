@@ -6,7 +6,9 @@ register and bits that select it and the options this device offers, e.g. USART0
 the header's `PORTMUX_<field>_<option>_gc` enums, so a smaller package lists fewer options. The
 megaAVR-0 and tinyAVR 2-series headers say which pins an option uses; the tinyAVR 0/1-series
 ones only say "Default pins" / "Alternate pins" (the pin tables are in the data sheet). The
-simulator keeps PORTMUX as a register store: it doesn't change which pins peripherals reach.
+simulator routes only some outputs through PORTMUX so far: on the ATtiny3216/3217, USART0 TXD and
+TCA0 WO0-2 appear on the pin the fields below select (PORTx.IN, pin IRQs, Timeline, VCD). Every
+other field is stored and displayed but does not move its peripheral.
 """
 
 from __future__ import annotations

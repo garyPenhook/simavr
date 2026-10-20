@@ -506,6 +506,36 @@ tinyx1_init(struct avr_t * avr)
 
 	/* PORTMUX (peripheral pin routing) config store at 0x0200. */
 	avr_portmux_init(avr, &mcu->portmux, 0x0200, '0');
+	avr_portmux_set_port(&mcu->portmux, 'A', &mcu->porta);
+#ifdef PORTB_PORT_vect_num
+	avr_portmux_set_port(&mcu->portmux, 'B', &mcu->portb);
+#endif
+#ifdef PORTC_PORT_vect_num
+	avr_portmux_set_port(&mcu->portmux, 'C', &mcu->portc);
+#endif
+#ifdef SIM_PORTMUX_USART0_TXD
+	/* USART0 TXD on its default / PORTMUX.CTRLB.USART0 alternate pin. The user
+	 * configures the pin as an output; the transmitter overrides its level. */
+	{
+		static const avr_portmux_pin_t txd[2] = SIM_PORTMUX_USART0_TXD;
+		int fn = avr_portmux_add_func(&mcu->portmux, 1 /* CTRLB */, 0x01, 0, txd, 2, 0);
+		avr_portmux_bind_irq(&mcu->portmux, fn,
+			avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('0'), USART_MODERN_IRQ_TXD_PIN));
+	}
+#endif
+#ifdef SIM_PORTMUX_TCA0_WO
+	/* TCA0 WO0-2 on their default / PORTMUX.CTRLC alternate pins. Only devices
+	 * whose pin table has been checked define SIM_PORTMUX_TCA0_WO. */
+	{
+		static const avr_portmux_pin_t wo[3][2] = SIM_PORTMUX_TCA0_WO;
+		for (int ch = 0; ch < 3; ch++) {
+			int fn = avr_portmux_add_func(&mcu->portmux, 2 /* CTRLC */, 1 << ch, ch,
+										  wo[ch], 2, 0 /* DIR is the user's */);
+			avr_portmux_bind_irq(&mcu->portmux, fn,
+				avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_PIN0 + ch));
+		}
+	}
+#endif
 
 	/* VREF (voltage reference selection) at 0x00A0; DAC0REFSEL feeds DAC0/AC0. */
 	avr_vref_init(avr, &mcu->vref, 0x00a0, '0');

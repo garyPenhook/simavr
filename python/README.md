@@ -129,7 +129,7 @@ CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **Data Breakpoints**: `hexaddr[:len] [r|w|rw|c|p]` (read/write/either/change/any peripheral-register change), e.g. `0x0400`, `3f:2 rw`.
 - **Interrupts**: per-vector count, level and last cycle, vector names, and which CPUINT level is executing.
 - **Ports**: per pin, direction, OUT latch, input level, invert, pull-up and sense config from the PORT registers.
-- **PORTMUX**: each routing field (USART0, TCB2, ...) with its register value, the option selected and the pins it names (tinyAVR 0/1 headers say only "Default/Alternate pins"). Bold = not the reset routing. Display only: the simulator stores PORTMUX but does not re-route peripherals.
+- **PORTMUX**: each routing field (USART0, TCB2, ...) with its register value, the option selected and the pins it names (tinyAVR 0/1 headers say only "Default/Alternate pins"). Bold = not the reset routing. Routing is live for USART0 TXD and TCA0 WO0-2 on the ATtiny3216/3217 (the signal appears on the selected pin); other fields and devices are stored and shown but not yet routed.
 - **Timers**: TCA (single and split mode), TCB and TCD register state, one row per field: enable, clock, mode, CNT/PER/compares, output enables, interrupt enables and flags. Names and masks come from the device header (TCD WGMODE has no enum there, so it shows the header's name only where one exists). A register view only; the Timeline draws the actual outputs.
 - **Events**: Event System routing: each channel's generator and, per user (CCL LUT inputs, ADC, TCA/TCB, USART, EVOUT), the channel it listens to, e.g. `CHANNEL0  (PORT0_PIN2)`. Handles both layouts (`CHANNELn`/`USER*` on megaAVR-0 and tinyAVR 2-series, `ASYNCCH`/`SYNCCH` + `ASYNCUSER`/`SYNCUSER` on tinyAVR 0/1). Names come from the device header; a register view only, not events in flight.
 - **Analog**: ADC, VREF, AC and DAC register state, one row per register with its value and every field the device header defines for it (prescaler, reference, input mux, hysteresis, interrupt enables and flags ...). Derived rows come from data-sheet arithmetic: VREF options show their level (`2V5 (2.5 V)`), each ADC shows its reference and last result in volts (VDD references use the **VDD** box, since the simulator has no supply register; an external VREFA has no known voltage so no result), and an AC with DACREF shows the divider output. Mux options name the pad (`MUXPOS=AIN3 (PD3)`) from `analog_pins.json`, generated from Microchip's ATDF files by `python tools/gen_analog_pins.py <atdf dirs>`; ATtiny3214 has no ATDF, so it shows no pad names. Layouts follow the device's own header (tinyAVR 2-series ADC with PGA/MUXNEG, tinyAVR 1-series four-register VREF). A register view only.
@@ -139,6 +139,8 @@ CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **Timeline**: type a pin (`PA0`), timer output (`TCA0.WO1`) or bus (`SPI0`, `TWI0`, `USART1`) + Enter; wheel zooms, drag pans, click/right-click set cursors A/B, `Export VCD…` writes a GTKWave file. Also shows UART0 TX and interrupt vectors.
 - **Memory**: data / flash / eeprom hex view at an address.
 - **UART**: console for USART0; type a line + Enter to send it to the firmware.
+
+**Help** (`Help` menu, F1): a searchable in-app manual covering every pane, the toolbar, boards, debugging, the Timeline and sessions (`simavr_py/gui/help.py`).
 
 **Sessions** (`Session` menu): save and load breakpoints, watches, board, pins, layout,
 firmware and MCU. The window layout, MCU, clock and last firmware folder are also

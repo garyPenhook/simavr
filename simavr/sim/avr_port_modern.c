@@ -45,6 +45,16 @@
 #define ISC_INPUT_DISABLE 4
 #define ISC_LEVEL	5
 
+/* DIR / OUT as the pins actually see them, with peripheral overrides applied. */
+static inline uint8_t eff_ddr(avr_port_modern_t *p)
+{
+	return p->io.avr->data[p->r_dir] | p->ovr_dir;
+}
+static inline uint8_t eff_out(avr_port_modern_t *p)
+{
+	return (p->io.avr->data[p->r_out] & ~p->ovr_en) | (p->ovr_val & p->ovr_en);
+}
+
 static inline uint8_t pin_mask_from_ctrl(avr_port_modern_t *p, uint8_t bit)
 {
 	avr_t *avr = p->io.avr;
@@ -64,8 +74,8 @@ static void
 avr_port_modern_update_irqs(avr_port_modern_t *p)
 {
 	avr_t *avr = p->io.avr;
-	uint8_t ddr = avr->data[p->r_dir];
-	uint8_t out = avr->data[p->r_out];
+	uint8_t ddr = eff_ddr(p);
+	uint8_t out = eff_out(p);
 	uint8_t inv = pin_mask_from_ctrl(p, PINCTRL_INVEN);
 	uint8_t pull = pin_mask_from_ctrl(p, PINCTRL_PULLUPEN);
 
@@ -186,9 +196,9 @@ static uint8_t
 avr_port_modern_in_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 {
 	avr_port_modern_t *p = (avr_port_modern_t *)param;
-	uint8_t ddr = avr->data[p->r_dir];
+	uint8_t ddr = eff_ddr(p);
 	uint8_t inv = pin_mask_from_ctrl(p, PINCTRL_INVEN);
-	uint8_t v = (avr->data[p->r_in] & ~ddr) | (avr->data[p->r_out] & ddr);
+	uint8_t v = (avr->data[p->r_in] & ~ddr) | (eff_out(p) & ddr);
 	v ^= inv;
 
 	avr->data[p->r_in] = v;
@@ -246,7 +256,7 @@ avr_port_modern_irq_notify(struct avr_irq_t *irq, uint32_t value, void *param)
 	avr_port_modern_t *p = (avr_port_modern_t *)param;
 	avr_t *avr = p->io.avr;
 	int output = value & AVR_IOPORT_OUTPUT;
-	uint8_t ddr = avr->data[p->r_dir];
+	uint8_t ddr = eff_ddr(p);
 	uint8_t mask, new_pin;
 	uint8_t old_in = avr->data[p->r_in];
 
@@ -258,7 +268,7 @@ avr_port_modern_irq_notify(struct avr_irq_t *irq, uint32_t value, void *param)
 	if (value && irq->irq != IOPORT_IRQ_PIN_ALL_IN)
 		value = mask;
 	new_pin = (avr->data[p->r_in] & ~mask) | (value & mask);
-	new_pin = (avr->data[p->r_out] & ddr) | (new_pin & ~ddr);
+	new_pin = (eff_out(p) & ddr) | (new_pin & ~ddr);
 
 	if (output) {
 		uint8_t new_out = (avr->data[p->r_out] & ~mask) | value;
@@ -307,10 +317,29 @@ avr_port_modern_irq_notify(struct avr_irq_t *irq, uint32_t value, void *param)
 	}
 }
 
+void
+avr_port_modern_override(
+		avr_port_modern_t * p,
+		int pin,
+		int en,
+		int force_output,
+		int value)
+{
+	uint8_t m = 1 << (pin & 7);
+	uint8_t old_en = p->ovr_en, old_dir = p->ovr_dir, old_val = p->ovr_val;
+
+	p->ovr_en = en ? (p->ovr_en | m) : (p->ovr_en & ~m);
+	p->ovr_dir = (en && force_output) ? (p->ovr_dir | m) : (p->ovr_dir & ~m);
+	p->ovr_val = (en && value) ? (p->ovr_val | m) : (p->ovr_val & ~m);
+	if (old_en != p->ovr_en || old_dir != p->ovr_dir || old_val != p->ovr_val)
+		avr_port_modern_update_irqs(p);
+}
+
 static void
 avr_port_modern_reset(avr_io_t *io)
 {
 	avr_port_modern_t *p = (avr_port_modern_t *)io;
+	p->ovr_en = p->ovr_dir = p->ovr_val = 0;
 	for (int i = 0; i < IOPORT_IRQ_PIN_ALL; i++)
 		avr_irq_register_notify(p->io.irq + i, avr_port_modern_irq_notify, p);
 	avr_irq_register_notify(p->io.irq + IOPORT_IRQ_PIN_ALL_IN,

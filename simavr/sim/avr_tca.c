@@ -177,6 +177,15 @@ static void tca_emit_wo(avr_tca_t *p)
 			p->wo_level[ch] = lvl;
 			avr_raise_irq(p->io.irq + AVR_TCA_IRQ_WO0 + ch, lvl);
 		}
+		/* The pin is overridden whenever CMPnEN is set in a waveform mode,
+		 * whether or not the timer is running (the level is 0 then). */
+		uint8_t ctrlb = avr->data[p->r_ctrlb];
+		uint8_t ovr = (ctrlb & cmpen_bm[ch]) && (ctrlb & WGMODE_gm) ? 1 : 0;
+		uint8_t pin = (ovr << 1) | lvl;
+		if (pin != p->pin_state[ch]) {
+			p->pin_state[ch] = pin;
+			avr_raise_irq(p->io.irq + AVR_TCA_IRQ_PIN0 + ch, pin);
+		}
 	}
 }
 
@@ -408,7 +417,7 @@ avr_tca_reset(avr_io_t *io)
 	p->clock_running = 0;
 	p->ev_input = 0;
 	for (int ch = 0; ch < 3; ch++)
-		p->wo_level[ch] = 0;
+		p->wo_level[ch] = p->pin_state[ch] = 0;
 	/* PER and PERBUF reset to 0xFFFF (DS40002205A 20.5.15), not 0 — the data[]
 	 * clear loop already zeroed them, so restore the real TOP default here.
 	 * CMPn/CMPnBUF reset to 0, which the clear loop already produced. */
@@ -423,6 +432,9 @@ static const char *irq_names[AVR_TCA_IRQ_COUNT] = {
 	[AVR_TCA_IRQ_WO1] = ">tca.wo1",
 	[AVR_TCA_IRQ_WO2] = ">tca.wo2",
 	[AVR_TCA_IRQ_EV_IN] = "<tca.ev_in",
+	[AVR_TCA_IRQ_PIN0] = ">tca.pin0",
+	[AVR_TCA_IRQ_PIN1] = ">tca.pin1",
+	[AVR_TCA_IRQ_PIN2] = ">tca.pin2",
 };
 
 static avr_io_t _io = {

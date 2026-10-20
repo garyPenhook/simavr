@@ -85,6 +85,12 @@ typedef struct avr_port_modern_t {
 
 	uint8_t		irqing;		// suppress PORT-register IRQ recursion
 
+	/* Peripheral pin overrides (see avr_port_modern_override()). Pins in
+	 * ovr_en take their output level from ovr_val instead of OUT; pins in
+	 * ovr_dir are additionally forced to output. DIR/OUT themselves are never
+	 * modified, so releasing a pin restores what firmware configured. */
+	uint8_t		ovr_en, ovr_val, ovr_dir;
+
 	/* Default level for input pins driven from outside (see IOPORT external). */
 	struct {
 		uint8_t pull_mask, pull_value;
@@ -104,6 +110,20 @@ avr_port_modern_init(
 		avr_io_addr_t base,
 		avr_io_addr_t vport,
 		uint8_t vector);
+
+/*
+ * A peripheral takes over (en != 0) or releases (en == 0) pin 'pin' (0-7).
+ * 'value' is the level it drives; 'force_output' also forces the pin to be an
+ * output regardless of DIR (otherwise DIR still decides, as for TCA waveform
+ * outputs, where the user must set DIR). Re-derives the pin IRQs.
+ */
+void
+avr_port_modern_override(
+		avr_port_modern_t * p,
+		int pin,
+		int en,
+		int force_output,
+		int value);
 
 #ifdef __cplusplus
 };

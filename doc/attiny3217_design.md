@@ -868,6 +868,18 @@ Verified in `tests/test_avrxt_engine.c` (now 229 checks): CTRLA/CTRLB reset to 0
 CTRLA/B/C store and read back their selections, and a neighbouring register is
 left untouched.
 
+
+**Update 2026-10-20 — first routing slice.** `avr_port_modern` gained a per-pin
+peripheral override (`avr_port_modern_override`) and `avr_portmux` now maps a
+routing field to a pin per *routed function* (`avr_portmux_add_func`,
+`avr_portmux_bind_irq`; peripherals publish a pin-state IRQ, bit0 = level,
+bit1 = overriding). Devices opt in with `SIM_PORTMUX_*` tables in their core
+file; so far ATtiny3216/3217 route TCA0 WO0-2 (DS40002205A 20.3.3.4.5: user
+sets DIR, timer overrides OUT while CMPnEN is set in a waveform mode) and USART0
+TXD (a real start/data/parity/stop waveform, 24.3.2.1 / 24.5.7 / 24.5.8; the
+USART now also resets CTRLC to 0x03). Everything else is still a config store.
+Test: `tests/test_portmux_route.c`. Remaining list: `doc/modern_support_todo.md`.
+
 ### Phase 4 — peripheral: TCD0 (12-bit timer type D) — **DONE**
 `avr_tcd.[ch]`, wired into `sim_tiny3217` at 0x0A80 (vector OVF=15). TCD is an
 asynchronous high-resolution-PWM timer; this models its periodic-overflow use.

@@ -95,19 +95,26 @@ typedef struct avr_tca_t {
 	uint8_t			ev_input;	// last event-line level seen on EV_IN
 
 	uint8_t			wo_level[3];	// last WO0/1/2 level published on its IRQ
+	uint8_t			pin_state[3];	// last PINn value (override<<1 | level) published
 	int			base_irq;
 } avr_tca_t;
 
 /*
  * IRQs: WO0/1/2 are single-slope PWM waveform-output levels (one per compare
  * channel). EV_IN is the event-line input (EVSYS SYNCUSER0 routes here) that
- * drives event counting per EVCTRL.
+ * drives event counting per EVCTRL. PIN0/1/2 describe what the compare channel
+ * does to its port pin: bit 0 = waveform level, bit 1 = the channel overrides
+ * the pin (CMPnEN set and a waveform generation mode selected, DS40002205A
+ * 20.3.3.4.5). Raised whenever either changes; PORTMUX routes it to a pin.
  */
 enum {
 	AVR_TCA_IRQ_WO0 = 0,
 	AVR_TCA_IRQ_WO1,
 	AVR_TCA_IRQ_WO2,
 	AVR_TCA_IRQ_EV_IN,
+	AVR_TCA_IRQ_PIN0,
+	AVR_TCA_IRQ_PIN1,
+	AVR_TCA_IRQ_PIN2,
 	AVR_TCA_IRQ_COUNT,
 };
 
