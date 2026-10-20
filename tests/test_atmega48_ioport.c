@@ -113,8 +113,11 @@ static void reg_read(struct avr_irq_t *irq, uint32_t value, void *param)
 
 /* This string should be sent by the firmware. */
 
+/* EIFR is F<01: INTF0 (rising edge) only. INT1 is still in its reset low-level mode, and the
+ * ATmega48A/168A data sheet (DS40002061B, EIFR) says its flag "is always cleared when INT1 is
+ * configured as a level interrupt"; this used to expect F<03. */
 static const char *expected =
-    "P<2A P<30 F<03 I<20 P<20 J<03 J<00 P<28 | K | P<B8 ";
+    "P<2A P<30 F<01 I<20 P<20 J<03 J<00 P<28 | K | P<B8 ";
 
 /* This string is expected in variable log. */
 

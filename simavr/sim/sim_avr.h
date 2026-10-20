@@ -519,6 +519,11 @@ typedef struct avr_symbol_t {
 avr_t *
 avr_make_mcu_by_name(
 		const char *name);
+// non-zero if two core names are the same core (attiny13 / attiny13a share one descriptor)
+int
+avr_mcu_names_match(
+		const char *a,
+		const char *b);
 // initializes a new AVR instance. Will call the IO registers init(), and then reset()
 int
 avr_init(

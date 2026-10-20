@@ -568,6 +568,27 @@ avr_core_allocate(
 	return (avr_t *)b;
 }
 
+int
+avr_mcu_names_match(
+		const char *a,
+		const char *b)
+{
+	if (!a || !b)
+		return 0;
+	if (!strcmp(a, b))
+		return 1;
+	for (int i = 0; avr_kind[i]; i++) {
+		int ha = 0, hb = 0;
+		for (int j = 0; j < ARRAY_SIZE(avr_kind[i]->names) && avr_kind[i]->names[j]; j++) {
+			ha |= !strcmp(avr_kind[i]->names[j], a);
+			hb |= !strcmp(avr_kind[i]->names[j], b);
+		}
+		if (ha && hb)
+			return 1;
+	}
+	return 0;
+}
+
 avr_t *
 avr_make_mcu_by_name(
 		const char *name)

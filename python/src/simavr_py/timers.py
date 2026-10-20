@@ -16,6 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .analog import _header as _fields_header, classic_blocks, describe
+from .classic import classic
 from .registers import registers
 from .vectors import _search_dirs, header_name
 
@@ -69,7 +71,10 @@ def _header(mmcu: str) -> _Header | None:
 
 @lru_cache(maxsize=None)
 def timers(mmcu: str) -> tuple[Timer, ...]:
-    """Timer instances of `mmcu`, TCA then TCB then TCD, by instance number."""
+    """Timer instances of `mmcu`, TCA then TCB then TCD, by instance number. A classic AVR has one
+    "Timers" entry (kind CLASSIC) holding all of its TCCRn / TCNTn / OCRn / TIMSK / TIFR registers."""
+    if classic(mmcu):
+        return tuple(Timer("Timers", "CLASSIC", b.regs) for b in classic_blocks(mmcu, "timer", "Timers"))
     found: dict[str, dict[str, tuple[int, int]]] = {}
     for r in registers(mmcu):
         m = re.fullmatch(r"(TC[ABD])(\d+)\.(\w+(?:\.\w+)?)", r.name)
@@ -80,9 +85,69 @@ def timers(mmcu: str) -> tuple[Timer, ...]:
 
 Read = Callable[[int, int], int]    # (address, size) -> value
 
+# ATtiny13A Timer/Counter0, DS40002307A Tables 11-2..11-9 and the frequency equations of 11.7-11.9
+_T13_CLOCK = {0: "stopped", 1: "clk/1", 2: "clk/8", 3: "clk/64", 4: "clk/256", 5: "clk/1024",
+              6: "external T0 (PB2), falling edge", 7: "external T0 (PB2), rising edge"}
+_T13_DIV = {1: 1, 2: 8, 3: 64, 4: 256, 5: 1024}
+_T13_WGM = {0: ("Normal", "0xFF"), 1: ("Phase correct PWM", "0xFF"), 2: ("CTC", "OCR0A"),
+            3: ("Fast PWM", "0xFF"), 4: ("Reserved", ""), 5: ("Phase correct PWM", "OCR0A"),
+            6: ("Reserved", ""), 7: ("Fast PWM", "OCR0A")}
+_T13_COM = {  # (kind, COM[1:0]) -> text; kind: "plain" (Normal/CTC), "fast", "phase"
+    ("plain", 0): "disconnected", ("plain", 1): "toggle on compare match",
+    ("plain", 2): "clear on compare match", ("plain", 3): "set on compare match",
+    ("fast", 0): "disconnected", ("phase", 0): "disconnected",
+    ("fast", 2): "clear on compare match, set at TOP", ("fast", 3): "set on compare match, clear at TOP",
+    ("phase", 2): "clear on compare match up-counting, set down-counting",
+    ("phase", 3): "set on compare match up-counting, clear down-counting",
+}
 
-def decode(mmcu: str, t: Timer, read: Read) -> tuple[tuple[str, str], ...]:
-    """Labelled (field, text) rows for one timer; empty if the header is unreadable."""
+
+def _tiny13_timer0(r: Callable[[str], int], clk_hz: int) -> list[tuple[str, str]]:
+    """Derived Timer0 rows: clock source, mode and TOP, the output pins' behaviour and the counter
+    cycle. Data-sheet arithmetic on the register values, not a simulation of the waveform."""
+    a, b = r("TCCR0A"), r("TCCR0B")
+    cs, wgm = b & 7, (a & 3) | (b >> 3 & 1) << 2
+    name, top = _T13_WGM[wgm]
+    rows = [("Clock source", _T13_CLOCK[cs])]
+    div = _T13_DIV.get(cs)
+    tick = clk_hz / div if div and clk_hz else 0
+    if tick:
+        rows.append(("Counter tick", f"{tick:,.0f} Hz ({1e6 / tick:.4g} us)"))
+    rows.append(("Mode", f"{wgm}: {name}" + (f", TOP = {top}" if top else "")))
+    kind = {0: "plain", 2: "plain", 3: "fast", 7: "fast", 1: "phase", 5: "phase"}.get(wgm)
+    for out, pin, com in (("OC0A", "PB0", a >> 6 & 3), ("OC0B", "PB1", a >> 4 & 3)):
+        if kind is None:
+            text = "reserved mode"
+        elif com == 1 and kind != "plain":      # toggle exists only for OC0A with WGM02 = 1
+            text = ("toggle on compare match" if out == "OC0A" and b & 8 else
+                    "disconnected" if out == "OC0A" else "reserved")
+        else:
+            text = _T13_COM.get((kind, com), "reserved")
+        rows.append((out, f"{text} ({pin})" + ("" if com == 0 or kind is None else
+                                                "  - drives the pin only while its DDR bit is set")))
+    if kind is not None:
+        top_n = r("OCR0A") if top == "OCR0A" else 0xFF
+        cycle = 2 * top_n if kind == "phase" else top_n + 1
+        if cycle:
+            text = f"{cycle} ticks"
+            if tick:
+                f = tick / cycle
+                text += f" = {cycle / tick * 1e3:.4g} ms ({f:,.0f} Hz)" if f >= 100 else f" = {cycle / tick * 1e3:.4g} ms ({f:.4g} Hz)"
+            rows.append(("Counter cycle", text))
+    return rows
+
+
+def decode(mmcu: str, t: Timer, read: Read, clk_hz: int = 0) -> tuple[tuple[str, str], ...]:
+    """Labelled (field, text) rows for one timer; empty if the header is unreadable. A classic
+    timer block gives one row per register: its value and the header's named bits and fields."""
+    if t.kind == "CLASSIC":
+        fh = _fields_header(mmcu)
+        rows = [(reg, f"0x{(v := read(addr, size)):0{2 * size}X}  "
+                      + describe(fh.fields.get(("TIMER", reg), ()) if fh else (), v))
+                for reg, (addr, size) in t.regs.items()]
+        if mmcu.startswith("attiny13") and {"TCCR0A", "TCCR0B", "OCR0A", "OCR0B"} <= t.regs.keys():
+            rows += _tiny13_timer0(lambda n: read(*t.regs[n]), clk_hz)
+        return tuple(rows)
     h = _header(mmcu)
     if h is None:
         return ()

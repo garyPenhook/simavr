@@ -58,6 +58,7 @@ typedef struct avr_extint_t {
 
 		uint32_t		port_ioctl;		// ioctl to use to get port
 		uint8_t			port_pin;		// pin number in said port
+		uint8_t			poll_live;		// a level-poll cycle timer is running for this INT
 		uint8_t			strict_lvl_trig;// enforces a repetitive interrupt triggering while the pin is held low
 	}	eint[EXTINT_COUNT];
 

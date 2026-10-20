@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from .analog import Block, Read, _header, describe
+from .analog import Block, Read, _header, classic_blocks, describe
+from .classic import classic
 from .registers import registers
 
 KINDS = ("RSTCTRL", "SLPCTRL", "BOD", "WDT", "CPUINT", "CRCSCAN", "RTC", "CCL", "NVMCTRL", "SYSCFG")
@@ -20,7 +21,10 @@ KINDS = ("RSTCTRL", "SLPCTRL", "BOD", "WDT", "CPUINT", "CRCSCAN", "RTC", "CCL", 
 
 @lru_cache(maxsize=None)
 def system(mmcu: str) -> tuple[Block, ...]:
-    """System block instances of `mmcu`, in `KINDS` order."""
+    """System block instances of `mmcu`, in `KINDS` order. A classic AVR has one block with its
+    MCU control, reset, sleep, watchdog, interrupt-mask, EEPROM and self-programming registers."""
+    if classic(mmcu):
+        return classic_blocks(mmcu, "system", "System")
     found: dict[str, dict[str, tuple[int, int]]] = {}
     for r in registers(mmcu):
         m = re.fullmatch(r"(\w+?)\.(\w+)", r.name)

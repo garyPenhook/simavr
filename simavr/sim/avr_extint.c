@@ -31,6 +31,19 @@ typedef struct avr_extint_poll_context_t {
 	avr_extint_t *extint;
 } avr_extint_poll_context_t;
 
+/*
+ * Level-triggered INTn: the interrupt flag is always read as cleared (ATtiny13A DS40002307A, GIFR
+ * INTF0: "This flag is always cleared when INT0 is configured as a level interrupt"; the same
+ * sentence is in the megaAVR data sheets). The request lives in vector.pending, so drop the flag
+ * avr_raise_interrupt() just set.
+ */
+static void avr_extint_raise_level(avr_t * avr, avr_extint_t * p, int no)
+{
+	avr_raise_interrupt(avr, &p->eint[no].vector);
+	if (p->eint[no].vector.raised.reg)
+		avr_regbit_clear(avr, p->eint[no].vector.raised);
+}
+
 static avr_cycle_count_t avr_extint_poll_level_trig(
 		struct avr_t * avr,
 		avr_cycle_count_t when,
@@ -55,12 +68,13 @@ static avr_cycle_count_t avr_extint_poll_level_trig(
 	if (avr->sreg[S_I]) {
 		uint8_t raised = avr_regbit_get(avr, p->eint[poll->eint_no].vector.raised) || p->eint[poll->eint_no].vector.pending;
 		if (!raised)
-			avr_raise_interrupt(avr, &p->eint[poll->eint_no].vector);
+			avr_extint_raise_level(avr, p, poll->eint_no);
 	}
 
 	return when+1;
 
 terminate_poll:
+	p->eint[poll->eint_no].poll_live = 0;
 	free(poll);
 	return 0;
 }
@@ -117,6 +131,54 @@ void avr_extint_set_strict_lvl_trig(avr_t * avr, uint8_t extint_no, uint8_t stri
 	p->eint[extint_no].strict_lvl_trig = strict;
 }
 
+/*
+ * A low level that is already there when INTn gets enabled, or when ISCn is switched to
+ * "low level", requests the interrupt too: level sensing looks at the pin, not at an edge.
+ */
+static void avr_extint_start_poll(avr_t * avr, avr_extint_t * p, int no);
+
+static void avr_extint_level_recheck(avr_t * avr, avr_extint_t * p, int no)
+{
+	if (!p->eint[no].port_ioctl || !p->eint[no].isc[1].reg || !p->eint[no].vector.enable.reg)
+		return;
+	if (avr_regbit_get_array(avr, p->eint[no].isc, 2))
+		return;
+	// level mode: a flag latched while the pin was in an edge mode is dropped too
+	if (p->eint[no].vector.raised.reg)
+		avr_regbit_clear(avr, p->eint[no].vector.raised);
+	if (!avr_regbit_get(avr, p->eint[no].vector.enable))
+		return;
+	avr_ioport_state_t iostate;
+	if (avr_ioctl(avr, AVR_IOCTL_IOPORT_GETSTATE(p->eint[no].port_ioctl & 0xFF), &iostate) < 0 ||
+			(iostate.pin >> p->eint[no].port_pin) & 1 || p->eint[no].vector.pending)
+		return;
+	avr_extint_raise_level(avr, p, no);
+	if (p->eint[no].vector.pending)
+		avr_extint_start_poll(avr, p, no);
+}
+
+static void avr_extint_level_write(avr_t * avr, avr_io_addr_t addr, uint8_t v, void * param)
+{
+	avr_extint_t * p = (avr_extint_t *)param;
+
+	avr_core_watch_write(avr, addr, v);
+	for (int i = 0; i < EXTINT_COUNT; i++)
+		avr_extint_level_recheck(avr, p, i);
+}
+
+static void avr_extint_start_poll(avr_t * avr, avr_extint_t * p, int no)
+{
+	if (p->eint[no].poll_live)
+		return;
+	avr_extint_poll_context_t *poll = malloc(sizeof(*poll));
+	if (poll) {
+		poll->eint_no = no;
+		poll->extint = p;
+		p->eint[no].poll_live = 1;
+		avr_cycle_timer_register(avr, 1, avr_extint_poll_level_trig, poll);
+	}
+}
+
 static void avr_extint_irq_notify(struct avr_irq_t * irq, uint32_t value, void * param)
 {
 	avr_extint_t * p = (avr_extint_t *)param;
@@ -156,21 +218,13 @@ static void avr_extint_irq_notify(struct avr_irq_t * irq, uint32_t value, void *
 								 p->eint[irq->irq].vector.raised) ||
 							  p->eint[irq->irq].vector.pending);
 					if (!raised)
-						avr_raise_interrupt(avr, &p->eint[irq->irq].vector);
+						avr_extint_raise_level(avr, p, irq->irq);
 					if (!raised && p->eint[irq->irq].vector.pending) {
-						avr_extint_poll_context_t *poll;
-
 						/* Interrupt pending, so start fast timer to re-enable
 						 * it if the pin level does not change in the handler.
 						 */
 
-						poll = malloc(sizeof(avr_extint_poll_context_t));
-						if (poll) {
-							poll->eint_no = irq->irq;
-							poll->extint = p;
-							avr_cycle_timer_register(
-								 avr, 1, avr_extint_poll_level_trig, poll);
-						}
+						avr_extint_start_poll(avr, p, irq->irq);
 					}
 				} else {
 					avr_clear_interrupt(avr, &p->eint[irq->irq].vector);
@@ -198,6 +252,7 @@ static void avr_extint_reset(avr_io_t * port)
 	avr_extint_t * p = (avr_extint_t *)port;
 
 	for (int i = 0; i < EXTINT_COUNT; i++) {
+		p->eint[i].poll_live = 0;	// avr_reset() dropped any cycle timer
 		if (p->eint[i].port_ioctl) {
 			avr_irq_register_notify(p->io.irq + i, avr_extint_irq_notify, p);
 
@@ -237,6 +292,10 @@ void avr_extint_init(avr_t * avr, avr_extint_t * p)
 		if (!p->eint[i].port_ioctl)
 			break;
 		avr_register_vector(avr, &p->eint[i].vector);
+		if (p->eint[i].isc[1].reg && p->eint[i].vector.enable.reg) {	// level sensing available
+			avr_register_io_write(avr, p->eint[i].vector.enable.reg, avr_extint_level_write, p);
+			avr_register_io_write(avr, p->eint[i].isc[0].reg, avr_extint_level_write, p);
+		}
 	}
 	// allocate this module's IRQ
 

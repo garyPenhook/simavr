@@ -14,13 +14,17 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from .analog import Block, Read, _header, describe
+from .analog import Block, Read, _header, classic_blocks, describe
+from .classic import classic
 from .registers import registers
 
 
 @lru_cache(maxsize=None)
 def clkctrl(mmcu: str) -> tuple[Block, ...]:
-    """The CLKCTRL block of `mmcu` (empty tuple if the device has none)."""
+    """The CLKCTRL block of `mmcu` (empty tuple if the device has none). A classic AVR's block is
+    its CLKPR and OSCCAL registers."""
+    if classic(mmcu):
+        return classic_blocks(mmcu, "clock", "Clock")
     regs = {m[1]: (r.address, r.size) for r in registers(mmcu)
             if (m := re.fullmatch(r"CLKCTRL\.(\w+)", r.name))}
     return (Block("CLKCTRL", "CLKCTRL", dict(sorted(regs.items(), key=lambda kv: kv[1]))),) if regs else ()
@@ -47,6 +51,10 @@ def decode(mmcu: str, block: Block, read: Read, clk_per: int = 0) -> tuple[tuple
     for reg, (addr, size) in block.regs.items():
         value = vals[reg] = read(addr, size)
         out.append((reg, f"0x{value:0{2 * size}X}", describe(h.fields.get((block.kind, reg), ()), value)))
+    if "CLKPR" in vals:                         # classic: DS40002307A Table 6-8, 2^CLKPS up to 256
+        n = vals["CLKPR"] & 0x0F
+        out.append(("Clock division", "", f"/{1 << n}" if n <= 8 else f"reserved (CLKPS = {n})"))
+        out.append(("CPU clock", "", f"{clk_per:,.0f} Hz"))
     if "MCLKCTRLA" in vals and "MCLKCTRLB" in vals:
         def opt(reg: str, name: str) -> str:
             f = next((f for f in h.fields.get((block.kind, reg), ()) if f.name == name), None)

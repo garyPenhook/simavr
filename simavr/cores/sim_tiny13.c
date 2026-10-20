@@ -28,6 +28,7 @@
 #include "avr_timer.h"
 #include "avr_adc.h"
 #include "avr_acomp.h"
+#include "avr_clkpr.h"
 
 #define _AVR_IO_H_
 #define __ASSEMBLER__
@@ -48,6 +49,7 @@ static const struct mcu_t {
 	avr_timer_t		timer0;
 	avr_acomp_t		acomp;
 	avr_adc_t       adc;
+	avr_clkpr_t	clkpr;
 } mcu = {
 	.core = {
 		.mmcu = "attiny13",
@@ -63,7 +65,9 @@ static const struct mcu_t {
 // Disable signature when using an old avr toolchain
 #ifdef SIGNATURE_0
 		.signature = { SIGNATURE_0,SIGNATURE_1,SIGNATURE_2 },
-		.fuse = { LFUSE_DEFAULT, HFUSE_DEFAULT },
+		/* DS40002307A Tables 17-3/17-4: low 0x6A (SPIEN, CKDIV8, SUT0, CKSEL0 programmed), high 0xFF.
+		 * The header's LFUSE_DEFAULT is not usable here: sim_core_declare.h fakes _BV(v) as v. */
+		.fuse = { 0x6A, 0xFF },
 #endif
 		.reset_flags = {
 			.porf = AVR_IO_REGBIT(MCU_STATUS_REG, PORF),
@@ -216,6 +220,7 @@ static void init(struct avr_t * avr)
 	avr_timer_init(avr, &mcu->timer0);
 	avr_acomp_init(avr, &mcu->acomp);
 	avr_adc_init(avr, &mcu->adc);
+	avr_clkpr_init(avr, &mcu->clkpr, CLKPR, 0, 4 /* CKDIV8, low fuse bit 4 */);
 }
 
 static void reset(struct avr_t * avr)

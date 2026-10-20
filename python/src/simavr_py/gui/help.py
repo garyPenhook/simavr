@@ -10,7 +10,7 @@ TOPICS: list[tuple[str, str]] = [
     ("Getting started", """
 <h2>Getting started</h2>
 <p>The simulator runs AVR firmware (an ELF or HEX image) on a simulated modern AVR
-(tinyAVR 0/1/2-series, megaAVR 0-series). Everything you see is a live view of that
+(tinyAVR 0/1/2-series, megaAVR 0-series) or a classic AVR such as the ATtiny13A. Everything you see is a live view of that
 simulation.</p>
 <ol>
 <li>Pick the <b>MCU</b> in the toolbar box, or leave <code>(from ELF)</code> to use the

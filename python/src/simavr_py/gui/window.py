@@ -22,8 +22,8 @@ from ..evsys import evsys, rows as evsys_rows
 from ..portmux import RouteField, routes
 from ..system import decode as decode_system, system
 from ..timers import Timer, decode as decode_timer, timers
-from ..ports import PortRegs, decode_pin, ports
-from ..registers import Register, interrupt_flag_pairs, registers
+from ..ports import PortRegs, decode_pin, decode_pin_classic, ports
+from ..registers import Register, interrupt_flag_bits, interrupt_flag_pairs, registers
 from ..vectors import vector_label, vector_names
 from ..boards import BoardError, load_board
 from ..core import (
@@ -70,7 +70,7 @@ class PinPanel(QScrollArea):
         grid = QGridLayout(host)
         self._cells.clear()
         if sim is not None:
-            names = sorted(sim.pins, key=_pin_sort_key)
+            names = sorted(self._existing(sim), key=_pin_sort_key)
             for i, name in enumerate(names):
                 led = QLabel(f"{name}\n-")
                 led.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -90,6 +90,15 @@ class PinPanel(QScrollArea):
                 self._cells[name] = (led, drive, high)
         grid.setRowStretch(grid.rowCount(), 1)
         self.setWidget(host)
+
+    @staticmethod
+    def _existing(sim: Simulator) -> list[str]:
+        """Pins the device has. A classic core's IO port model exposes all eight bits of PORTB, but
+        the header only defines the real ones (ATtiny13A: PB0-PB5)."""
+        classic = [p for p in ports(sim.mmcu) if not p.pinctrl]
+        letters = {p.name[-1] for p in classic}
+        have = {f"P{p.name[-1]}{n}" for p in classic for n in p.bits}
+        return [n for n in sim.pins if n in have or not (len(n) > 2 and n[0] == "P" and n[1] in letters)]
 
     def driven(self) -> dict[str, bool]:
         """Pins currently held from outside, name -> level."""
@@ -996,8 +1005,10 @@ class RegisterPane(QWidget):
 
 class PortPane(QWidget):
     """Live PORT state by pin: direction, OUT latch, pin level (IN), invert, pull-up and
-    sense config, from PORTx.DIR/OUT/IN/PINnCTRL. Read while stopped; changed levels are
-    highlighted. All eight bits of each port are listed, whether or not the package has them."""
+    sense config, from PORTx.DIR/OUT/IN/PINnCTRL (a classic AVR: DDRx/PORTx/PINx, with the pull-up
+    shown when DDxn=0, PORTxn=1 and PUD is clear). Read while stopped; changed levels are
+    highlighted. A modern port lists all eight bits, whether or not the package has them; a
+    classic port only the pins its header defines."""
 
     CHANGED = QColor(255, 235, 150)
     COLS = ["Pin", "Dir", "OUT", "IN", "Inv", "Pull-up", "Sense"]
@@ -1018,7 +1029,7 @@ class PortPane(QWidget):
         self._sim = sim
         self._ports = ports(sim.mmcu) if sim is not None else ()
         self._prev.clear()
-        self._table.setRowCount(8 * len(self._ports))
+        self._table.setRowCount(sum(len(p.bits) for p in self._ports))
         for i in range(self._table.rowCount()):
             for c in range(len(self.COLS)):
                 self._table.setItem(i, c, QTableWidgetItem(""))
@@ -1028,14 +1039,18 @@ class PortPane(QWidget):
         if sim is None:
             return
         try:                                # no cycle-keyed cache: pokes don't advance the cycle
-            for pi, p in enumerate(self._ports):
+            row = 0
+            for p in self._ports:
                 d, o, i = (sim.read(Space.DATA, a, 1)[0] for a in (p.dir, p.out, p.inp))
-                for n in range(8):
-                    ctrl = sim.read(Space.DATA, p.pinctrl[n], 1)[0]
-                    st = decode_pin(p.name, n, d, o, i, ctrl)
+                pud = bool(p.pud and sim.read(Space.DATA, p.pud[0], 1)[0] & p.pud[1])
+                for n in p.bits:
+                    if p.pinctrl:
+                        ctrl = sim.read(Space.DATA, p.pinctrl[n], 1)[0]
+                        st = decode_pin(p.name, n, d, o, i, ctrl)
+                    else:
+                        st = decode_pin_classic(p.name, n, d, o, i, pud)
                     cells = (st.name, "out" if st.output else "in", int(st.out), int(st.level),
                              "yes" if st.inverted else "", "yes" if st.pullup else "", st.sense)
-                    row = pi * 8 + n
                     changed = self._prev.get(st.name, cells)[3] != cells[3]
                     for c, v in enumerate(cells):
                         item = self._table.item(row, c)
@@ -1043,6 +1058,7 @@ class PortPane(QWidget):
                         item.setBackground(QBrush(self.CHANGED if changed and c == 3
                                                   else QColor(0, 0, 0, 0)))
                     self._prev[st.name] = cells
+                    row += 1
         except SimavrError:
             pass                            # resumed meanwhile
 
@@ -1151,7 +1167,7 @@ class TimerPane(QWidget):
         def read(addr: int, size: int) -> int:
             return int.from_bytes(sim.read(Space.DATA, addr, size), "little")
         try:
-            decoded = [(t.name, decode_timer(sim.mmcu, t, read)) for t in self._timers]
+            decoded = [(t.name, decode_timer(sim.mmcu, t, read, sim.frequency)) for t in self._timers]
         except SimavrError:
             return                          # resumed meanwhile
         rows = [(name, k, v) for name, fields in decoded for k, v in fields]
@@ -1378,6 +1394,8 @@ class InterruptPane(QWidget):
                                "INTCTRL is the matching enable register; a flag only raises an\n"
                                "interrupt if its enable bit, the global I flag and the level allow it.")
         self._pairs: tuple = ()
+        self._bits: tuple = ()
+        self._cpuint = True
         self._flags_key = None
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Vector", "Level", "Count", "Last cycle"])
@@ -1395,9 +1413,11 @@ class InterruptPane(QWidget):
         lay.addWidget(self._table, 4, 0)
 
     @staticmethod
-    def flags_text(rows: list[tuple[str, int, int | None]]) -> str:
-        """rows = (peripheral, INTFLAGS value, INTCTRL value or None); non-zero flags only."""
-        parts = [f"{name} flags 0x{fl:02X}" + (f" (enable 0x{en:02X})" if en is not None else "")
+    def flags_text(rows: list[tuple[str, int, int | str | None]]) -> str:
+        """rows = (peripheral, INTFLAGS value, INTCTRL value, a note such as "enabled", or None);
+        non-zero flags only. A note stands for a single flag bit, shown by name alone."""
+        parts = [(f"{name} ({en})" if isinstance(en, str) else f"{name} flags 0x{fl:02X}"
+                  + (f" (enable 0x{en:02X})" if en is not None else ""))
                  for name, fl, en in rows if fl]
         return "flags set: " + (", ".join(parts) if parts else "none")
 
@@ -1410,6 +1430,8 @@ class InterruptPane(QWidget):
 
     def set_sim(self, sim: Simulator | None):
         self._pairs = interrupt_flag_pairs(sim.mmcu) if sim is not None else ()
+        self._bits = interrupt_flag_bits(sim.mmcu) if sim is not None else ()
+        self._cpuint = sim is not None and any(r.name == "CPUINT.STATUS" for r in registers(sim.mmcu))
         self._flags_key = None
         self._flags.setText("flags set: -")
         self._pending.setText("pending: -")
@@ -1448,13 +1470,19 @@ class InterruptPane(QWidget):
         if sim is None or sim.state in (State.RUNNING, State.SLEEPING):
             return
         try:
-            self._exec.setText(self.exec_text(sim.peek(self.CPUINT_STATUS)))
+            if self._cpuint:                # classic cores have no CPUINT to read
+                self._exec.setText(self.exec_text(sim.peek(self.CPUINT_STATUS)))
+            else:
+                self._exec.setText("executing: n/a (no CPUINT levels on this device)")
             self._pending.setText(self.pending_text(sim.pending_interrupt_levels()))
             key = sim.cycle
-            if self._pairs and key != self._flags_key:
+            if (self._pairs or self._bits) and key != self._flags_key:
                 self._flags_key = key
                 rows = [(f.name.rsplit(".", 1)[0], sim.peek(f.address),
                          sim.peek(c.address) if c else None) for f, c in self._pairs]
+                for label, reg, flag, enable in self._bits:     # a flag sharing its register's enable
+                    v = sim.peek(reg.address)
+                    rows.append((label, v & flag, "enabled" if v & enable else "masked"))
                 self._flags.setText(self.flags_text(rows))
         except SimavrError:
             pass                    # resumed meanwhile, or no CPUINT at that address

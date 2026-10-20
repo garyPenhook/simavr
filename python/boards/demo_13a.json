@@ -1,0 +1,10 @@
+{
+  "name": "ATtiny13A demo",
+  "mmcu": "attiny13a",
+  "freq": 1200000,
+  "widgets": [
+    {"type": "led", "pin": "PB0", "label": "LED0", "color": "red"},
+    {"type": "led", "pin": "PB2", "label": "LED1", "color": "green"},
+    {"type": "button", "pin": "PB3", "label": "SW0"}
+  ]
+}

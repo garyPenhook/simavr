@@ -103,6 +103,7 @@ struct avr_host_t {
 	double				speed;
 	uint32_t			batch;
 	uint64_t			pace_cycle;
+	uint32_t			pace_freq;	/* avr->frequency the pacing baseline was taken at */
 	struct timespec		pace_wall;
 
 	int					next_id;
@@ -134,6 +135,7 @@ struct avr_host_t {
 	uint8_t				fw_ext_mask[HOST_MAX_PORTS];	/* .mmcu external pulls */
 	uint8_t				fw_ext_value[HOST_MAX_PORTS];
 	char				pin_name[HOST_MAX_PINS][4];
+	char				mmcu_name[32];	/* name the core was asked for (attiny13a, not the shared "attiny13") */
 
 	struct {
 		avr_io_t *		io;
@@ -296,6 +298,7 @@ host_pace_rebase(
 		avr_host_t * h)
 {
 	h->pace_cycle = h->avr->cycle;
+	h->pace_freq = h->avr->frequency;
 	clock_gettime(CLOCK_MONOTONIC, &h->pace_wall);
 }
 
@@ -523,6 +526,11 @@ host_pace(
 		avr_host_t * h)
 {
 	struct timespec now;
+
+	if (h->pace_freq != h->avr->frequency) {	/* firmware changed the clock (CLKPR/CLKCTRL) */
+		host_pace_rebase(h);
+		return;
+	}
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	double sim_ns = (double)(h->avr->cycle - h->pace_cycle) * 1e9 /
 					h->avr->frequency;
@@ -679,7 +687,9 @@ avr_host_new(
 	if (!h) {
 		avr_terminate(avr);
 		free(avr);
+		return NULL;
 	}
+	snprintf(h->mmcu_name, sizeof(h->mmcu_name), "%s", mmcu);
 	return h;
 }
 
@@ -796,7 +806,7 @@ const char *
 avr_host_mmcu(
 		avr_host_t * h)
 {
-	return h->avr->mmcu;
+	return h->mmcu_name[0] ? h->mmcu_name : h->avr->mmcu;
 }
 
 uint32_t
@@ -897,9 +907,9 @@ avr_host_load_elf(
 	else if (!path || elf_read_firmware(path, f) != 0)
 		res = host_error(h, AVR_HOST_EIO, "cannot read ELF '%s'",
 						 path ? path : "(null)");
-	else if (f->mmcu[0] && strcmp(f->mmcu, h->avr->mmcu))
+	else if (f->mmcu[0] && !avr_mcu_names_match(f->mmcu, avr_host_mmcu(h)))
 		res = host_error(h, AVR_HOST_EINVAL, "'%s' is built for %s, not %s",
-						 path, f->mmcu, h->avr->mmcu);
+						 path, f->mmcu, avr_host_mmcu(h));
 	else
 		res = host_load_common(h, f);
 	host_unlock(h);

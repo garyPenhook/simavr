@@ -15,7 +15,7 @@ def test_ports_atmega4809():
 
 
 def test_unknown_device_has_no_ports():
-    assert ports("atmega328") == () and ports("") == ()
+    assert ports("nonsense") == () and ports("") == ()
 
 
 def test_decode_pin():

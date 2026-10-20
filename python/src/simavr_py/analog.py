@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from .classic import classic, fields as classic_fields, group_of
 from .registers import registers
 from .vectors import _search_dirs, header_name
 
@@ -104,8 +105,26 @@ def _parse(text: str) -> _Header:
     return _Header(out)
 
 
+def _classic_header(mmcu: str) -> _Header | None:
+    """Fields of a classic AVR's registers, keyed (dock group, register) like the modern ones."""
+    h = classic(mmcu)
+    if h is None:
+        return None
+    return _Header({(group_of(n).upper(), n): tuple(Field(f, m, {}) for f, m in classic_fields(h, n))
+                    for n, _, _ in h.regs})
+
+
+def classic_blocks(mmcu: str, group: str, name: str) -> tuple[Block, ...]:
+    """One block holding every register of a classic AVR that belongs to dock `group`."""
+    h = classic(mmcu)
+    regs = {n: (a, s) for n, a, s in h.regs if group_of(n) == group} if h else {}
+    return (Block(name, group.upper(), regs),) if regs else ()
+
+
 @lru_cache(maxsize=None)
 def _header(mmcu: str) -> _Header | None:
+    if classic(mmcu):
+        return _classic_header(mmcu)
     name = header_name(mmcu or "")
     for d in _search_dirs():
         try:
@@ -117,7 +136,10 @@ def _header(mmcu: str) -> _Header | None:
 
 @lru_cache(maxsize=None)
 def analog(mmcu: str) -> tuple[Block, ...]:
-    """Analog peripheral instances of `mmcu`: ADC, VREF, AC, DAC, each by instance number."""
+    """Analog peripheral instances of `mmcu`: ADC, VREF, AC, DAC, each by instance number.
+    A classic AVR has one block with its ADC and analog comparator registers."""
+    if classic(mmcu):
+        return classic_blocks(mmcu, "analog", "ADC / AC")
     found: dict[str, dict[str, tuple[int, int]]] = {}
     for r in registers(mmcu):
         m = re.fullmatch(r"((?:ADC|VREF|AC|DAC)\d*)\.(\w+)", r.name)

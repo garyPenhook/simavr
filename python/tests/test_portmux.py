@@ -9,9 +9,10 @@ import pytest
 
 from simavr_py.core import cores
 from simavr_py.portmux import routes
+from simavr_py.classic import classic
 from simavr_py.registers import registers
 
-MODERN = [c for c in cores() if registers(c)]
+MODERN = [c for c in cores() if registers(c) and not classic(c)]
 
 
 def by_name(mmcu):

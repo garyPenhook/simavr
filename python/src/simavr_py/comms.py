@@ -14,7 +14,8 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from .analog import Block, Read, _header, describe
+from .analog import Block, Read, _header, classic_blocks, describe
+from .classic import classic
 from .registers import registers
 
 KINDS = ("USART", "SPI", "TWI")
@@ -22,7 +23,10 @@ KINDS = ("USART", "SPI", "TWI")
 
 @lru_cache(maxsize=None)
 def comms(mmcu: str) -> tuple[Block, ...]:
-    """Serial peripheral instances of `mmcu`: USART, SPI, TWI, each by instance number."""
+    """Serial peripheral instances of `mmcu`: USART, SPI, TWI, each by instance number.
+    A classic AVR has one block with its UART/SPI/TWI/USI registers (none on an ATtiny13A)."""
+    if classic(mmcu):
+        return classic_blocks(mmcu, "serial", "Serial")
     found: dict[str, dict[str, tuple[int, int]]] = {}
     for r in registers(mmcu):
         m = re.fullmatch(r"((?:USART|SPI|TWI)\d+)\.(\w+)", r.name)
