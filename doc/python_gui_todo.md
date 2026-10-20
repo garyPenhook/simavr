@@ -225,6 +225,8 @@ count off the dock's volts.
 
 **Clock view (2026-10-19):** a "Clock" dock (`simavr_py.clock`, Qt-free, reuses the Analog field decoder) shows the CLKCTRL registers with every header-defined field, plus Main clock (CLKSEL), Prescaler (PEN/PDIV; PDIV ignored with PEN=0, reserved codes shown as reserved) and CLK_PER / CLK_MAIN (DS40002205A 10.3, 10.5.1-10.5.2). CLK_PER is the simulated CPU clock, which the engine takes from CLKCTRL, so CLK_MAIN is CLK_PER x division, not a frequency table. Same register layout on all 46 cores. Limits: oscillator control, calibration and MCLKSTATUS are shown only as header fields; display only.
 
+**System view (2026-10-19):** a "System" dock (`simavr_py.system`, Qt-free, reuses the Analog field decoder) shows RSTCTRL, SLPCTRL, BOD, WDT, CPUINT, CRCSCAN, RTC (incl. PIT), CCL, NVMCTRL and SYSCFG registers with every header-defined field, for whichever of them the device has. No derived rows (no timeout or period conversion). Display only.
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED
