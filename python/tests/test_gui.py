@@ -89,6 +89,12 @@ for bad in ("zz", "40:3", ""):
 app = QApplication([])
 win = MainWindow("atmega4809", 3333333, speed=0)
 win.load(sys.argv[1])
+from simavr_py.registers import Register
+_r = (Register("TCA0.SINGLE.CNT", 0x0A20, 2), Register("PORTA.DIR", 0x0400, 1))
+assert parse_watch("tca0.single.cnt", _r) == ("TCA0.SINGLE.CNT", 0x0A20, 2)
+assert parse_watch("x=PORTA.DIR:2", _r) == ("x", 0x0400, 2)
+assert parse_watch("0x0400", _r) == ("0x0400", 0x400, 1)
+assert any(r.name == "PORTA.DIR" for r in win.watch._regs)
 win.watch.set_watches([parse_watch("pa_dir=0x0400"), parse_watch("nowhere=FFFF:2")])
 win.pins.apply_driven({"PB1": True, "NOPE": True})
 assert win.pins.driven() == {"PB1": True}

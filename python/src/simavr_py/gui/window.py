@@ -257,15 +257,24 @@ class MemoryView(QWidget):
         bar.setValue(pos)
 
 
-def parse_watch(text: str) -> tuple[str, int, int]:
+def parse_watch(text: str, regs=()) -> tuple[str, int, int]:
     """'[label=]addr[:width]' -> (label, data address, width in bytes).
 
-    The address is hex (0x optional); width is 1, 2 or 4 and defaults to 1.
+    The address is hex (0x optional) or, when `regs` (Register rows) is given, a register
+    name such as `TCA0.SINGLE.CNT` (case-insensitive; an exact name wins over a hex
+    reading, `0x` forces hex). Width is 1, 2 or 4 and defaults to 1, or to the
+    register's own size for a name.
     """
     label, _, spec = text.rpartition("=")
     spec = spec.strip()
     addr_s, _, width_s = spec.partition(":")
     addr_s = addr_s.strip()
+    reg = next((r for r in regs if r.name.lower() == addr_s.lower()), None)
+    if reg is not None:
+        width = int(width_s) if width_s.strip().isdigit() else reg.size
+        if width not in (1, 2, 4):
+            raise ValueError(f"bad watch {text!r}: width must be 1, 2 or 4")
+        return label.strip() or reg.name, reg.address, width
     try:
         addr = int(addr_s, 0 if addr_s.lower().startswith(("0x", "0b", "0o")) else 16)
         width = int(width_s) if width_s.strip() else 1
@@ -286,8 +295,9 @@ class WatchPane(QWidget):
         super().__init__()
         self._watches: list[tuple[str, int, int]] = []
         self._prev: dict[int, int] = {}
+        self._regs: tuple = ()
         self._edit = QLineEdit()
-        self._edit.setPlaceholderText("[label=]hexaddr[:width]  e.g. porta_out=0x0405 (Enter)")
+        self._edit.setPlaceholderText("[label=]hexaddr|REGISTER[:width]  e.g. TCA0.SINGLE.CNT or 0x0405 (Enter)")
         self._edit.returnPressed.connect(self._add_from_edit)
         rm = QPushButton("Remove")
         rm.clicked.connect(self._remove_selected)
@@ -308,6 +318,10 @@ class WatchPane(QWidget):
     def watches(self) -> list[tuple[str, int, int]]:
         return list(self._watches)
 
+    def set_registers(self, regs):
+        """Register names the entry box accepts (the loaded device's)."""
+        self._regs = tuple(regs)
+
     def set_watches(self, watches):
         self._watches = [tuple(w) for w in watches]
         self._prev.clear()
@@ -318,7 +332,7 @@ class WatchPane(QWidget):
 
     def _add_from_edit(self):
         try:
-            w = parse_watch(self._edit.text())
+            w = parse_watch(self._edit.text(), self._regs)
         except ValueError as e:
             QMessageBox.warning(self, "Watch", str(e))
             return
@@ -1795,6 +1809,7 @@ class MainWindow(QMainWindow):
         self._notifier = QSocketNotifier(sim.fileno(), QSocketNotifier.Type.Read, self)
         self._notifier.activated.connect(self._drain)
         self._firmware = path
+        self.watch.set_registers(registers(sim.mmcu))
         self.watch.set_watches(self.watch.watches)   # drop stale change baselines
         self.pins.set_sim(sim)
         self.uart.set_sim(sim)

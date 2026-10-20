@@ -145,7 +145,7 @@ CPU plus tabs, bottom = Timeline plus Memory/UART tabs):
 - **CPU**: state, cycle, time, PC/SP/SREG and r0-r31 (live while running, from a consistent snapshot).
 - **Disassembly**: instructions around PC with symbols and source lines; the PC marker (and the Source pane's current line) follows the PC while running; double-click a row to toggle a breakpoint, right-click for **Run to here**.
 - **Source**: the C source with the current line (needs `-g`); double-click toggles a breakpoint, right-click offers **Run to line**.
-- **Watch**: `[label=]hexaddr[:width]`, e.g. `porta_out=0x0405`, live data-space values.
+- **Watch**: `[label=]hexaddr|REGISTER[:width]`, e.g. `porta_out=0x0405` or `TCA0.SINGLE.CNT`, live data-space values.
 - **Breakpoints**: hex address or symbol (`main`, `main+0x4`); `0xadd` forces an address over a symbol.
 - **Data Breakpoints**: `hexaddr[:len] [r|w|rw|c|p]` (read/write/either/change/any peripheral-register change), e.g. `0x0400`, `3f:2 rw`.
 - **Interrupts**: per-vector count, level and last cycle, vector names, and which CPUINT level is executing.

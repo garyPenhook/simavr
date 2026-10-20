@@ -124,8 +124,7 @@ only exposes PC/SP/SREG/r[] while paused, so the CPU view keeps its last
 snapshot while running. Added later the same day: watch pane (data-space `[label=]hexaddr[:width]`,
 changed-value highlight) and session save/restore (Session menu or
 `--session FILE.json`: firmware, MCU, clock, window/dock layout, watches, driven
-pins). Not done: board canvas, per-pin edge coalescing/timeline, named
-register watches (blocked on the register metadata table). Known quirk: on 3.15.0a7,
+pins). Named register watches landed later (the Watch box takes `TCA0.SINGLE.CNT`, case-insensitive, width defaults to the register size; an exact name wins over a hex reading). Not done: board canvas, per-pin edge coalescing/timeline. Known quirk: on 3.15.0a7,
 importing PySide6 stops `simavr_py.<name>` attribute access from reifying lazy
 imports (use `from simavr_py.core import ...` alongside PySide6).
 
