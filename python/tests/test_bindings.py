@@ -60,6 +60,9 @@ def test_struct_layout_matches_c(tmp_path):
         "avr_host_cpu_t": ["pc", "sp", "sreg", "r", "cycle"],
         "avr_host_pin_t": ["dir", "out", "in", "pullup", "driven", "floating"],
         "avr_host_event_t": ["type", "sub", "cycle", "a", "b", "c"],
+        "avr_host_oled_cfg_t": ["bus", "instance", "i2c_addr", "cs_pin", "dc_pin", "res_pin"],
+        "avr_host_oled_t": ["seq", "on", "all_on", "inverse", "remap", "com_flip", "contrast",
+                            "start_line", "addr_mode", "vram"],
         "avr_host_reg_info_t": ["name", "peripheral", "addr", "size", "reset"],
     }
     prints = []

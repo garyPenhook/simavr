@@ -71,7 +71,21 @@ class LcdSpec:
         return out
 
 
-type WidgetSpec = LedSpec | ButtonSpec | EncoderSpec | LcdSpec
+@dataclass(frozen=True, slots=True)
+class OledSpec:
+    """128x64 SSD1306 on TWI<instance> (`addr` 0x3C/0x3D) or 4-wire SPI<instance>. The
+    bus pins belong to the firmware; `cs`/`dc`/`res` are the GPIOs the panel listens to
+    (SPI needs `dc`; I2C only ever uses `res`)."""
+    bus: str = "twi"
+    instance: int = 0
+    addr: int = 0x3C
+    cs: str = ""
+    dc: str = ""
+    res: str = ""
+    label: str = ""
+
+
+type WidgetSpec = LedSpec | ButtonSpec | EncoderSpec | LcdSpec | OledSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +105,8 @@ class Board:
                     out += [a, b]
                 case LcdSpec(rs=rs, e=e, rw=rw, data=data):
                     out += [rs, e, *([rw] if rw else []), *data]   # raw: dups must show
+                case OledSpec(cs=cs, dc=dc, res=res):
+                    out += [p for p in (cs, dc, res) if p]
         return out
 
     def missing_pins(self, available) -> list[str]:
@@ -106,10 +122,12 @@ _KINDS: dict[str, tuple[type, dict[str, type]]] = {
                               "active_low": bool}),
     "lcd": (LcdSpec, {"rs": str, "e": str, "rw": str, "data": list,
                       "cols": int, "rows": int, "label": str}),
+    "oled": (OledSpec, {"bus": str, "instance": int, "addr": int, "cs": str, "dc": str,
+                        "res": str, "label": str}),
 }
-_PIN_FIELDS = {"pin", "pin_a", "pin_b", "rs", "e", "rw"}
+_PIN_FIELDS = {"pin", "pin_a", "pin_b", "rs", "e", "rw", "cs", "dc", "res"}
 _REQUIRED = {"led": ("pin",), "button": ("pin",), "encoder": ("pin_a", "pin_b"),
-             "lcd": ("rs", "e", "data")}
+             "lcd": ("rs", "e", "data"), "oled": ()}
 
 
 def _widget(d, index: int) -> WidgetSpec:
@@ -133,6 +151,8 @@ def _widget(d, index: int) -> WidgetSpec:
         raise BoardError(f"{where}: a {kind} needs {', '.join(missing)}")
     if kind == "lcd":
         _check_lcd(d, where)
+    if kind == "oled":
+        _check_oled(d, where)
     return cls(**d)
 
 
@@ -147,6 +167,28 @@ def _check_lcd(d: dict, where: str) -> None:
         raise BoardError(f"{where}: 'rows' must be 1, 2 or 4")
     if d.get("rw") == "":
         del d["rw"]
+
+
+def _check_oled(d: dict, where: str) -> None:
+    bus = d.setdefault("bus", "twi").lower()
+    if bus not in ("twi", "spi"):
+        raise BoardError(f"{where}: 'bus' must be 'twi' or 'spi'")
+    d["bus"] = bus
+    if not 0 <= d.get("instance", 0) <= 9:
+        raise BoardError(f"{where}: 'instance' must be 0..9")
+    if bus == "twi":
+        if d.get("addr", 0x3C) not in (0x3C, 0x3D):
+            raise BoardError(f"{where}: an SSD1306 on I2C is at 0x3C (60) or 0x3D (61)")
+        if d.get("cs") or d.get("dc"):
+            raise BoardError(f"{where}: 'cs'/'dc' are for SPI; an I2C panel only has 'res'")
+    else:
+        if "addr" in d:
+            raise BoardError(f"{where}: 'addr' is for I2C")
+        if not d.get("dc"):
+            raise BoardError(f"{where}: an SPI panel needs 'dc' (data/command pin)")
+    for k in ("cs", "dc", "res"):
+        if d.get(k) == "":
+            del d[k]
 
 
 def board_from_dict(d) -> Board:
@@ -196,6 +238,7 @@ class BoardRuntime:
     buttons: dict[int, ButtonModel] = field(default_factory=dict)
     encoders: dict[int, EncoderModel] = field(default_factory=dict)
     lcds: dict[int, LcdModel] = field(default_factory=dict)
+    oleds: dict[int, int] = field(default_factory=dict)       # widget index -> host OLED id
     _by_pin: dict[int, list[LedModel]] = field(default_factory=dict)
     _lcd_pins: dict[int, list[tuple[LcdModel, str]]] = field(default_factory=dict)
     _subs: list[int] = field(default_factory=list)
@@ -239,6 +282,14 @@ class BoardRuntime:
                         # every edge: the decoder latches on E's falling edge
                         self._subs.append(sim.subscribe_pin(pin, 0))
 
+                case OledSpec(bus=bus, instance=inst, addr=addr, cs=cs, dc=dc, res=res):
+                    self.oleds[i] = sim.attach_oled(bus, inst, addr, cs or None, dc or None,
+                                                    res or None)
+
+    def oled_state(self, index: int):
+        """Current `OledState` of the OLED widget at `index`."""
+        return self.sim.read_oled(self.oleds[index])
+
     def dispatch(self, ev) -> None:
         """Feed one event; only PinEvents for a wired LED or LCD pin matter."""
         if isinstance(ev, OverflowEvent):       # pin edges were dropped
@@ -267,6 +318,12 @@ class BoardRuntime:
 
     def close(self) -> None:
         """Unsubscribe and let go of every pin this board was holding."""
+        oleds, self.oleds = self.oleds, {}
+        for o in oleds.values():
+            try:
+                self.sim.detach_oled(o)
+            except Exception:       # sim already closed
+                pass
         subs, self._subs = self._subs, []
         for s in subs:
             try:

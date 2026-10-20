@@ -4,16 +4,16 @@ import time
 from collections import deque
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import (
     QGridLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from ..boards import (
-    Board, BoardError, BoardRuntime, ButtonSpec, EncoderSpec, LcdSpec, LedSpec,
+    Board, BoardError, BoardRuntime, ButtonSpec, EncoderSpec, LcdSpec, LedSpec, OledSpec,
 )
 from ..core import SimavrError, Simulator
-from ..widgets import LcdModel, lcd_glyph
+from ..widgets import OLED_H, OLED_W, LcdModel, lcd_glyph, oled_pixels
 
 ENCODER_STEP_MS = 3     # wall-clock spacing of the four phase changes of a detent
 COLUMNS = 4
@@ -123,6 +123,47 @@ class LcdWidget(QWidget):
                        "events lost")
 
 
+class OledWidget(QWidget):
+    """128x64 SSD1306 panel, drawn from the native part's snapshot. The image is rebuilt
+    only when the part's change counter moves; contrast dims the lit pixels."""
+
+    SCALE = 3
+    LIT = (190, 215, 255)
+
+    def __init__(self, spec: OledSpec):
+        super().__init__()
+        self._seen = -1
+        self._img: QImage | None = None
+        self.setMinimumSize(self.sizeHint())
+
+    def sizeHint(self) -> QSize:
+        return QSize(OLED_W * self.SCALE + 8, OLED_H * self.SCALE + 8)
+
+    def clear(self):
+        self._seen, self._img = -1, None
+        self.update()
+
+    def set_state(self, st):
+        if st.seq == self._seen:
+            return
+        self._seen = st.seq
+        pix = oled_pixels(st)
+        img = QImage(pix, OLED_W, OLED_H, OLED_W, QImage.Format.Format_Indexed8)
+        k = 0.25 + 0.75 * st.contrast / 255        # panel never goes fully dark while on
+        img.setColorTable([QColor(0, 0, 0).rgb(),
+                           QColor(*(round(c * k) for c in self.LIT)).rgb()])
+        self._img = img.copy()                      # detach from the bytes object
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(0, 0, 0))
+        if self._img is not None:
+            w, h = OLED_W * self.SCALE, OLED_H * self.SCALE
+            p.drawImage(4, 4, self._img.scaled(w, h, Qt.AspectRatioMode.IgnoreAspectRatio,
+                                               Qt.TransformationMode.FastTransformation))
+
+
 NO_BOARD = "No board loaded (optional). Click Board… in the toolbar to add virtual LEDs, buttons and an LCD wired to pins."
 
 
@@ -137,6 +178,7 @@ class BoardCanvas(QWidget):
         self._runtime: BoardRuntime | None = None
         self._leds: dict[int, LedWidget] = {}
         self._lcds: dict[int, LcdWidget] = {}
+        self._oleds: dict[int, OledWidget] = {}
         self._pending: deque = deque()      # encoder phase writes still to play
         self._player = QTimer(self)
         self._player.setInterval(ENCODER_STEP_MS)
@@ -176,6 +218,7 @@ class BoardCanvas(QWidget):
     def _build(self):
         self._leds.clear()
         self._lcds.clear()
+        self._oleds.clear()
         old, self._host = self._host, QWidget()
         self._outer.replaceWidget(old, self._host)
         old.hide()                  # deleteLater is deferred; don't show both meanwhile
@@ -189,7 +232,7 @@ class BoardCanvas(QWidget):
         enabled = self._runtime is not None
         row = col = 0
         for i, w in enumerate(board.widgets):
-            wide = isinstance(w, LcdSpec)       # an LCD takes a row of its own
+            wide = isinstance(w, (LcdSpec, OledSpec))       # an LCD takes a row of its own
             if wide and col:
                 row, col = row + 1, 0
             cell = QWidget()
@@ -216,6 +259,10 @@ class BoardCanvas(QWidget):
                         lcd.set_model(self._runtime.lcds[i])
                     self._lcds[i] = lcd
                     lay.addWidget(lcd, 1, Qt.AlignmentFlag.AlignCenter)
+                case OledSpec(label=label):
+                    oled = OledWidget(w)
+                    self._oleds[i] = oled
+                    lay.addWidget(oled, 1, Qt.AlignmentFlag.AlignCenter)
                 case EncoderSpec(label=label):
                     pair = QWidget()
                     rl = QGridLayout(pair)
@@ -284,5 +331,7 @@ class BoardCanvas(QWidget):
                 led.set_brightness(rt.brightness(i, now))
             for lcd in self._lcds.values():
                 lcd.sync()
+            for i, oled in self._oleds.items():
+                oled.set_state(rt.oled_state(i))
         except SimavrError:
             pass

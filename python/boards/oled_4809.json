@@ -1,0 +1,8 @@
+{
+  "name": "ATmega4809 + SSD1306 (I2C)",
+  "mmcu": "atmega4809",
+  "freq": 3333333,
+  "widgets": [
+    {"type": "oled", "label": "SSD1306 128x64 on TWI0 (0x3C)", "bus": "twi", "instance": 0, "addr": 60}
+  ]
+}

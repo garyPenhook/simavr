@@ -45,6 +45,7 @@
 #include "avr_uart.h"
 #include "avr_usart_modern.h"
 #include "avr_eeprom.h"
+#include "avr_ssd1306.h"
 #include "sim_host.h"
 
 /* Only the *_isfull() accessors are used, to pace host -> MCU serial input. */
@@ -58,6 +59,7 @@ extern avr_kind_t * avr_kind[];
 #define HOST_EVQ_SIZE	4096
 #define HOST_MAX_UARTS	8
 #define HOST_MAX_PORTS	8		/* PORTA .. PORTH */
+#define HOST_MAX_OLEDS	4
 #define HOST_MAX_PINS	(HOST_MAX_PORTS * 8)
 
 enum { SUB_PIN = 1, SUB_UART, SUB_IRQ, SUB_INT };
@@ -123,6 +125,8 @@ struct avr_host_t {
 	uint16_t			watch_addr;
 
 	host_sub_t *		subs;
+
+	avr_ssd1306_t *		oled[HOST_MAX_OLEDS];
 
 	uint8_t				ports;		/* bitmask of fitted PORTA.. */
 	uint8_t				ext_mask[HOST_MAX_PORTS];	/* host-driven pins */
@@ -752,6 +756,8 @@ avr_host_free(
 		avr_irq_unregister_notify(s->irq, host_sub_notify, s);
 		free(s);
 	}
+	for (int i = 0; i < HOST_MAX_OLEDS; i++)
+		avr_ssd1306_free(h->oled[i]);
 	avr_terminate(h->avr);
 	free(h->avr);
 	for (int i = 0; i < HOST_MAX_UARTS; i++)
@@ -1648,6 +1654,111 @@ avr_host_break_remove(
 			res = 0;
 			break;
 		}
+	host_unlock(h);
+	return res;
+}
+
+/* ---------------------------------------------------------------------
+ * Attached parts
+ * ------------------------------------------------------------------- */
+
+static int
+host_pin_to_port(avr_host_t * h, int pin, char * port, uint8_t * bit)
+{
+	if (pin < 0)
+		return 0;			/* not wired */
+	if (pin >= HOST_MAX_PINS || !(h->ports & (1 << (pin / 8))))
+		return -1;
+	*port = 'A' + pin / 8;
+	*bit = pin % 8;
+	return 1;
+}
+
+int
+avr_host_oled_attach(
+		avr_host_t * h,
+		const avr_host_oled_cfg_t * cfg)
+{
+	if (!cfg || (cfg->bus != AVR_HOST_OLED_TWI && cfg->bus != AVR_HOST_OLED_SPI) ||
+			cfg->instance > 9)
+		return host_error(h, AVR_HOST_EINVAL, "bad OLED configuration");
+	if (cfg->bus == AVR_HOST_OLED_TWI && cfg->i2c_addr != 0x3C && cfg->i2c_addr != 0x3D)
+		return host_error(h, AVR_HOST_EINVAL, "SSD1306 I2C address is 0x3C or 0x3D");
+	if (cfg->bus == AVR_HOST_OLED_SPI && cfg->dc_pin < 0)
+		return host_error(h, AVR_HOST_EINVAL, "SPI OLED needs a D/C pin");
+	int res;
+	host_lock(h);
+	char cs = 0, dc = 0, rs = 0;
+	uint8_t csb = 0, dcb = 0, rsb = 0;
+	int slot = 0;
+	while (slot < HOST_MAX_OLEDS && h->oled[slot])
+		slot++;
+	if (slot == HOST_MAX_OLEDS) {
+		res = host_error(h, AVR_HOST_ERANGE, "too many OLEDs");
+	} else if (host_pin_to_port(h, cfg->cs_pin, &cs, &csb) < 0 ||
+			host_pin_to_port(h, cfg->dc_pin, &dc, &dcb) < 0 ||
+			host_pin_to_port(h, cfg->res_pin, &rs, &rsb) < 0) {
+		res = host_error(h, AVR_HOST_ENOENT, "OLED pin not on this device");
+	} else {
+		char bus = '0' + cfg->instance;
+		avr_ssd1306_t * p = cfg->bus == AVR_HOST_OLED_TWI ?
+				avr_ssd1306_new_twi(h->avr, bus, cfg->i2c_addr, rs, rsb) :
+				avr_ssd1306_new_spi(h->avr, bus, cs, csb, dc, dcb, rs, rsb);
+		if (!p) {
+			res = host_error(h, AVR_HOST_ENOENT, "no %s%d on this device",
+					cfg->bus == AVR_HOST_OLED_TWI ? "TWI" : "SPI", cfg->instance);
+		} else {
+			h->oled[slot] = p;
+			res = slot;
+		}
+	}
+	host_unlock(h);
+	return res;
+}
+
+int
+avr_host_oled_read(
+		avr_host_t * h,
+		int id,
+		avr_host_oled_t * out)
+{
+	int res = 0;
+	if (!out)
+		return host_error(h, AVR_HOST_EINVAL, "no output buffer");
+	host_lock(h);
+	if (id < 0 || id >= HOST_MAX_OLEDS || !h->oled[id]) {
+		res = host_error(h, AVR_HOST_ENOENT, "no OLED %d", id);
+	} else {
+		avr_ssd1306_state_t s;
+		avr_ssd1306_snapshot(h->oled[id], &s);
+		out->seq = s.seq;
+		out->on = s.on;
+		out->all_on = s.all_on;
+		out->inverse = s.inverse;
+		out->remap = s.remap;
+		out->com_flip = s.com_flip;
+		out->contrast = s.contrast;
+		out->start_line = s.start_line;
+		out->addr_mode = s.addr_mode;
+		memcpy(out->vram, s.vram, sizeof(out->vram));
+	}
+	host_unlock(h);
+	return res;
+}
+
+int
+avr_host_oled_detach(
+		avr_host_t * h,
+		int id)
+{
+	int res = 0;
+	host_lock(h);
+	if (id < 0 || id >= HOST_MAX_OLEDS || !h->oled[id]) {
+		res = host_error(h, AVR_HOST_ENOENT, "no OLED %d", id);
+	} else {
+		avr_ssd1306_free(h->oled[id]);
+		h->oled[id] = NULL;
+	}
 	host_unlock(h);
 	return res;
 }

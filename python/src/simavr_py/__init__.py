@@ -13,6 +13,7 @@ lazy from .core import (
     LoadError,
     NotFound,
     NotSupported,
+    OledState,
     OutOfRange,
     OverflowEvent,
     PinEvent,
@@ -34,7 +35,7 @@ lazy from .core import (
 
 __all__ = [
     "Cpu", "Event", "InterruptEvent", "InvalidArgument", "IrqEvent", "LoadError", "NotFound",
-    "NotSupported", "OutOfRange", "OverflowEvent", "PinEvent", "PinState",
+    "NotSupported", "OledState", "OutOfRange", "OverflowEvent", "PinEvent", "PinState",
     "RawEvent", "Simulator", "SimavrError", "Space", "State", "StateError",
     "StateEvent", "StopReason", "UartTxEvent", "WatchFlag", "api_version", "cores",
     "ioctl_def",

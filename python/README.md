@@ -96,14 +96,18 @@ Run controls are disabled while they can't apply (e.g. Step while running).
 = input/high-Z). Tick **drive** to drive an input pin from outside, **H** for the level.
 
 **Board dock (optional):** virtual parts wired to pins: LEDs, push buttons (latching
-or momentary), a rotary encoder and an HD44780 LCD. Define your own in JSON/TOML
-(see `boards/demo_4809.json` and `simavr_py.boards`).
+or momentary), a rotary encoder, an HD44780 LCD and a 128x64 SSD1306 OLED (I2C or
+4-wire SPI). Define your own in JSON/TOML (see `boards/demo_4809.json` and
+`simavr_py.boards`). An OLED is `{"type": "oled", "bus": "twi", "addr": 60}` or
+`{"type": "oled", "bus": "spi", "dc": "PC1", "cs": "PC0", "res": "PC2"}`; the bus pins are
+the firmware's, `cs`/`dc`/`res` are the GPIOs the panel listens to.
 
 Shipped boards in `boards/`:
 
 | File | MCU | Wired parts |
 |---|---|---|
 | `demo_4809.json` | atmega4809 | 3 LEDs, 2 buttons, encoder, 16x2 LCD (matches `examples/demo_4809.c`) |
+| `oled_4809.json` | atmega4809 | SSD1306 on TWI0 at 0x3C (run `examples/board_atmega4809_oled/atmega4809_oled_i2c.c`) |
 | `demo_4808.json` | atmega4808 | same layout as the 4809 demo |
 | `demo_3217.json` | attiny3217 | 3 LEDs, 2 buttons, encoder, 16x2 LCD |
 | `demo_1614.json` | attiny1614 | 3 LEDs, 2 buttons, encoder |

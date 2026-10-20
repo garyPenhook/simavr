@@ -161,9 +161,20 @@ up in 8-bit mode with D0-D3 floating, so the standard `3,3,3,2` start-up
 works), DDRAM/CGRAM, entry mode, display/cursor shift, blink, 1/2/4 rows. Write
 only: no busy flag or read-back (firmware must use fixed delays) and no
 execution timing. Pin-queue overflow marks the display "events lost" until the
-next clear. Not done: SSD1306/SH1106 (need a bus-attach in the host API or a
-Python SPI/TWI decoder), and the inspection widgets (blocked on the register
-metadata table).
+next clear. **Slice 3 (2026-10-19): SSD1306 OLED** (`oled` board widget). A Python decoder can't
+ACK a TWI byte in time (events are asynchronous), so the controller is a native
+part, `simavr/sim/avr_ssd1306.c`, wired to a TWI or 4-wire SPI bus plus CS/DC/RES
+pins; the host API gains `avr_host_oled_attach/read/detach` (up to four per
+instance, slots reused) and the GUI draws the snapshot (`widgets.oled_pixels`,
+`OledWidget`). Behaviour follows the SSD1306 Rev 1.0 data sheet: reset into page
+addressing, horizontal/vertical/page modes with column/page windows, display
+on/off, entire-on, inverse, contrast, start line, segment remap, COM scan flip.
+Not modelled: scrolling (commands accepted, ignored), display offset D3h,
+multiplex ratio, timing. Unlike `examples/parts/ssd1306_virt.c` it never prints
+or aborts. Tests run the real `board_atmega4809_oled` firmware over I2C and SPI
+(4160 lit pixels, as the C example's check) and the widget in the GUI. SH1106 and
+two OLEDs on one bus are untested; the inspection widgets stay blocked on the
+register metadata table (the Ports dock covers PORT state).
 
 1. Recreate the current visual demos in Python:
    * LED ramp

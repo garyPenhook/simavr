@@ -291,3 +291,32 @@ class LcdModel:
         """The 8 rows (5 bits each) of custom character `code` (0..7, 8..15)."""
         i = (code & 7) * 8
         return [b & 0x1F for b in self.cgram[i:i + 8]]
+
+
+OLED_W, OLED_H = 128, 64
+
+
+def oled_pixels(state) -> bytes:
+    """What the SSD1306 panel shows, as 128x64 bytes (0 dark, 1 lit), row-major from the
+    top-left. `state` is `simavr_py.core.OledState` (anything with the same fields).
+
+    Display off gives a dark panel; "entire display on" (A5h) a fully lit one. Otherwise
+    RAM row `(COM + start_line) % 64` drives each COM row (COM0 is the top row, or the
+    bottom one when the COM scan is remapped), segment remap flips the columns, and the
+    inverse mode (A7h) swaps lit and dark. Display offset (D3h) and scrolling are not
+    modelled, matching the native part."""
+    if not state.on:
+        return bytes(OLED_W * OLED_H)
+    if state.all_on:
+        return b"\x01" * (OLED_W * OLED_H)
+    inv = 1 if state.inverse else 0
+    vram, out = state.vram, bytearray(OLED_W * OLED_H)
+    for y in range(OLED_H):
+        com = OLED_H - 1 - y if state.com_flip else y
+        ram = (com + state.start_line) % OLED_H
+        page, bit = (ram >> 3) * OLED_W, ram & 7
+        row = y * OLED_W
+        for col in range(OLED_W):
+            x = OLED_W - 1 - col if state.remap else col
+            out[row + x] = (vram[page + col] >> bit & 1) ^ inv
+    return bytes(out)

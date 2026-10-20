@@ -604,6 +604,57 @@ avr_host_vcd_stop(
 		avr_host_t * h);
 
 /* ---------------------------------------------------------------------
+ * Attached parts: SSD1306 OLED (128x64)
+ * A native model of the controller (avr_ssd1306.c) wired to a TWI or SPI
+ * bus plus pins, so the byte-by-byte ACKs happen inside the simulation. The
+ * host only reads back the display state and draws it. Up to four per
+ * instance; they live until avr_host_oled_detach() or avr_host_free(). Not modelled: scrolling, the
+ * display offset (D3h), multiplex ratio.
+ * ------------------------------------------------------------------- */
+
+enum { AVR_HOST_OLED_TWI = 1, AVR_HOST_OLED_SPI = 2 };
+
+typedef struct avr_host_oled_cfg_t {
+	uint32_t	bus;		/* AVR_HOST_OLED_TWI / _SPI */
+	uint8_t		instance;	/* TWI0/SPI0 = 0, TWI1/SPI1 = 1 ... */
+	uint8_t		i2c_addr;	/* 7-bit: 0x3C or 0x3D (TWI only) */
+	int16_t		cs_pin;		/* pin ids from avr_host_pin_lookup(); -1 = none. */
+	int16_t		dc_pin;		/* SPI only; required there */
+	int16_t		res_pin;	/* RES#: a falling edge resets the display */
+} avr_host_oled_cfg_t;
+
+typedef struct avr_host_oled_t {
+	uint32_t	seq;		/* changes whenever anything below changes */
+	uint8_t		on;			/* display ON (AFh); off after reset */
+	uint8_t		all_on;		/* A5h: panel ignores RAM */
+	uint8_t		inverse;	/* A7h */
+	uint8_t		remap;		/* A1h: column 127 drives SEG0 */
+	uint8_t		com_flip;	/* C8h: COM scan remapped */
+	uint8_t		contrast;
+	uint8_t		start_line;	/* RAM row shown on COM0, 0-63 */
+	uint8_t		addr_mode;	/* 0 horizontal, 1 vertical, 2 page */
+	uint8_t		vram[8][128];	/* [page][column]; bit 0 = top row of the page */
+} avr_host_oled_t;
+
+/* Returns an id >= 0, or ENOENT (bus or pin not on this device), EINVAL
+ * (bad config), ENOMEM, ERANGE (too many). */
+int
+avr_host_oled_attach(
+		avr_host_t * h,
+		const avr_host_oled_cfg_t * cfg);
+int
+avr_host_oled_read(
+		avr_host_t * h,
+		int id,
+		avr_host_oled_t * out);
+/* Disconnect the part (its slot is reused). The part's wires stay in the
+ * instance, now inert. */
+int
+avr_host_oled_detach(
+		avr_host_t * h,
+		int id);
+
+/* ---------------------------------------------------------------------
  * Native escape hatch (UNSTABLE)
  * For attaching existing C parts (examples/parts: ssd1306, hd44780, ...)
  * to a host-managed instance. The returned avr_t* may only be touched

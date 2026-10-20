@@ -49,6 +49,21 @@ typedef struct avr_host_pin_t {
     uint8_t dir, out, in, pullup, driven, floating;
 } avr_host_pin_t;
 
+typedef struct avr_host_oled_cfg_t {
+    uint32_t bus;
+    uint8_t  instance;
+    uint8_t  i2c_addr;
+    int16_t  cs_pin;
+    int16_t  dc_pin;
+    int16_t  res_pin;
+} avr_host_oled_cfg_t;
+
+typedef struct avr_host_oled_t {
+    uint32_t seq;
+    uint8_t  on, all_on, inverse, remap, com_flip, contrast, start_line, addr_mode;
+    uint8_t  vram[8][128];
+} avr_host_oled_t;
+
 typedef struct avr_host_event_t {
     uint32_t type;
     int32_t  sub;
@@ -134,6 +149,10 @@ int avr_host_poll_text(avr_host_t * h, char * buf, size_t size);
 int avr_host_vcd_add_trace(avr_host_t * h, const char * spec);
 int avr_host_vcd_start(avr_host_t * h, const char * path, uint32_t period_us);
 int avr_host_vcd_stop(avr_host_t * h);
+
+int avr_host_oled_attach(avr_host_t * h, const avr_host_oled_cfg_t * cfg);
+int avr_host_oled_read(avr_host_t * h, int id, avr_host_oled_t * out);
+int avr_host_oled_detach(avr_host_t * h, int id);
 
 struct avr_t;
 struct avr_t * avr_host_raw_avr(avr_host_t * h);

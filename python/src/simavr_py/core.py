@@ -159,6 +159,23 @@ class PinState:
 
 
 @dataclass(frozen=True, slots=True)
+class OledState:
+    """Snapshot of an attached SSD1306: GDDRAM plus the display settings.
+    `seq` changes whenever anything here does. `vram` is 8 pages x 128
+    columns, page-major (index page * 128 + column); bit 0 is the top row."""
+    seq: int
+    on: bool
+    all_on: bool
+    inverse: bool
+    remap: bool
+    com_flip: bool
+    contrast: int
+    start_line: int
+    addr_mode: int      # 0 horizontal, 1 vertical, 2 page
+    vram: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class Event:
     sub: int
     cycle: int
@@ -488,6 +505,37 @@ class Simulator:
 
     def release(self, ref: PinRef) -> None:
         self._check(self._L.avr_host_pin_release(self._handle(), self.pin(ref)))
+
+    # -- attached parts ------------------------------------------------------
+
+    def attach_oled(self, bus: str = "twi", instance: int = 0, i2c_addr: int = 0x3C,
+                    cs: PinRef | None = None, dc: PinRef | None = None,
+                    res: PinRef | None = None) -> int:
+        """Wire a native SSD1306 (128x64) to TWI<instance> (`i2c_addr` 0x3C/0x3D)
+        or 4-wire SPI<instance> (`dc` required, `cs` optional: none = always
+        selected). `res` is an optional RES# pin whose falling edge resets the
+        display. The bus pins themselves are the firmware's business. Returns
+        the id for `read_oled`; the part lives until the simulator closes."""
+        if bus not in ("twi", "spi"):
+            raise InvalidArgument(-1, "bus must be 'twi' or 'spi'")
+        cfg = ffi.new("avr_host_oled_cfg_t *")
+        cfg.bus = 1 if bus == "twi" else 2
+        cfg.instance = _uint("instance", instance, 9)
+        cfg.i2c_addr = _uint("i2c_addr", i2c_addr, 255)
+        cfg.cs_pin = -1 if cs is None else self.pin(cs)
+        cfg.dc_pin = -1 if dc is None else self.pin(dc)
+        cfg.res_pin = -1 if res is None else self.pin(res)
+        return self._check(self._L.avr_host_oled_attach(self._handle(), cfg))
+
+    def detach_oled(self, oled: int) -> None:
+        self._check(self._L.avr_host_oled_detach(self._handle(), oled))
+
+    def read_oled(self, oled: int) -> OledState:
+        o = ffi.new("avr_host_oled_t *")
+        self._check(self._L.avr_host_oled_read(self._handle(), oled, o))
+        return OledState(o.seq, bool(o.on), bool(o.all_on), bool(o.inverse), bool(o.remap),
+                         bool(o.com_flip), o.contrast, o.start_line, o.addr_mode,
+                         bytes(ffi.buffer(o.vram)))
 
     # -- serial --------------------------------------------------------------
 
