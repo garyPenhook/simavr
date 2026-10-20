@@ -103,6 +103,7 @@ uint64_t avr_host_cycle(avr_host_t * h);
 uint64_t avr_host_time_ns(avr_host_t * h);
 
 int avr_host_get_cpu(avr_host_t * h, avr_host_cpu_t * out);
+int avr_host_sample_cpu(avr_host_t * h, avr_host_cpu_t * out);
 int avr_host_set_cpu(avr_host_t * h, const avr_host_cpu_t * in);
 int avr_host_pending_interrupts(avr_host_t * h, uint8_t * vectors, uint8_t * levels, int max);
 

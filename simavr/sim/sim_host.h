@@ -289,6 +289,14 @@ avr_host_set_cpu(
 		avr_host_t * h,
 		const avr_host_cpu_t * in);
 
+/* Same snapshot as avr_host_get_cpu() but allowed in any state, including
+ * RUNNING (a consistent snapshot between the sim thread's batches). Read-only;
+ * for live displays. */
+int
+avr_host_sample_cpu(
+		avr_host_t * h,
+		avr_host_cpu_t * out);
+
 /* Interrupt vectors that are raised, enabled and waiting to be taken (the
  * engine's pending queue), in dispatch order: highest CPUINT level first
  * (modern AVR: 2 NMI, 1 LVL1VEC, 0 normal; classic is always 0), then by the

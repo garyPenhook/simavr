@@ -1211,6 +1211,24 @@ avr_host_get_cpu(
 }
 
 int
+avr_host_sample_cpu(
+		avr_host_t * h,
+		avr_host_cpu_t * out)
+{
+	/* The sim thread runs a whole batch under the lock, so between batches
+	 * this is a consistent snapshot, in any state. */
+	host_lock(h);
+	avr_t * avr = h->avr;
+	out->pc = avr->pc;
+	out->sp = _avr_sp_get(avr);
+	READ_SREG_INTO(avr, out->sreg);
+	memcpy(out->r, avr->data, 32);
+	out->cycle = avr->cycle;
+	host_unlock(h);
+	return 0;
+}
+
+int
 avr_host_pending_interrupts(
 		avr_host_t * h,
 		uint8_t * vectors,

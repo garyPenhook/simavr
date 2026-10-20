@@ -157,18 +157,10 @@ class CpuView(QWidget):
         L["State"].setText(state.name)
         L["Cycle"].setText(str(sim.cycle))
         L["Time"].setText(f"{sim.time_ns / 1e6:.3f} ms")
-        if state in (State.RUNNING, State.SLEEPING):
-            # The C API only exposes PC/SP/SREG/r[] while paused; keep the last
-            # snapshot on screen rather than racing the sim thread.
-            self._regs.setEnabled(False)
-            for k in ("PC", "SP", "SREG"):
-                if not L[k].text().endswith("(stale)"):
-                    L[k].setText(L[k].text() + " (stale)")
-            return
         try:
-            cpu = sim.cpu
+            cpu = sim.sample_cpu()      # consistent between sim batches, so live while running
         except SimavrError:
-            return              # resumed between the state read and the fetch
+            return
         self._regs.setEnabled(True)
         flags = "".join(c if cpu.sreg & (0x80 >> i) else "-"
                         for i, c in enumerate("ITHSVNZC"))

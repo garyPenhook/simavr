@@ -408,6 +408,12 @@ class Simulator:
         self._check(self._L.avr_host_get_cpu(self._handle(), c))
         return Cpu(c.pc, c.sp, c.sreg, bytes(c.r), c.cycle)
 
+    def sample_cpu(self) -> Cpu:
+        """Like `cpu`, but allowed while running: a consistent snapshot for live displays."""
+        c = ffi.new("avr_host_cpu_t *")
+        self._check(self._L.avr_host_sample_cpu(self._handle(), c))
+        return Cpu(c.pc, c.sp, c.sreg, bytes(c.r), c.cycle)
+
     @cpu.setter
     def cpu(self, cpu: Cpu) -> None:
         if len(cpu.r) != 32:

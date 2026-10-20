@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -259,6 +260,19 @@ def test_pending_interrupts_dispatch_order_and_level():
         s.poke(CPUINT_LVL1VEC, v1)                      # elevate the later vector
         assert s.pending_interrupt_levels() == [(v1, 1), (v0, 0)]
         assert s.pending_interrupts() == [v1, v0]
+
+
+def test_sample_cpu_while_running():
+    with sa.Simulator("atmega4809") as s:
+        s.load_flash(words(rjmp(-1)))
+        s.start()
+        s.resume()
+        assert s.state is sa.State.RUNNING
+        c1 = s.sample_cpu()
+        time.sleep(0.05)
+        c2 = s.sample_cpu()
+        assert c2.cycle > c1.cycle and c2.pc in (0, 2)
+        s.pause()
 
 
 def test_pending_interrupts_needs_enable():
