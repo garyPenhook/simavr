@@ -190,6 +190,16 @@ analog input, interrupt events and VCD return `AVR_HOST_ENOTSUP` for now.
 (no `avr-gcc`); build instructions are in its header. Python bindings
 (cffi, Python 3.15, free-threading capable) live in [`python/`](python).
 
+**Desktop GUI.** [`python/`](python) also holds a PySide6 front-end (`./simavr-gui`) for
+loading firmware, running, stepping and poking pins, with register, port, timer, analog, serial,
+clock, system, interrupt and timeline docks and virtual board parts (LEDs, buttons, LCD, SSD1306
+OLED). It works on the modern AVRs and on classic parts such as the ATtiny13A. Below it runs an
+ATtiny3217 driving an SSD1306 OLED over TWI0
+([`python/examples/demo_3217_oled.c`](python/examples/demo_3217_oled.c)); see the
+[GUI README](python/README.md) for the full dock list.
+
+![simavr GUI running an ATtiny3217 that drives an SSD1306 OLED over TWI0](doc/img/gui-attiny3217-oled.png)
+
 Installation
 ------------
 
