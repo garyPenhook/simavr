@@ -223,6 +223,8 @@ count off the dock's volts.
 
 **Serial view (2026-10-19):** a "Serial" dock (`simavr_py.comms`, Qt-free, reuses the Analog field decoder) shows USART, SPI and TWI registers with every header-defined field, plus a USART **Baud rate** row (`64 x fCLK_PER / (S x BAUD)`, S = 16 / 8 with RXMODE=CLK2X; synchronous `fCLK_PER / (2 x BAUD[15:6])`; DS40002173C Table 23-1). Limits: CLK_PER is taken as the simulated CPU clock (the CLKCTRL prescaler is not read); no TWI/SPI derived rates; the TWI baud formula needs rise time and was not added. Display only.
 
+**Clock view (2026-10-19):** a "Clock" dock (`simavr_py.clock`, Qt-free, reuses the Analog field decoder) shows the CLKCTRL registers with every header-defined field, plus Main clock (CLKSEL), Prescaler (PEN/PDIV; PDIV ignored with PEN=0, reserved codes shown as reserved) and CLK_PER / CLK_MAIN (DS40002205A 10.3, 10.5.1-10.5.2). CLK_PER is the simulated CPU clock, which the engine takes from CLKCTRL, so CLK_MAIN is CLK_PER x division, not a frequency table. Same register layout on all 46 cores. Limits: oscillator control, calibration and MCLKSTATUS are shown only as header fields; display only.
+
 1. Recreate the current visual demos in Python:
    * LED ramp
    * SSD1306 / SH1106 OLED

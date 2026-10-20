@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..analog import analog, decode as decode_analog
+from ..clock import clkctrl, decode as decode_clock
 from ..comms import comms, decode as decode_comms
 from ..evsys import evsys, rows as evsys_rows
 from ..portmux import RouteField, routes
@@ -1310,6 +1311,20 @@ class SerialPane(AnalogPane):
         return decode_comms(sim.mmcu, block, read, sim.frequency)
 
 
+class ClockPane(SerialPane):
+    """CLKCTRL register state decoded like the Analog dock, plus the main clock source, prescaler and
+    the resulting CLK_MAIN / CLK_PER. A register view: nothing here changes the simulation."""
+
+    WHAT = "clock controller"
+
+    @staticmethod
+    def _find(mmcu: str):
+        return clkctrl(mmcu)
+
+    def _decode(self, sim: Simulator, block, read):
+        return decode_clock(sim.mmcu, block, read, sim.frequency)
+
+
 class InterruptPane(QWidget):
     """Interrupt activity: per-vector dispatch count, CPUINT level and the cycle
     of the last dispatch. Fed from the host's vector-taken events (RETIs are not
@@ -1508,6 +1523,7 @@ class MainWindow(QMainWindow):
         self.evpane = EvsysPane()
         self.analogpane = AnalogPane()
         self.serialpane = SerialPane()
+        self.clockpane = ClockPane()
         self.timeline = TimelineView()
         self.board = BoardCanvas()
         self.board.failed.connect(lambda m: QMessageBox.warning(self, "Board", m))
@@ -1533,6 +1549,7 @@ class MainWindow(QMainWindow):
                                ("Events", self.evpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Analog", self.analogpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Serial", self.serialpane, Qt.DockWidgetArea.RightDockWidgetArea),
+                               ("Clock", self.clockpane, Qt.DockWidgetArea.RightDockWidgetArea),
                                ("Timeline", self.timeline, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("Memory", self.mem, Qt.DockWidgetArea.BottomDockWidgetArea),
                                ("UART", self.uart, Qt.DockWidgetArea.BottomDockWidgetArea)):
@@ -1686,6 +1703,7 @@ class MainWindow(QMainWindow):
         self.evpane.set_sim(sim)
         self.analogpane.set_sim(sim)
         self.serialpane.set_sim(sim)
+        self.clockpane.set_sim(sim)
         self.irqs.set_sim(sim)
         self.breaks.set_sim(sim)
         self.databreaks.set_sim(sim)
@@ -1717,6 +1735,7 @@ class MainWindow(QMainWindow):
         self.evpane.set_sim(None)
         self.analogpane.set_sim(None)
         self.serialpane.set_sim(None)
+        self.clockpane.set_sim(None)
         self.irqs.set_sim(None)
         self.uart.set_sim(None)
         self.breaks.set_sim(None)
@@ -1833,6 +1852,7 @@ class MainWindow(QMainWindow):
         self.evpane.refresh(sim)
         self.analogpane.refresh(sim)
         self.serialpane.refresh(sim)
+        self.clockpane.refresh(sim)
         self.timeline.refresh()
         self._update_actions()
 
