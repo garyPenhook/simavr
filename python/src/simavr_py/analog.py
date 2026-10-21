@@ -19,6 +19,13 @@ Beyond the raw fields each block gets derived rows (data-sheet arithmetic, not s
   RES = 1023 * VIN / VREF (DS40002173C 29.3.2.5), accumulated over SAMPNUM samples, 8-bit mode
   keeps the top eight of the ten bits. tinyAVR 2-series: the SAMPLE register by the output
   formats of DS40002345B 30.3.3.3 (12/8-bit, single-ended/differential, PGA gain, LEFTADJ).
+* ADC temperature sensor (tinyAVR 0/1, MUXPOS = TEMPSENSE): kelvin and degrees C from RES and the
+  SIGROW.TEMPSENSE0 (gain, unsigned) / TEMPSENSE1 (offset, signed) calibration bytes, by the code in
+  DS40002205A 30.3.2.6: K = ((RES - TEMPSENSE1) * TEMPSENSE0 + 0x80) >> 8. The data sheet needs the
+  1.1 V reference; with another one the row says so instead of a temperature.
+* DAC: the output as DATA * VREF / 256 for the reference VREF.DACnREFSEL selects. DS40002205A 31.3.1
+  says only that the range is GND to the selected reference with 8-bit data (31.5.2, Table 36-31) and
+  never prints the divisor, so the row is labelled nominal (the AC's divider, 28.5.3, does print /256).
 * AC: the DACREF divider output, DACREF * VREF / 256 (DS40002173C 29.5.4).
 * ADC and AC mux options name the pad (`MUXPOS=AIN3 (PD3)`) from `analog_pins.json`, generated
   from Microchip's ATDF device files by `tools/gen_analog_pins.py`.
@@ -243,6 +250,40 @@ class _View:
         return option_volts(option)
 
 
+@lru_cache(maxsize=None)
+def _sigrow(mmcu: str) -> tuple[int, int] | None:
+    """Data-space addresses of SIGROW.TEMPSENSE0 / TEMPSENSE1, None if the device lacks them."""
+    a = {r.name: r.address for r in registers(mmcu)}
+    return (a["SIGROW.TEMPSENSE0"], a["SIGROW.TEMPSENSE1"]) if "SIGROW.TEMPSENSE0" in a and "SIGROW.TEMPSENSE1" in a else None
+
+
+def _temp_row(v: _View, b: Block, ref: str, n_samples: int, res: int) -> tuple[str, str] | None:
+    """Temperature row for an ADC reading the on-chip sensor (tinyAVR 0/1), else None."""
+    mux, cal = v.opt(b.name, "MUXPOS", "MUXPOS"), _sigrow(v.mmcu)
+    if mux is None or mux[1] != "TEMPSENSE" or cal is None:
+        return None
+    if ref != "1V1":
+        return ("Temperature", f"needs the 1.1 V reference (selected: {ref})")
+    if n_samples != 1:
+        return ("Temperature", "single-sample conversions only (SAMPNUM = ACC1)")
+    gain, off = v.read(cal[0], 1), v.read(cal[1], 1)
+    off -= 256 if off & 0x80 else 0                                 # TEMPSENSE1 is signed
+    kelvin = (((res - off) * gain + 0x80) >> 8) if res >= off else 0   # user-code steps, DS40002205A p.434
+    return ("Temperature", f"RES = {res}, gain {gain}, offset {off}  ->  {kelvin} K = {kelvin - 273.15:.1f} C")
+
+
+def _dac_rows(v: _View, b: Block) -> list[tuple[str, str]]:
+    if "DATA" not in b.regs:
+        return []
+    ref = v.vref_option(f"{b.name}REFSEL")
+    volts = v.volts(ref)
+    if volts is None:
+        return []
+    code, on = v.raw(b.name, "DATA"), (v.raw(b.name, "CTRLA") or 0) & 1
+    text = f"{code} * {ref} ({volts:g} V) / 256 = {code * volts / 256:.4g} V  (nominal"
+    return [("Output", text + ("" if on else ", DAC disabled") + ")")]
+
+
 def _adc_rows(v: _View, b: Block) -> list[tuple[str, str]]:
     n = b.name.removeprefix("ADC")
     sel = v.opt(b.name, "CTRLC", "REFSEL")
@@ -291,6 +332,8 @@ def _adc_rows(v: _View, b: Block) -> list[tuple[str, str]]:
         rows.append(("Result", f"RES = {res}" + (f" over {n_samples} samples (avg {avg:g})" if n_samples > 1 else "")
                                + f"  ->  VIN ~ {vin:.4g} V"
                                + ("" if ten else "  (8-bit: top 8 of 10 bits, +-4 LSB)")))
+        if ten and (t := _temp_row(v, b, ref, n_samples, res)):
+            rows.append(t)
     return rows
 
 
@@ -319,5 +362,6 @@ def decode(mmcu: str, block: Block, read: Read, vdd_mv: int = 3300) -> tuple[tup
         value = read(addr, size)
         out.append((reg, f"0x{value:0{2 * size}X}", describe(h.fields.get((block.kind, reg), ()), value, note)))
     v = _View(mmcu, read, vdd_mv)
-    derived = _adc_rows(v, block) if block.kind == "ADC" else _ac_rows(v, block) if block.kind == "AC" else []
+    derived = _adc_rows(v, block) if block.kind == "ADC" else _ac_rows(v, block) if block.kind == "AC" else \
+        _dac_rows(v, block) if block.kind == "DAC" else []
     return tuple(out) + tuple((label, "", text) for label, text in derived)

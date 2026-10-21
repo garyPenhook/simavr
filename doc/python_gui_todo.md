@@ -215,8 +215,13 @@ output (DACREF x VREF / 256). Mux options name their pad from `analog_pins.json`
 the ATDF device files (`python/tools/gen_analog_pins.py`; 45 of 46 devices, ATtiny3214 has no
 ATDF). VDD references use a VDD spin box (the simulator has no supply register); an external
 VREFA has no known voltage so no result. Limits: only the latest SAMPLE (2-series) or RES is
-converted, never the 32-bit accumulated RESULT; DAC output volts and the temperature sensor are
-not converted. **Open engine question:** `avr_adc_modern.c` converts with `Vin * 1024 / VREF`
+converted, never the 32-bit accumulated RESULT; DAC output and the temperature sensor are
+converted since 2026-10-21: DAC "Output" = DATA x VREF / 256 for the VREF.DACnREFSEL level, labelled
+*nominal* because DS40002205A 31.3.1/31.5.2 give only "GND to the selected reference, 8-bit" and never
+print the divisor; tinyAVR 0/1 ADC "Temperature" (MUXPOS = TEMPSENSE) = K and C from RES and
+SIGROW.TEMPSENSE0/1 by the user-code steps of DS40002205A 30.3.2.6 (p.434, rounding +0x80), only with
+the 1.1 V reference and a single sample (otherwise the row says why). Not done: the 2-series
+temperature sensor (its data sheet's formula was not checked) and the DAC's offset/gain errors. **Open engine question:** `avr_adc_modern.c` converts with `Vin * 1024 / VREF`
 (clamped) while the data sheet says `1023 * VIN / VREF`, so a simulated input can read up to one
 count off the dock's volts.
 

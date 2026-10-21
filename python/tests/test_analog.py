@@ -156,6 +156,28 @@ def test_dacref_voltage():
     assert not [k for k in rows("attiny3217") if k.endswith("DACREF voltage")]
 
 
+def test_tiny1_temperature_from_sigrow():
+    cal = {"SIGROW.TEMPSENSE0": 0xC0, "SIGROW.TEMPSENSE1": 0xF0}            # gain 192, offset -16
+    base = {**cal, "ADC0.MUXPOS": 0x1E, "ADC0.CTRLC": 0x00, "VREF.CTRLA": 0x10, "ADC0.RES": 400}
+    r = rows("attiny3217", base)
+    # ((400 - -16) * 192 + 0x80) >> 8 = 312 K (DS40002205A p.434 user-code steps)
+    assert r["ADC0.Temperature"][1] == "RES = 400, gain 192, offset -16  ->  312 K = 38.9 C"
+    r = rows("attiny3217", {**base, "VREF.CTRLA": 0x20})                    # 2.5 V reference
+    assert r["ADC0.Temperature"][1] == "needs the 1.1 V reference (selected: 2V5)"
+    r = rows("attiny3217", {**base, "ADC0.CTRLB": 0x02})                    # accumulating
+    assert "single-sample" in r["ADC0.Temperature"][1]
+    r = rows("attiny3217", {**base, "ADC0.MUXPOS": 0x03})                   # a pin, not the sensor
+    assert "ADC0.Temperature" not in r
+
+
+def test_tiny1_dac_output():
+    r = rows("attiny3217", {"DAC0.DATA": 128, "DAC0.CTRLA": 0x41, "VREF.CTRLA": 0x02})
+    assert r["DAC0.Output"][1] == "128 * 2V5 (2.5 V) / 256 = 1.25 V  (nominal)"
+    r = rows("attiny3217", {"DAC0.DATA": 255, "VREF.CTRLA": 0x01})
+    assert r["DAC0.Output"][1] == "255 * 1V1 (1.1 V) / 256 = 1.096 V  (nominal, DAC disabled)"
+    assert not [k for k in rows("atmega4809") if k.endswith("Output")]
+
+
 SCRIPT = """
 import sys
 from PySide6.QtWidgets import QApplication
