@@ -90,7 +90,11 @@ Neither has an external pull-up on SW0, so firmware must enable the internal one
 <code>{"type": "oled", "bus": "twi", "addr": 60}</code> or
 <code>{"type": "oled", "bus": "spi", "dc": "PC1", "cs": "PC0", "res": "PC2"}</code>.
 The bus pins are the firmware's; <code>cs</code>/<code>dc</code>/<code>res</code> are GPIOs the
-panel listens to. A bad board shows a warning and is not loaded.</p>
+panel listens to.</p>
+<p>Parts flow left to right in a 4-column grid. Give a part both <code>row</code> and
+<code>col</code> (0-based) to pin it to a cell instead, e.g.
+<code>{"type": "led", "pin": "PA0", "row": 1, "col": 2}</code>; two parts may not share a cell.
+A bad board shows a warning and is not loaded.</p>
 """),
     ("Debugging", """
 <h2>Debugging</h2>

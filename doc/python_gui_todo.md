@@ -124,7 +124,7 @@ only exposes PC/SP/SREG/r[] while paused, so the CPU view keeps its last
 snapshot while running. Added later the same day: watch pane (data-space `[label=]hexaddr[:width]`,
 changed-value highlight) and session save/restore (Session menu or
 `--session FILE.json`: firmware, MCU, clock, window/dock layout, watches, driven
-pins). Named register watches landed later (the Watch box takes `TCA0.SINGLE.CNT`, case-insensitive, width defaults to the register size; an exact name wins over a hex reading). Not done: board canvas, per-pin edge coalescing/timeline. Known quirk: on 3.15.0a7,
+pins). Named register watches landed later (the Watch box takes `TCA0.SINGLE.CNT`, case-insensitive, width defaults to the register size; an exact name wins over a hex reading). Not done: per-pin edge coalescing. Known quirk: on 3.15.0a7,
 importing PySide6 stops `simavr_py.<name>` attribute access from reifying lazy
 imports (use `from simavr_py.core import ...` alongside PySide6).
 
@@ -225,6 +225,12 @@ count off the dock's volts.
 **Clock view (2026-10-19):** a "Clock" dock (`simavr_py.clock`, Qt-free, reuses the Analog field decoder) shows the CLKCTRL registers with every header-defined field, plus Main clock (CLKSEL), Prescaler (PEN/PDIV; PDIV ignored with PEN=0, reserved codes shown as reserved) and CLK_PER / CLK_MAIN (DS40002205A 10.3, 10.5.1-10.5.2). CLK_PER is the simulated CPU clock, which the engine takes from CLKCTRL, so CLK_MAIN is CLK_PER x division, not a frequency table. Same register layout on all 46 cores. Limits: oscillator control, calibration and MCLKSTATUS are shown only as header fields; display only.
 
 **System view (2026-10-19):** a "System" dock (`simavr_py.system`, Qt-free, reuses the Analog field decoder) shows RSTCTRL, SLPCTRL, BOD, WDT, CPUINT, CRCSCAN, RTC (incl. PIT), CCL, NVMCTRL and SYSCFG registers with every header-defined field, for whichever of them the device has. No derived rows (no timeout or period conversion). Display only.
+
+**Board placement (2026-10-21):** a board part may carry `row` and `col` (both, or neither) to pin
+it to a cell of the Board dock's 4-column grid; unplaced parts keep flowing left to right and step
+over pinned cells. Two parts in one cell are rejected. Fixed on the way: the encoder's button loop
+reused the placement variable, shifting every part after an encoder. Not done: free-form pixel
+positions or a board image background.
 
 1. Recreate the current visual demos in Python:
    * LED ramp

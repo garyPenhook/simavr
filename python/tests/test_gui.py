@@ -984,3 +984,33 @@ assert h._list.currentItem().text() == "Timeline" and win._help is h
     import subprocess, sys
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+PLACEMENT_SCRIPT = r"""
+from PySide6.QtWidgets import QApplication
+from simavr_py.boards import board_from_dict
+from simavr_py.gui.board import BoardCanvas
+app = QApplication([])
+c = BoardCanvas()
+c.set_board(board_from_dict({"widgets": [
+    {"type": "led", "pin": "PA0"},                                   # flow: 0,0
+    {"type": "encoder", "pin_a": "PC0", "pin_b": "PC1"},             # flow: 0,1
+    {"type": "led", "pin": "PA1", "row": 5, "col": 2},               # pinned
+    {"type": "led", "pin": "PA2"},                                   # flow: 0,2
+    {"type": "led", "pin": "PA3", "row": 0, "col": 3},               # pinned
+    {"type": "led", "pin": "PA4"},                                   # flow skips 0,3 -> 1,0
+]}))
+g = c._host.layout()
+cells = {}
+for i in range(g.count()):
+    r, col, _, _ = g.getItemPosition(i)
+    cells[i] = (r, col)
+assert cells == {0: (0, 0), 1: (0, 1), 2: (5, 2), 3: (0, 2), 4: (0, 3), 5: (1, 0)}, cells
+"""
+
+
+def test_board_canvas_honours_placement():
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
+    r = subprocess.run([sys.executable, "-c", PLACEMENT_SCRIPT], env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr

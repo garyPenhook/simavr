@@ -231,10 +231,17 @@ class BoardCanvas(QWidget):
         grid = QGridLayout(self._host)
         enabled = self._runtime is not None
         row = col = 0
+        taken = {(w.row, w.col) for w in board.widgets if w.row >= 0}
         for i, w in enumerate(board.widgets):
             wide = isinstance(w, (LcdSpec, OledSpec))       # an LCD takes a row of its own
-            if wide and col:
+            placed = w.row >= 0
+            if wide and col and not placed:
                 row, col = row + 1, 0
+            span = COLUMNS if wide else 1
+            while not placed and any((row, col + k) in taken for k in range(span)):
+                col += 1                # step over cells another part is pinned to
+                if col >= COLUMNS:
+                    row, col = row + 1, 0
             cell = QWidget()
             lay = QVBoxLayout(cell)
             lay.setContentsMargins(4, 4, 4, 4)
@@ -267,16 +274,18 @@ class BoardCanvas(QWidget):
                     pair = QWidget()
                     rl = QGridLayout(pair)
                     rl.setContentsMargins(0, 0, 0, 0)
-                    for col, (text, d) in enumerate((("⟲", -1), ("⟳", 1))):
+                    for c, (text, d) in enumerate((("⟲", -1), ("⟳", 1))):
                         b = QPushButton(text)
                         b.setEnabled(enabled)
                         b.clicked.connect(lambda _, i=i, d=d: self._turn(i, d))
-                        rl.addWidget(b, 0, col)
+                        rl.addWidget(b, 0, c)
                     lay.addWidget(pair)
             name = QLabel(label or "")
             name.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lay.addWidget(name)
-            span = COLUMNS if wide else 1
+            if placed:                  # pinned parts leave the flow cursor alone
+                grid.addWidget(cell, w.row, w.col, 1, span)
+                continue
             grid.addWidget(cell, row, col, 1, span)
             col += span
             if col >= COLUMNS:

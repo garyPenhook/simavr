@@ -289,3 +289,21 @@ def test_lcd_resync_drops_half_byte_and_adopts_levels():
     assert lcd._high is None and lcd.lost
     _text(lcd, "Z")                         # pairing is back in step
     assert lcd.lines()[0].startswith("Z")
+
+
+def test_placement_parses_and_validates():
+    b = board_from_dict({"widgets": [
+        {"type": "led", "pin": "PA0", "row": 2, "col": 3},
+        {"type": "led", "pin": "PA1"},
+    ]})
+    assert (b.widgets[0].row, b.widgets[0].col) == (2, 3)
+    assert (b.widgets[1].row, b.widgets[1].col) == (-1, -1)
+    for bad in (
+        [{"type": "led", "pin": "PA0", "row": 1}],                    # half a cell
+        [{"type": "led", "pin": "PA0", "row": -1, "col": 0}],
+        [{"type": "led", "pin": "PA0", "row": True, "col": 0}],
+        [{"type": "led", "pin": "PA0", "row": 0, "col": 0},
+         {"type": "led", "pin": "PA1", "row": 0, "col": 0}],           # same cell
+    ):
+        with pytest.raises(BoardError):
+            board_from_dict({"widgets": bad})

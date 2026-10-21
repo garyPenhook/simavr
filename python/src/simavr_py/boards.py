@@ -9,6 +9,9 @@ virtual parts wired to MCU pins, not glue code.
        {"type": "lcd", "rs": "PD0", "e": "PD1", "data": ["PD4", "PD5", "PD6", "PD7"],
         "cols": 16, "rows": 2}]}
 
+Parts flow left to right in a 4-column grid; give a part both `row` and `col` to
+pin it to a cell instead (two parts may not share one).
+
 An HD44780 `lcd` lists `data` as D4..D7 (4-bit) or D0..D7 (8-bit); `rw` is
 optional and, when wired, a pulse with RW high is ignored (writes only).
 """
@@ -32,6 +35,8 @@ class LedSpec:
     label: str = ""
     color: str = "red"
     active_low: bool = False
+    row: int = -1                   # grid cell on the board canvas; -1 = flow
+    col: int = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +46,8 @@ class ButtonSpec:
     active_low: bool = True
     latch: bool = False
     pull: bool = False
+    row: int = -1                   # grid cell on the board canvas; -1 = flow
+    col: int = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +56,8 @@ class EncoderSpec:
     pin_b: str
     label: str = ""
     active_low: bool = True
+    row: int = -1                   # grid cell on the board canvas; -1 = flow
+    col: int = -1
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +69,8 @@ class LcdSpec:
     cols: int = 16
     rows: int = 2
     label: str = ""
+    row: int = -1                   # grid cell on the board canvas; -1 = flow
+    col: int = -1
 
     def roles(self) -> dict[str, str]:
         """MCU pin -> LCD signal name, as `LcdModel.on_pin` takes it."""
@@ -83,6 +94,8 @@ class OledSpec:
     dc: str = ""
     res: str = ""
     label: str = ""
+    row: int = -1                   # grid cell on the board canvas; -1 = flow
+    col: int = -1
 
 
 type WidgetSpec = LedSpec | ButtonSpec | EncoderSpec | LcdSpec | OledSpec
@@ -115,15 +128,16 @@ class Board:
 
 
 _KINDS: dict[str, tuple[type, dict[str, type]]] = {
-    "led": (LedSpec, {"pin": str, "label": str, "color": str, "active_low": bool}),
+    "led": (LedSpec, {"pin": str, "label": str, "color": str, "active_low": bool,
+                    "row": int, "col": int}),
     "button": (ButtonSpec, {"pin": str, "label": str, "active_low": bool,
-                            "latch": bool, "pull": bool}),
+                            "latch": bool, "pull": bool, "row": int, "col": int}),
     "encoder": (EncoderSpec, {"pin_a": str, "pin_b": str, "label": str,
-                              "active_low": bool}),
+                              "active_low": bool, "row": int, "col": int}),
     "lcd": (LcdSpec, {"rs": str, "e": str, "rw": str, "data": list,
-                      "cols": int, "rows": int, "label": str}),
+                      "cols": int, "rows": int, "label": str, "row": int, "col": int}),
     "oled": (OledSpec, {"bus": str, "instance": int, "addr": int, "cs": str, "dc": str,
-                        "res": str, "label": str}),
+                        "res": str, "label": str, "row": int, "col": int}),
 }
 _PIN_FIELDS = {"pin", "pin_a", "pin_b", "rs", "e", "rw", "cs", "dc", "res"}
 _REQUIRED = {"led": ("pin",), "button": ("pin",), "encoder": ("pin_a", "pin_b"),
@@ -147,6 +161,11 @@ def _widget(d, index: int) -> WidgetSpec:
             raise BoardError(f"{where}: {key!r} must be {fields[key].__name__}")
         if key in _PIN_FIELDS:
             d[key] = value.strip().upper()
+    for key in ("row", "col"):
+        if d.get(key, 0) < 0:
+            raise BoardError(f"{where}: {key!r} must be >= 0")
+    if ("row" in d) != ("col" in d):
+        raise BoardError(f"{where}: 'row' and 'col' go together")
     if missing := [f for f in _REQUIRED[kind] if f not in d]:
         raise BoardError(f"{where}: a {kind} needs {', '.join(missing)}")
     if kind == "lcd":
@@ -208,6 +227,10 @@ def board_from_dict(d) -> Board:
             raise BoardError(f"{key!r} must be a string")
     board = Board(name=d.get("name", "board"), mmcu=d.get("mmcu"), freq=freq,
                   widgets=tuple(_widget(w, i) for i, w in enumerate(widgets)))
+    cells = [(w.row, w.col) for w in board.widgets if w.row >= 0]
+    if dup := sorted({c for c in cells if cells.count(c) > 1}):
+        raise BoardError("two parts placed in cell(s): "
+                         + ", ".join(f"row {r} col {c}" for r, c in dup))
     pins = board.pins()
     if dup := sorted({p for p in pins if pins.count(p) > 1}):
         raise BoardError(f"pin(s) wired more than once: {', '.join(dup)}")

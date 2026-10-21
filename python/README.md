@@ -108,6 +108,10 @@ or momentary), a rotary encoder, an HD44780 LCD and a 128x64 SSD1306 OLED (I2C o
 `{"type": "oled", "bus": "spi", "dc": "PC1", "cs": "PC0", "res": "PC2"}`; the bus pins are
 the firmware's, `cs`/`dc`/`res` are the GPIOs the panel listens to.
 
+Parts flow left to right in a 4-column grid; add `"row"` and `"col"` (both, 0-based) to a
+part to pin it to a cell, e.g. `{"type": "led", "pin": "PA0", "row": 1, "col": 2}`. Two parts
+may not share a cell.
+
 Shipped boards in `boards/`:
 
 | File | MCU | Wired parts |
