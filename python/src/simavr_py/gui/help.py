@@ -152,7 +152,7 @@ effects like a CPU write.</li>
 <li><b>Ports</b>: per pin direction, OUT latch, input level, invert, pull-up and sense config.
 Changed levels are highlighted.</li>
 <li><b>PORTMUX</b>: each routing field, its value, the selected option and the pins. Bold = not the reset
-routing. On the ATtiny3216/3217, USART0 TXD and TCA0 WO0&ndash;WO2 follow these fields: the signal shows on the
+routing. On the ATtiny3216/3217, USART0 TXD and TCA0 WO0&ndash;WO5 follow these fields: the signal shows on the
 selected pin (Ports, pin panel, Timeline, VCD) and moves when you change the field. Other fields are shown only.</li>
 <li><b>Timers</b>: TCA (single/split), TCB, TCD registers one row per field. The Timeline draws outputs.</li>
 <li><b>Events</b>: Event System channels, generators and users, with names from the device header.</li>
@@ -170,7 +170,7 @@ blocks the device has.</li>
 <h2>Timeline</h2>
 <p>A logic-analyser view over simulated time.</p>
 <ul>
-<li>Type a pin (<code>PA0</code>), a timer output (<code>TCA0.WO1</code>) or a bus (<code>SPI0</code>,
+<li>Type a pin (<code>PA0</code>), a timer output (<code>TCA0.WO1</code>; <code>WO3</code>&ndash;<code>WO5</code> are split-mode high-byte outputs) or a bus (<code>SPI0</code>,
 <code>TWI0</code>, <code>USART1</code>) and press Enter to add a trace. UART0 TX and interrupt vectors are
 also shown.</li>
 <li><b>Mouse wheel</b> zooms; <b>drag</b> pans.</li>
@@ -204,7 +204,7 @@ the left holds a tab group of peripheral panes; the bottom holds Timeline plus M
 <h2>Limits &amp; tips</h2>
 <ul>
 <li>Peripheral docks are register views, not events in flight.</li>
-<li>PORTMUX re-routes only USART0 TXD and TCA0 WO0&ndash;WO2 on the ATtiny3216/3217 so far; the firmware must still set the pin's DIR as an output.</li>
+<li>PORTMUX re-routes only USART0 TXD and TCA0 WO0&ndash;WO5 on the ATtiny3216/3217 so far; the firmware must still set the pin's DIR as an output.</li>
 <li>A core missing from the MCU box means its device header did not preprocess with the installed toolchain.</li>
 <li>No source lines or symbols? Rebuild with <code>-g</code> and make sure the ELF (not a HEX) is loaded.</li>
 <li>Edits to registers or memory need a stopped simulator.</li>

@@ -568,7 +568,7 @@ d = win.session_dict()
 assert d["timeline"] == ["PA0"]
 assert tl._uart and tl.uart_bytes(0, 1 << 62)[0][1] == ord("h")
 assert tl.add("tca0.wo0") and tl.add("TCB1.WO")       # timer output lanes
-assert not tl.add("TCA7.WO0") and not tl.add("TCA0.WO3")
+assert not tl.add("TCA7.WO0") and not tl.add("TCA0.WO6")
 tl.record(IrqEvent(sub=next(s for s, n in tl._subs.items() if n == "TCA0.WO0"),
                                            cycle=win._sim.cycle, index=0, value=1))
 assert tl.traces["TCA0.WO0"].level_at(win._sim.cycle) is True

@@ -77,9 +77,12 @@ def test_write_vcd_range(tmp_path):
 
 def test_timer_output_names():
     assert timer_output("TCA0.WO1") == ("tca", "0", 1)
+    assert timer_output("TCA0.WO2") == ("tca", "0", 2)
+    assert timer_output("TCA0.WO3") == ("tca", "0", 7)      # split mode high byte
+    assert timer_output("TCA0.WO5") == ("tca", "0", 9)
     assert timer_output("TCB3.WO") == ("tcb", "3", 2)
     assert timer_output("TCD0.WOB") == ("tcd", "0", 1)
-    for bad in ("PA0", "TCA0.WO3", "TCA0", "TCB0.WO1", "TCD0.WOC", "xTCA0.WO0"):
+    for bad in ("PA0", "TCA0.WO6", "TCA0", "TCB0.WO1", "TCD0.WOC", "xTCA0.WO0"):
         assert timer_output(bad) is None
 
 

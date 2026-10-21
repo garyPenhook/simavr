@@ -51,7 +51,8 @@ class PinTrace:
 
 
 _TIMER_OUT = (
-    (re.compile(r"TCA(\d)\.WO([0-2])"), "tca", lambda m: int(m[2])),
+    # WO0-2 are IRQs 0-2; the split-mode high-byte outputs WO3-5 follow EV_IN/PIN0-2 at 7-9
+    (re.compile(r"TCA(\d)\.WO([0-5])"), "tca", lambda m: int(m[2]) if m[2] < "3" else int(m[2]) + 4),
     (re.compile(r"TCB(\d)\.WO"), "tcb", lambda m: 2),        # AVR_TCB_IRQ_WO
     (re.compile(r"TCD(\d)\.WO([AB])"), "tcd", lambda m: "AB".index(m[2])),
 )

@@ -366,7 +366,7 @@ so cursor A is time 0, each pin starting at its level at A (`write_vcd(start=)`)
 analog values.
 
 **Timer lanes (slice 15, 2026-10-19):** the pin box also takes timer waveform
-outputs: `TCA0.WO0-2`, `TCB0-3.WO`, `TCD0.WOA/WOB`. They subscribe to the timer's
+outputs: `TCA0.WO0-5` (WO3-5 added 2026-10-21: split-mode high-byte outputs, IRQs 7-9), `TCB0-3.WO`, `TCD0.WOA/WOB`. They subscribe to the timer's
 output IRQ (`subscribe_irq`, same ioctl/index the engine test uses), so they show
 the timer's own output even when PORTMUX doesn't route it to a pin; they are
 saved in the session with the pins. The initial level is assumed low (an IRQ's
