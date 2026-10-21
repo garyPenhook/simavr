@@ -124,10 +124,10 @@ Shipped boards in `boards/`:
 | `demo_212.json` | attiny212 | 2 LEDs, 2 buttons |
 | `oled_3217.json` | attiny3217 | LED0 + SSD1306 on TWI0 at 0x3C (matches `examples/demo_3217_oled.c`, pictured above) |
 | `demo_13a.json` | attiny13a | 2 LEDs, 1 button (matches `examples/demo_13a.c`: Timer0 blink, pull-up button, ADC) |
-| `curiosity_nano_4809.json` | atmega4809 | ATmega4809 Curiosity Nano: LED0 on PF5 (active low), SW0 on PF6 |
+| `curiosity_nano_4809.json` | atmega4809 | ATmega4809 Curiosity Nano: LED0 on PF5 (active low), SW0 on PF6 (matches `examples/demo_4809_nano.c`) |
 | `curiosity_nano_3217.json` | attiny3217 | ATtiny3217 Curiosity Nano: LED0 on PA3 (active low), SW0 on PB7 (matches `examples/demo_3217_nano.c`) |
 
-The `demo_*` layouts are generic; only `demo_4809`, `demo_13a` and `oled_3217` have matching firmware (the Nano boards: `curiosity_nano_3217` has `demo_3217_nano`). The
+The `demo_*` layouts are generic; only `demo_4809`, `demo_13a` and `oled_3217` have matching firmware (the Nano boards: `curiosity_nano_3217` has `demo_3217_nano`, `curiosity_nano_4809` has `demo_4809_nano`). The
 Curiosity Nano pins come from Microchip's board user guides. Neither Nano has an
 external pull-up on SW0, so the firmware must enable the internal one.
 

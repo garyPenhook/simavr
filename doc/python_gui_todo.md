@@ -231,6 +231,8 @@ count off the dock's volts.
 
 **System view (2026-10-19):** a "System" dock (`simavr_py.system`, Qt-free, reuses the Analog field decoder) shows RSTCTRL, SLPCTRL, BOD, WDT, CPUINT, CRCSCAN, RTC (incl. PIT), CCL, NVMCTRL and SYSCFG registers with every header-defined field, for whichever of them the device has. No derived rows (no timeout or period conversion). Display only.
 
+**ATmega4809 Nano demo (2026-10-21):** `python/examples/demo_4809_nano.c/.elf` is the 4809 twin of `demo_3217_nano` for `boards/curiosity_nano_4809.json` (LED0 PF5 blinking from the TCA0 overflow ISR, held on while SW0 PF6 is pressed, a line per tick on USART0 TX = PA0, default pins per DS40002173C 4.1). `test_4809_nano_demo_runs_on_its_board` runs it headless and checks the blink, the button hold and the UART text.
+
 **Board placement (2026-10-21):** a board part may carry `row` and `col` (both, or neither) to pin
 it to a cell of the Board dock's 4-column grid; unplaced parts keep flowing left to right and step
 over pinned cells. Two parts in one cell are rejected. Fixed on the way: the encoder's button loop

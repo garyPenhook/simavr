@@ -83,7 +83,8 @@ applies its MCU and clock, so load it before the firmware (the command line does
 <code>demo_212</code>: generic LED/button/encoder/LCD layouts (only demo_4809 has matching firmware).</li>
 <li><code>oled_4809</code>: SSD1306 on TWI0 at 0x3C.</li>
 <li><code>curiosity_nano_4809</code>, <code>curiosity_nano_3217</code>: the Curiosity Nano LED0 and SW0.
-Neither has an external pull-up on SW0, so firmware must enable the internal one.</li>
+Neither has an external pull-up on SW0, so firmware must enable the internal one.
+Matching firmware: <code>examples/demo_3217_nano</code> and <code>examples/demo_4809_nano</code>.</li>
 </ul>
 <h3>Writing your own</h3>
 <p>JSON or TOML; see <code>boards/demo_4809.json</code>. An OLED is

@@ -307,3 +307,31 @@ def test_placement_parses_and_validates():
     ):
         with pytest.raises(BoardError):
             board_from_dict({"widgets": bad})
+
+
+def test_4809_nano_demo_runs_on_its_board():
+    """examples/demo_4809_nano.elf on boards/curiosity_nano_4809.json: LED0 (PF5, active low)
+    blinks from the TCA0 overflow ISR, is held on while SW0 (PF6) is pressed, and USART0 (PA0)
+    prints a line per tick. Pins per DS40002173C 4.1 (USART0 TxD on PA0 by default)."""
+    from pathlib import Path
+    import simavr_py.core as sa
+    here = Path(__file__).resolve().parent.parent
+    board = load_board(here / "boards" / "curiosity_nano_4809.json")
+    sim = sa.Simulator(board.mmcu, board.freq)
+    sim.load_elf(here / "examples" / "demo_4809_nano.elf")
+    sim.reset()
+    sim.subscribe_uart(0)
+    sim.run_cycles(board.freq // 10)
+    assert sim.pin_state("PF5").dir and sim.pin_state("PF6").pullup          # LED output, SW0 pulled up
+    seen = set()
+    for _ in range(40):
+        sim.run_cycles(board.freq // 20)
+        seen.add(sim.pin_state("PF5").out)
+    assert seen == {True, False}                                              # blinking
+    sim.events()
+    sim.drive("PF6", False)                                                   # press SW0
+    sim.run_cycles(board.freq // 2)
+    assert not sim.pin_state("PF5").out                                       # held on (active low)
+    sim.run_cycles(board.freq)
+    text = bytes(e.byte for e in sim.events() if isinstance(e, sa.UartTxEvent)).decode()
+    assert "sw=0" in text and "tick " in text
