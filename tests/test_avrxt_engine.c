@@ -5118,6 +5118,309 @@ int main(void)
 		check("events ignored unless START=EVENT_TRIGGER", m->data[A + STATUS], 0);
 	}
 
+	printf("== AVR DD (AVR32DD14) core ==\n");
+	{
+		avr_t *m = avr_make_mcu_by_name("avr32dd14");
+		if (!m) { printf("cannot make avr32dd14 core\n"); return 2; }
+		m->log = LOG_ERROR;
+		avr_init(m);
+		avr_reset(m);
+		/* DS40002413B 8.2, 9.1-9.3: memories, signature (Table 7-6 device ID),
+		 * peripheral addresses and the 4-byte JMP vectors. */
+		check("DD14 is MODERN", !!(m->arch.flags & AVR_ARCH_F_MODERN), 1);
+		check("DD14 signature",
+			  (m->signature[0] << 16) | (m->signature[1] << 8) | m->signature[2],
+			  0x1e953b);
+		check("DD14 flashend", m->flashend, 0x7fff);
+		check("DD14 ramend", m->ramend, 0x7fff);
+		check("DD14 e2end", m->e2end, 0x14ff);
+		check("DD14 vector_size", m->vector_size, 4);
+		check("DD14 flashmap 0x8000", m->arch.flashmap_start, 0x8000);
+		check("DD14 PORTA", HAS_W(m, 0x0400 + 0x01), 1);
+		check("DD14 PORTC", HAS_W(m, 0x0440 + 0x01), 1);
+		check("DD14 PORTD", HAS_W(m, 0x0460 + 0x01), 1);
+		check("DD14 PORTF", HAS_W(m, 0x04a0 + 0x01), 1);
+		check("DD14 no PORTB", HAS_W(m, 0x0420 + 0x01), 0);
+		check("DD14 USART1 @0x820", HAS_W(m, 0x0822), 1);
+		check("DD14 TWI0 @0x900", HAS_W(m, 0x0904), 1);
+		check("DD14 SPI0 @0x940", HAS_W(m, 0x0941), 1);
+		check("DD14 TCB1 @0xB10", HAS_W(m, 0x0b10), 1);
+		check("DD14 BOD @0xA0", HAS_W(m, 0x00a0), 1);
+
+		/* SYSCFG / SIGROW / FUSE / LOCK (8.6, 8.8, 8.9, 9.3). */
+		check("SIGROW.DEVICEID0", cpu_read(m, 0x1100), 0x1e);
+		check("SIGROW.DEVICEID1", cpu_read(m, 0x1101), 0x95);
+		check("SIGROW.DEVICEID2", cpu_read(m, 0x1102), 0x3b);
+		check("FUSE.SYSCFG0 default 0xD0", cpu_read(m, 0x1050 + 5), 0xd0);
+		check("FUSE.SYSCFG1 default 0x08", cpu_read(m, 0x1050 + 6), 0x08);
+		check("FUSE.BOOTSIZE default 0", cpu_read(m, 0x1050 + 8), 0);
+		check("LOCK.KEY0 unlocked", cpu_read(m, 0x1040), 0x5c);
+		cpu_write(m, 0x1100, 0x55);
+		check("SIGROW is read-only", cpu_read(m, 0x1100), 0x1e);
+
+		printf("== AVR DD CLKCTRL ==\n");
+		/* 12.3.3 / 12.5.7: OSCHF 4 MHz after reset, FRQSEL = 0x3. */
+		check("reset CLK = 4 MHz", m->frequency, 4000000);
+		check("OSCHFCTRLA reset 0x0C", m->data[0x68], 0x0c);
+		check("MCLKSTATUS OSCHFS|OSC32KS", m->data[0x65], 0x06);
+		cpu_write(m, 0x68, 0x24);			/* FRQSEL = 0x9 (24 MHz), no CCP */
+		check("OSCHFCTRLA needs CCP", m->data[0x68], 0x0c);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x68, 0x24);
+		check("FRQSEL 24 MHz", m->frequency, 24000000);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x61, (0x8 << 1) | 1);		/* PDIV = 6X, PEN */
+		check("PDIV 6X -> 4 MHz", m->frequency, 4000000);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x61, (0xc << 1) | 1);		/* PDIV = 48X */
+		check("PDIV 48X -> 500 kHz", m->frequency, 500000);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x61, 0);
+		check("prescaler off -> 24 MHz", m->frequency, 24000000);
+		/* 12.3.2: a switch to a disabled XOSC32K stays pending (SOSC set). */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x60, 0x02);			/* CLKSEL = XOSC32K */
+		check("pending switch sets SOSC", m->data[0x65] & 0x01, 1);
+		check("pending switch keeps clock", m->frequency, 24000000);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x7c, 0x01);			/* XOSC32KCTRLA.ENABLE */
+		check("enabled XOSC32K completes switch", m->data[0x65] & 0x01, 0);
+		check("XOSC32KS set", (m->data[0x65] >> 3) & 1, 1);
+		check("CLK = 32.768 kHz", m->frequency, 32768);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x80, 0x03);			/* XOSCHFCTRLA: SELHF | ENABLE */
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x60, 0x03);			/* CLKSEL = EXTCLK */
+		check("EXTCLK completes switch", m->data[0x65] & 0x01, 0);
+		check("EXTS set", (m->data[0x65] >> 4) & 1, 1);
+		avr_ccp_write(m, AVR_CCP_IOREG);
+		cpu_write(m, 0x60, 0x02);
+		cpu_write(m, 0x69, 0x20);			/* OSCHFTUNE: bit 5 mirrors to 7:6 */
+		check("OSCHFTUNE sign extends", m->data[0x69], 0xe0);
+		cpu_write(m, 0x65, 0xff);
+		check("MCLKSTATUS read-only", m->data[0x65] & 0xc0, 0);
+		avr_reset(m);
+		check("reset restores 4 MHz", m->frequency, 4000000);
+		m->fuse[2] = 0x01;				/* FUSE.OSCCFG.CLKSEL = OSC32K */
+		avr_reset(m);
+		check("OSCCFG fuse selects OSC32K", m->frequency, 32768);
+		m->fuse[2] = 0x00;
+		avr_reset(m);
+
+		printf("== AVR DD PORT multi-pin configuration ==\n");
+		/* 18.3.2.4: PINCONFIG is mirrored; UPD copies, SET ORs, CLR clears. */
+		cpu_write(m, 0x400 + 0x0b, 0x08 | 0x03);	/* PULLUPEN | ISC=FALLING */
+		check("PINCONFIG mirrored to PORTC", m->data[0x440 + 0x0b], 0x0b);
+		check("PINCONFIG mirrored to PORTF", m->data[0x4a0 + 0x0b], 0x0b);
+		cpu_write(m, 0x440 + 0x0c, 0x0a);		/* PINCTRLUPD pins 1,3 */
+		check("UPD copies to PIN1CTRL", m->data[0x440 + 0x11], 0x0b);
+		check("UPD copies to PIN3CTRL", m->data[0x440 + 0x13], 0x0b);
+		check("UPD leaves PIN0CTRL", m->data[0x440 + 0x10], 0x00);
+		check("UPD reads zero", cpu_read(m, 0x440 + 0x0c), 0);
+		cpu_write(m, 0x440 + 0x0b, 0x80);		/* PINCONFIG = INVEN */
+		cpu_write(m, 0x440 + 0x0d, 0x01);		/* SET pin 0 */
+		check("SET ORs INVEN into PIN0CTRL", m->data[0x440 + 0x10], 0x80);
+		cpu_write(m, 0x440 + 0x0b, 0x08);		/* PINCONFIG = PULLUPEN */
+		cpu_write(m, 0x440 + 0x0e, 0x02);		/* CLR pin 1 */
+		check("CLR clears PULLUPEN in PIN1CTRL", m->data[0x440 + 0x11], 0x03);
+		cpu_write(m, 0x440 + 0x0b, 0xff);
+		check("PINCONFIG reserved bits read 0", m->data[0x440 + 0x0b], 0xcf);
+
+		printf("== AVR DD NVMCTRL ==\n");
+		{
+#define N 0x1000
+#define EE 0x1400
+#define NVM_RUN() do { for (int _i = 0; _i < 400; _i++) { avr_run(m); \
+				if (m->pc >= 0x1000) m->pc = 0; } } while (0)
+			avr_reset(m);
+			check("CTRLB reset FLMAP=3", m->data[N + 1], 0x30);
+			check("EEPROM erased", m->data[EE + 3], 0xff);
+			cpu_write(m, EE + 3, 0x11);			/* no command armed */
+			check("store without command ignored", m->data[EE + 3], 0xff);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x12);			/* EEWR */
+			cpu_write(m, EE + 3, 0x11);
+			check("EEWR stores", m->data[EE + 3], 0x11);
+			check("EEBUSY after write", m->data[N + 2] & 0x02, 2);
+			check("EEREADY cleared while busy", m->data[N + 4] & 1, 0);
+			check("ADDR holds last EEPROM address", m->data[N + 8], 3);
+			check("DATA holds last EEPROM data", m->data[N + 6], 0x11);
+			/* 11.5.1: a command while busy -> command collision. */
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x18);
+			check("collision error", (m->data[N + 2] >> 4) & 7, 3);
+			NVM_RUN();
+			check("EEBUSY clears", m->data[N + 2] & 0x02, 0);
+			check("EEREADY set when idle", m->data[N + 4] & 1, 1);
+			cpu_write(m, N + 2, 0x00);			/* ERROR cleared by writing 0 */
+			check("ERROR cleared by writing 0", m->data[N + 2] & 0x70, 0);
+			cpu_write(m, N + 0, 0x00);
+			check("CTRLA needs CCP", m->data[N + 0], 0x12);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x7f);			/* not a defined command */
+			check("invalid command error", (m->data[N + 2] >> 4) & 7, 1);
+			check("invalid command not stored", m->data[N + 0], 0x12);
+			cpu_write(m, N + 2, 0x00);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x19);			/* EEMBER2 */
+			cpu_write(m, EE + 3, 0x00);			/* erases bytes 2..3 */
+			check("EEMBER2 erased byte 3", m->data[EE + 3], 0xff);
+			NVM_RUN();
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x13);			/* EEERWR */
+			for (int i = 0; i < 8; i++) { cpu_write(m, EE + 8 + i, 0x40 + i); NVM_RUN(); }
+			check("EEERWR byte 7", m->data[EE + 15], 0x47);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x1b);			/* EEMBER8 */
+			NVM_RUN();
+			cpu_write(m, EE + 11, 0x00);		/* erases 8..15 */
+			check("EEMBER8 erased first byte", m->data[EE + 8], 0xff);
+			check("EEMBER8 erased last byte", m->data[EE + 15], 0xff);
+			NVM_RUN();
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x18);			/* EEBER */
+			cpu_write(m, EE + 3, 0x00);
+			check("EEBER reads 0xFF", m->data[EE + 3], 0xff);
+			NVM_RUN();
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x12);
+			cpu_write(m, EE + 200, 0x77);
+			NVM_RUN();
+			avr_reset(m);
+			check("EEPROM persists across reset", m->data[EE + 200], 0x77);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x30);			/* EECHER */
+			check("EECHER erases EEPROM", m->data[EE + 200], 0xff);
+			check("EECHER busy", m->data[N + 2] & 0x02, 2);
+			NVM_RUN();
+			/* USERROW: normal flash-style FLWR / FLPER (8.7, 11.3.1.4). */
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x02);
+			cpu_write(m, 0x1080 + 4, 0x5a);
+			check("USERROW FLWR", m->data[0x1080 + 4], 0x5a);
+			NVM_RUN();
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x01);			/* NOOP between commands */
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x08);
+			cpu_write(m, 0x1080 + 9, 0x00);
+			check("USERROW FLPER erases the row", m->data[0x1080 + 4], 0xff);
+			NVM_RUN();
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x00);
+
+			/* Flash sections (11.3.1.1 / Table 11-1): with the default fuses the
+			 * whole flash is BOOT and can never be written by code. */
+			m->pc = 0;
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x02);			/* FLWR */
+			m->flashmap_write(m, 0x8000 + 0x1000, 0x00, m->flashmap_write_param);
+			check("default fuses: BOOT write refused", (m->data[N + 2] >> 4) & 7, 2);
+			check("flash untouched", m->flash[0x1000], 0xff);
+			cpu_write(m, N + 2, 0x00);
+			/* BOOTSIZE = 4 (2 KB), CODESIZE = 8 (4 KB): BOOT 0-0x7FF, APPCODE
+			 * 0x800-0xFFF, APPDATA 0x1000-. */
+			m->fuse[8] = 4; m->fuse[7] = 8;
+			memset(m->flash + 0x800, 0xaa, 0x2000);
+			m->pc = 0x0100;						/* executing from BOOT */
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x00);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x02);
+			m->flashmap_write(m, 0x8000 + 0x0900, 0x12, m->flashmap_write_param);
+			check("BOOT may write APPCODE", m->flash[0x900], 0x12);
+			NVM_RUN();
+			m->flashmap_write(m, 0x8000 + 0x0100, 0x34, m->flashmap_write_param);
+			check("BOOT may not write BOOT", (m->data[N + 2] >> 4) & 7, 2);
+			check("BOOT unchanged", m->flash[0x100] == 0x34, 0);
+			cpu_write(m, N + 2, 0x00);
+			NVM_RUN();
+			m->flashmap_write(m, 0x8000 + 0x1100, 0x56, m->flashmap_write_param);
+			check("BOOT may write APPDATA", m->flash[0x1100], 0x56);
+			NVM_RUN();
+			m->pc = 0x0a00;						/* executing from APPCODE */
+			m->flashmap_write(m, 0x8000 + 0x0a10, 0x78, m->flashmap_write_param);
+			check("APPCODE may not write APPCODE", (m->data[N + 2] >> 4) & 7, 2);
+			cpu_write(m, N + 2, 0x00);
+			NVM_RUN();
+			m->flashmap_write(m, 0x8000 + 0x1200, 0x9a, m->flashmap_write_param);
+			check("APPCODE may write APPDATA", m->flash[0x1200], 0x9a);
+			NVM_RUN();
+			m->pc = 0x1100;						/* executing from APPDATA */
+			m->flashmap_write(m, 0x8000 + 0x1300, 0xbc, m->flashmap_write_param);
+			check("APPDATA may not write APPDATA", (m->data[N + 2] >> 4) & 7, 2);
+			cpu_write(m, N + 2, 0x00);
+			/* Page erase / multi-page erase from BOOT. */
+			m->pc = 0x0100;
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x01);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x08);			/* FLPER */
+			NVM_RUN();
+			m->flashmap_write(m, 0x8000 + 0x1010, 0x00, m->flashmap_write_param);
+			check("FLPER erases the page", m->flash[0x1000], 0xff);
+			check("FLPER erases the page end", m->flash[0x11ff], 0xff);
+			check("FLPER leaves the next page", m->flash[0x1200], 0x9a);
+			NVM_RUN();
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x01);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x0a);			/* FLMPER4 */
+			m->flashmap_write(m, 0x8000 + 0x1600, 0x00, m->flashmap_write_param);
+			check("FLMPER4 first page", m->flash[0x1000 + 0x000], 0xff);
+			check("FLMPER4 erases 4 pages", m->flash[0x1000 + 0x7ff], 0xff);
+			check("FLMPER4 stops after 4 pages", m->flash[0x1800], 0xaa);
+			NVM_RUN();
+			/* CTRLB write-protect bits are CCP protected and sticky. */
+			avr_ccp_write(m, AVR_CCP_IOREG);
+			cpu_write(m, N + 1, 0x30 | 0x01);		/* APPCODEWP */
+			check("APPCODEWP set", m->data[N + 1] & 1, 1);
+			avr_ccp_write(m, AVR_CCP_IOREG);
+			cpu_write(m, N + 1, 0x30);
+			check("APPCODEWP only cleared by reset", m->data[N + 1] & 1, 1);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x01);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x02);
+			m->flashmap_write(m, 0x8000 + 0x0b00, 0x01, m->flashmap_write_param);
+			check("APPCODEWP blocks APPCODE", (m->data[N + 2] >> 4) & 7, 2);
+			cpu_write(m, N + 2, 0x00);
+			cpu_write(m, N + 1, 0x00);			/* FLMAP is writable without CCP */
+			check("FLMAP not under CCP", m->data[N + 1] & 0x30, 0x00);
+			avr_ccp_write(m, AVR_CCP_IOREG);
+			cpu_write(m, N + 1, 0x80);			/* FLMAPLOCK */
+			cpu_write(m, N + 1, 0x30);
+			check("FLMAPLOCK freezes FLMAP", m->data[N + 1] & 0x30, 0x00);
+			/* A multi-page erase touching a protected page erases nothing and
+			 * starts no operation. FLMPER4 at 0x600 covers pages 0x600-0xdff
+			 * (BOOT 0-0x7ff): executing from BOOT, BOOT pages are refused. */
+			cpu_write(m, N + 1, 0x00);
+			m->pc = 0x0100;
+			avr_reset(m);
+			m->fuse[8] = 4; m->fuse[7] = 8;
+			memset(m->flash + 0x600, 0xaa, 0x800);
+			avr_ccp_write(m, AVR_CCP_SPM);
+			cpu_write(m, N + 0, 0x0a);
+			m->flashmap_write(m, 0x8000 + 0x0600, 0x00, m->flashmap_write_param);
+			check("protected FLMPER4 sets WRITEPROTECT", (m->data[N + 2] >> 4) & 7, 2);
+			check("protected FLMPER4 erases nothing", m->flash[0x900], 0xaa);
+			check("protected FLMPER4 starts no op", m->data[N + 2] & 1, 0);
+			m->fuse[8] = 0; m->fuse[7] = 0;
+			m->fuse[8] = 0; m->fuse[7] = 0;
+			/* EEREADY is a level interrupt: enabling it while idle pends NVMCTRL_EE
+			 * (vector 35, 11.5.4). */
+			avr_reset(m);
+			check("no interrupt pending after reset", avr_has_pending_interrupts(m), 0);
+			cpu_write(m, N + 3, 0x01);
+			check("EEREADY enable pends the vector", avr_has_pending_interrupts(m), 1);
+			cpu_write(m, N + 3, 0x00);
+			check("EEREADY disable unpends the vector", avr_has_pending_interrupts(m), 0);
+		}
+#undef N
+#undef EE
+#undef NVM_RUN
+	}
+
 	printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
 			failures, failures == 1 ? "" : "s");
 	return failures ? 1 : 0;

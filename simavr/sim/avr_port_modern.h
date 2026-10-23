@@ -55,6 +55,11 @@ enum {
 	PORTM_OUTTGL = 0x07,
 	PORTM_IN = 0x08,
 	PORTM_INTFLAGS = 0x09,
+	/* Multi-pin configuration, AVR Dx only (DS40002413B 18.5.12-15). */
+	PORTM_PINCONFIG = 0x0b,
+	PORTM_PINCTRLUPD = 0x0c,
+	PORTM_PINCTRLSET = 0x0d,
+	PORTM_PINCTRLCLR = 0x0e,
 	PORTM_PIN0CTRL = 0x10,	/* PIN0CTRL .. PIN7CTRL at 0x10 .. 0x17 */
 };
 
@@ -84,6 +89,11 @@ typedef struct avr_port_modern_t {
 	avr_int_vector_t	port_vect;	// PORTx_PORT interrupt (pin interrupts)
 
 	uint8_t		irqing;		// suppress PORT-register IRQ recursion
+
+	/* Multi-pin configuration (AVR Dx): PINCONFIG is mirrored across all the
+	 * ports in mp_ports (see avr_port_modern_enable_multipin()). */
+	struct avr_port_modern_t	**mp_ports;
+	int			mp_count;
 
 	/* Peripheral pin overrides (see avr_port_modern_override()). Pins in
 	 * ovr_en take their output level from ovr_val instead of OUT; pins in
@@ -124,6 +134,17 @@ avr_port_modern_override(
 		int en,
 		int force_output,
 		int value);
+
+/*
+ * Enable the AVR Dx multi-pin configuration registers (PINCONFIG, PINCTRLUPD,
+ * PINCTRLSET, PINCTRLCLR) on 'count' ports. PINCONFIG is mirrored across them.
+ * Call after avr_port_modern_init() of every port; 'ports' must outlive them.
+ */
+void
+avr_port_modern_enable_multipin(
+		avr_t * avr,
+		avr_port_modern_t ** ports,
+		int count);
 
 #ifdef __cplusplus
 };

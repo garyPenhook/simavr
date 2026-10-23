@@ -81,6 +81,7 @@ typedef struct  avr_int_table_t {
 	uint8_t			cpuint_cvt;		// CVT: compact vector table (all LVL0 share vector 3)
 	uint8_t			cpuint_ivsel;	// IVSEL: vectors in boot section (1) vs app section (0)
 	uint8_t			cpuint_bootend_idx;	// FUSE.BOOTEND index for the IVSEL base (0xff = none)
+	uint16_t		cpuint_bootend_unit;	// bytes per fuse unit (0 = 256: BOOTEND; 512 on AVR Dx BOOTSIZE)
 	uint8_t			max_vector;		// highest registered vector number (LVL0 wrap)
 } avr_int_table_t, *avr_int_table_p;
 
@@ -155,6 +156,8 @@ void avr_cpuint_set_ivsel(struct avr_t *avr, uint8_t enabled);
 // Tell the engine which FUSE.BOOTEND index bounds the boot/app sections, so
 // IVSEL can relocate the modern vector base (0xff disables relocation).
 void avr_cpuint_set_bootend_idx(struct avr_t *avr, uint8_t fuse_index);
+// Bytes of flash per unit of the boot-size fuse (default 256; AVR Dx uses 512).
+void avr_cpuint_set_bootend_unit(struct avr_t *avr, uint16_t bytes);
 uint8_t avr_cpuint_get_status(struct avr_t *avr);
 uint8_t avr_cpuint_get_lvl0pri(struct avr_t *avr);
 

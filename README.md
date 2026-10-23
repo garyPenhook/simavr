@@ -99,6 +99,12 @@ RTC+PIT, ADC0 (with temp sensor), AC0, CCL, EVSYS, NVMCTRL (EEPROM + flash
 self-programming), VREF, PORTMUX, WDT, CRCSCAN, BOD/VLM, SLPCTRL, RSTCTRL and
 SYSCFG/SIGROW. TCD and DAC are not present on this family.
 
+**AVR DD (AVR Dx family, work in progress)** — `avr32dd14` boots and runs firmware
+through [`cores/sim_avrdd.h`](simavr/cores/sim_avrdd.h) with the AVR Dx clock
+controller, NVM controller, signature row/fuses and multi-pin PORT configuration
+modelled from DS40002413B; EVSYS, PORTMUX, VREF, ADC0, AC0, DAC0, ZCD, MVIO, TCD0
+and CRCSCAN are not modelled yet. See [`doc/avr_dd_support.md`](doc/avr_dd_support.md).
+
 **Engine — a "modern AVR" mode (the classic path is left byte‑for‑byte unchanged):**
 * modern addressing model (no `0x20` I/O offset, per‑core SP/SREG, enlarged I/O map)
 * AVRxt instruction timing

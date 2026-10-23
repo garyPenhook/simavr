@@ -245,6 +245,65 @@ avr_port_modern_pinctrl_write(struct avr_t *avr, avr_io_addr_t addr,
 	avr_port_modern_update_irqs(p);
 }
 
+/* ---- Multi-pin configuration (AVR Dx, DS40002413B 18.3.2.4) ---- */
+
+/* PINCONFIG is mirrored on every port: a write to any of them updates all. */
+static void
+avr_port_modern_pinconfig_write(struct avr_t *avr, avr_io_addr_t addr,
+								uint8_t v, void *param)
+{
+	avr_port_modern_t *p = (avr_port_modern_t *)param;
+	/* Only INVEN, INLVL, PULLUPEN and ISC[2:0] exist. */
+	v &= 0xcf;
+	for (int i = 0; i < p->mp_count; i++)
+		avr_core_watch_write(avr, p->mp_ports[i]->base + PORTM_PINCONFIG, v);
+}
+
+/* PINCTRLUPD copies PINCONFIG, PINCTRLSET ORs it and PINCTRLCLR clears its bits
+ * in each PINnCTRL selected by the written mask; all three read back zero. */
+static void
+avr_port_modern_pinctrl_mask_write(struct avr_t *avr, avr_io_addr_t addr,
+								   uint8_t v, void *param)
+{
+	avr_port_modern_t *p = (avr_port_modern_t *)param;
+	uint8_t cfg = avr->data[p->base + PORTM_PINCONFIG];
+	int op = addr - p->base;
+
+	for (int i = 0; i < 8; i++) {
+		if (!(v & (1 << i)))
+			continue;
+		uint8_t *pc = &avr->data[p->r_pinctrl + i];
+		switch (op) {
+		case PORTM_PINCTRLUPD:	*pc = cfg; break;
+		case PORTM_PINCTRLSET:	*pc |= cfg; break;
+		case PORTM_PINCTRLCLR:	*pc &= ~cfg; break;
+		}
+	}
+	avr->data[addr] = 0;
+	avr_port_modern_update_irqs(p);
+}
+
+void
+avr_port_modern_enable_multipin(
+		avr_t * avr,
+		avr_port_modern_t ** ports,
+		int count)
+{
+	for (int i = 0; i < count; i++) {
+		avr_port_modern_t *p = ports[i];
+		p->mp_ports = ports;
+		p->mp_count = count;
+		avr_register_io_write(avr, p->base + PORTM_PINCONFIG,
+							  avr_port_modern_pinconfig_write, p);
+		avr_register_io_write(avr, p->base + PORTM_PINCTRLUPD,
+							  avr_port_modern_pinctrl_mask_write, p);
+		avr_register_io_write(avr, p->base + PORTM_PINCTRLSET,
+							  avr_port_modern_pinctrl_mask_write, p);
+		avr_register_io_write(avr, p->base + PORTM_PINCTRLCLR,
+							  avr_port_modern_pinctrl_mask_write, p);
+	}
+}
+
 /*
  * Pin change / edge detection. Adapted from avr_ioport_irq_notify(): handles
  * both an external driver changing an input pin and user code forcing a pin,

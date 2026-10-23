@@ -123,6 +123,12 @@ avr_cpuint_set_bootend_idx(avr_t *avr, uint8_t fuse_index)
 	avr->interrupts.cpuint_bootend_idx = fuse_index;
 }
 
+void
+avr_cpuint_set_bootend_unit(avr_t *avr, uint16_t bytes)
+{
+	avr->interrupts.cpuint_bootend_unit = bytes;
+}
+
 uint8_t
 avr_cpuint_get_status(avr_t *avr)
 {
@@ -476,7 +482,8 @@ avr_service_interrupts_modern(avr_t * avr)
 	// common no-bootloader case, so this leaves base==0 unchanged there.
 	uint32_t vbase = 0;
 	if (!table->cpuint_ivsel && table->cpuint_bootend_idx != 0xff)
-		vbase = (uint32_t)avr->fuse[table->cpuint_bootend_idx] * 256;
+		vbase = (uint32_t)avr->fuse[table->cpuint_bootend_idx] *
+				(table->cpuint_bootend_unit ? table->cpuint_bootend_unit : 256);
 	avr->pc = vbase + target * avr->vector_size;
 
 	avr_raise_irq(best->irq + AVR_INT_IRQ_RUNNING, 1);
