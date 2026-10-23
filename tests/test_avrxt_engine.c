@@ -123,6 +123,14 @@ static void evsys_count_hook(struct avr_irq_t *irq, uint32_t value, void *param)
 		g_evsys_pulses++;
 }
 
+/* Counts the rising edges seen on a TCD event pulse IRQ. */
+static void tcd_ev_hook(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	(void)irq;
+	if (value)
+		(*(int *)param)++;
+}
+
 static void check(const char *what, long got, long want)
 {
 	if (got != want) {
@@ -5628,6 +5636,119 @@ int main(void)
 			cpu_write(m, 0x0680 + 0, 0x00);
 			cpu_write(m, 0x06d8 + 0, 0x00);
 			avr_reset(m);
+		}
+
+		printf("== AVR DD TWI dual mode / TCD0 outputs, events, TRIG ==\n");
+		{
+			avr_reset(m);
+			/* TWI (29.5): CTRLA keeps INPUTLVL/SDASETUP/SDAHOLD/FMPEN, DUALCTRL keeps
+			 * INPUTLVL/SDAHOLD/FMPEN/ENABLE. */
+			cpu_write(m, 0x0900 + 0, 0xff);
+			check("TWI CTRLA mask", m->data[0x0900], 0x5e);
+			cpu_write(m, 0x0900 + 1, 0xff);
+			check("TWI DUALCTRL mask", m->data[0x0901], 0x4f);
+			cpu_write(m, 0x0900 + 1, 0x00);
+			cpu_write(m, 0x0900 + 0, 0x00);
+			/* Host and client enabled together (Dual mode runs both independently). */
+			cpu_write(m, 0x0900 + 1, 0x01);
+			cpu_write(m, 0x0900 + 3, 0x01);		/* MCTRLA.ENABLE */
+			cpu_write(m, 0x0900 + 9, 0x01);		/* SCTRLA.ENABLE */
+			check("host ENABLE with client ENABLE", m->data[0x0903] & 1, 1);
+			check("client ENABLE with host ENABLE", m->data[0x0909] & 1, 1);
+			cpu_write(m, 0x0900 + 3, 0x00);
+			cpu_write(m, 0x0900 + 9, 0x00);
+			avr_reset(m);
+			check("reset clears DUALCTRL", m->data[0x0901], 0);
+
+			/* TCD0, One Ramp: A on 100..200, B on 300..400 (TOP = CMPBCLR). */
+#define T 0x0b80
+			memset(m->flash, 0, 0x1000);
+			m->pc = 0;
+			avr_irq_t *woa = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOA);
+			avr_irq_t *wob = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOB);
+			avr_irq_t *woc = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOC);
+			avr_irq_t *wod = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOD);
+			static int ev_cnt[3];
+			static avr_irq_t *evirq[3];
+			memset(ev_cnt, 0, sizeof(ev_cnt));
+			for (int i = 0; i < 3; i++) {
+				evirq[i] = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_EVT_CMPBCLR + i);
+				avr_irq_register_notify(evirq[i], tcd_ev_hook, &ev_cnt[i]);
+			}
+			cpu_write(m, T + 0x28, 100 & 0xff); cpu_write(m, T + 0x29, 0);
+			cpu_write(m, T + 0x2a, 200 & 0xff); cpu_write(m, T + 0x2b, 0);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 300 >> 8);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 400 >> 8);
+			cpu_write(m, T + 0x12, 0xf0);		/* CMPAEN..CMPDEN */
+			cpu_write(m, T + 0x02, 0x80);		/* CMPDSEL = PWMB, CMPCSEL = PWMA */
+			cpu_write(m, T + 0x00, 0x60 | 0x01);	/* CLKSEL = SYSCLK, ENABLE */
+			for (int i = 0; i < 150; i++) { avr_run(m); if (m->pc >= 0x1000) m->pc = 0; }
+			check("WOA high in [100,200)", woa->value & 1, 1);
+			check("WOC follows WOA", woc->value & 1, 1);
+			check("WOD (PWMB) low during A", wod->value & 1, 0);
+			check("PWMACTA set by the toggle", (m->data[T + 0x0e] >> 6) & 1, 1);
+			cpu_write(m, T + 0x0e, 0x40);
+			check("PWMACTA write-1-to-clear", (m->data[T + 0x0e] >> 6) & 1, 0);
+			for (int i = 0; i < 200; i++) { avr_run(m); if (m->pc >= 0x1000) m->pc = 0; }
+			check("WOB high in [300,400)", wob->value & 1, 1);
+			check("WOD follows WOB (CMPDSEL)", wod->value & 1, 1);
+			check("WOC low during B", woc->value & 1, 0);
+			for (int i = 0; i < 100; i++) { avr_run(m); if (m->pc >= 0x1000) m->pc = 0; }
+			check("CMPASET event pulsed", ev_cnt[1] >= 1, 1);
+			check("CMPBSET event pulsed", ev_cnt[2] >= 1, 1);
+			check("CMPBCLR event pulsed at cycle end", ev_cnt[0] >= 1, 1);
+			cpu_write(m, T + 0x00, 0x60);			/* disable */
+			/* TRIG (25.3.5): active edge on INPUT A with TRIGEI flags TRIGA. */
+			avr_irq_t *ina = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_IN_A);
+			avr_reset(m);
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			cpu_write(m, T + 0x08, 0x01 | 0x10);		/* EVCTRLA: TRIGEI, RISE_HIGH */
+			cpu_write(m, T + 0x0c, 0x04);			/* INTCTRL.TRIGA */
+			avr_raise_irq(ina, 1);
+			check("TRIGA set on the rising edge", (m->data[T + 0x0d] >> 2) & 1, 1);
+			check("TRIG interrupt pends", avr_has_pending_interrupts(m), 1);
+			cpu_write(m, T + 0x0d, 0x04);
+			check("TRIGA write-1-to-clear unpends", avr_has_pending_interrupts(m), 0);
+			avr_raise_irq(ina, 0);
+			check("falling edge ignored for RISE_HIGH", (m->data[T + 0x0d] >> 2) & 1, 0);
+			cpu_write(m, T + 0x08, 0x01);			/* FALL_LOW */
+			avr_raise_irq(ina, 1);
+			check("rising ignored for FALL_LOW", (m->data[T + 0x0d] >> 2) & 1, 0);
+			avr_raise_irq(ina, 0);
+			check("falling edge flags TRIGA", (m->data[T + 0x0d] >> 2) & 1, 1);
+			cpu_write(m, T + 0x0d, 0x04);
+			cpu_write(m, T + 0x08, 0x00);			/* TRIGEI off */
+			avr_raise_irq(ina, 1); avr_raise_irq(ina, 0);
+			check("no TRIGEI, no flag", (m->data[T + 0x0d] >> 2) & 1, 0);
+			/* A flag raised while TRIGA is disabled fires once TRIGA is enabled. */
+			cpu_write(m, T + 0x0d, 0x04);
+			cpu_write(m, T + 0x0c, 0x00);
+			cpu_write(m, T + 0x08, 0x01 | 0x10);
+			avr_raise_irq(ina, 1);
+			check("flag set while disabled: no request yet", avr_has_pending_interrupts(m), 0);
+			cpu_write(m, T + 0x0c, 0x04);
+			check("late enable raises the TRIG request", avr_has_pending_interrupts(m), 1);
+			cpu_write(m, T + 0x0c, 0x00);
+			check("disabling withdraws the request", avr_has_pending_interrupts(m), 0);
+			cpu_write(m, T + 0x0d, 0x04);
+			avr_raise_irq(ina, 0);
+			/* STATUS keeps its ready bits in the raw register too. */
+			check("STATUS ready bits in data[]", m->data[T + 0x0e] & 0x03, 0x03);
+			/* Clearing CMPCEN releases WOC. */
+			cpu_write(m, T + 0x00, 0x60);
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x2a, 200);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x02, 0x00);
+			cpu_write(m, T + 0x12, 0xf0);
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			for (int i = 0; i < 150; i++) { avr_run(m); if (m->pc >= 0x1000) m->pc = 0; }
+			check("WOC high before disable", woc->value & 1, 1);
+			cpu_write(m, T + 0x12, 0xb0);			/* CMPCEN off */
+			check("clearing CMPCEN releases WOC", woc->value & 1, 0);
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+#undef T
 		}
 
 		printf("== AVR DD CRCSCAN ==\n");

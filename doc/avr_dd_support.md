@@ -52,7 +52,15 @@ is not modelled; they are not registered yet.
   with the Table 33-1/33-2 formats, free-running, `STCONV`/`SPCONV`, event start,
   window comparator, `RES` read clears the flags, and the 33.3.3.4 conversion time.
   Inputs: AINn, GND, TEMPSENSE (Kelvin), VDD/10, VDDIO2/10, DAC0, DACREF0.
-* **TCD0** clock source (OSCHF / PLL / EXTCLK / SYSCLK) follows CLKCTRL.
+* **TCD0** (`avr_tcd.c`): clock source (OSCHF / PLL / EXTCLK / SYSCLK) follows
+  CLKCTRL; WOC / WOD mirror WOA or WOB (`CTRLC.CMPCSEL` / `CMPDSEL`, enabled by
+  `FAULTCTRL.CMPCEN` / `CMPDEN`); `STATUS.PWMACTA/B`; the CMPBCLR / CMPASET /
+  CMPBSET compare-match events (EVSYS generators 0xB0-0xB2); event inputs A / B
+  (EVSYS users 23 / 24) with `EVCTRLx.TRIGEI` / `EDGE` flagging `INTFLAGS.TRIGA/B`
+  and the `TRIG` interrupt (vector 17); WOA/WOB/WOC feed the CCL.
+* **TWI0 dual mode** (29.3.3.4): `CTRLA` and `DUALCTRL` register fields and
+  `DUALCTRL.ENABLE`; host and client already run independently, and the pin sets
+  are not modelled.
 * **CRCSCAN** (`avr_crcscan.c`): CRC16 with the 512-byte `BOOTSIZE`/`CODESIZE` units
   and the Dx `CRCSRC` fuse encoding.
 * **CCL** input sources (31.5.7): AC0, ZCD3, TCA0 WO0-2, TCB0/1 WO.
@@ -67,9 +75,9 @@ is not modelled; they are not registered yet.
 
 ## Not modelled yet (registers read and write as plain memory or are inert)
 
-CCL inputs from USART TxD, SPI and TCD0 WOA-C (no line-level IRQs), TCD0 `TRIG`
-interrupt/inputs/outputs and its EVSYS generators/users, CRC32 in CRCSCAN, TWI dual
-mode, CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
+CCL inputs from USART TxD and SPI (no line-level IRQs), TCD0 input modes, capture,
+input blanking, dithering and the programmable event output, CRC32 in CRCSCAN,
+CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
 `SLPCTRL.VREGCTRL`, SPM decoding, `BOOTRP` read protection, `FLMAP` for parts with
 more than 32 KB of flash, MVIO pin tri-stating, ADC `RUNSTDBY` and the
 PRESC-dependent CLK_ADC limits, AC `INITVAL` and POWER response times.
@@ -77,7 +85,9 @@ PRESC-dependent CLK_ADC limits, AC `INITVAL` and POWER response times.
 ## Known limitations
 
 The PLL is used without modelling lock; TCD0 does not re-time its counter when the
-clock changes while it runs; reserved `REFSEL` values publish 0 mV.
+clock changes while it runs; the TCD0 compare-match events are generated from the
+counter boundaries the timer already steps through, so their exact cycle is
+approximate; reserved `REFSEL` values publish 0 mV.
 
 ## Simplifications
 
@@ -93,7 +103,7 @@ scan is skipped and reports OK.
 
 `tests/test_avrxt_engine.c` has `AVR DD (AVR32DD14) core`, `AVR DD CLKCTRL`, `AVR DD
 PORT multi-pin configuration`, `EVSYS / PORTMUX`, `VREF / AC / DAC / ZCD / MVIO`,
-`TCD0 clock sources`, `ADC0`, `CCL input sources`, `CRCSCAN` and `NVMCTRL` groups. A firmware smoke test
+`TCD0 clock sources`, `ADC0`, `CCL input sources`, `TWI dual mode / TCD0 outputs, events, TRIG`, `CRCSCAN` and `NVMCTRL` groups. A firmware smoke test
 builds with
 
     D=~/.mchp_packs/Microchip/AVR-Dx_DFP/2.8.343

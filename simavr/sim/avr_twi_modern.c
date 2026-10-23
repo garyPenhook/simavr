@@ -456,6 +456,7 @@ avr_twi_modern_reset(struct avr_io_t *io)
 
 	p->m_dir = p->m_busy = p->m_ack = p->m_rx_valid = p->m_rx_data = 0;
 	p->s_selected = 0;
+	p->dual = 0;
 	/* registers reset to 0 (BUSSTATE = UNKNOWN) by the core */
 	avr->data[p->r_mstatus] = 0;
 	avr->data[p->r_sstatus] = 0;
@@ -544,4 +545,31 @@ avr_twi_modern_init(
 
 	avr_register_io_write(avr, p->r_sctrlb, avr_twi_modern_sctrlb_write, p);
 	avr_register_io_write(avr, p->r_sstatus, avr_twi_modern_sstatus_write, p);
+}
+
+/* CTRLA keeps only INPUTLVL, SDASETUP, SDAHOLD and FMPEN (29.5.1). */
+static void
+twi_dd_ctrla_write(struct avr_t * avr, avr_io_addr_t addr, uint8_t v, void * param)
+{
+	(void)param;
+	avr_core_watch_write(avr, addr, v & 0x5e);
+}
+
+/* DUALCTRL keeps INPUTLVL, SDAHOLD, FMPEN and ENABLE (29.5.2). */
+static void
+twi_dd_dualctrl_write(struct avr_t * avr, avr_io_addr_t addr, uint8_t v, void * param)
+{
+	avr_twi_modern_t * p = (avr_twi_modern_t *)param;
+	v &= 0x4f;
+	avr_core_watch_write(avr, addr, v);
+	p->dual = v & 1;
+}
+
+void
+avr_twi_modern_enable_dual(
+		avr_t * avr,
+		avr_twi_modern_t * p)
+{
+	avr_register_io_write(avr, p->r_ctrla, twi_dd_ctrla_write, p);
+	avr_register_io_write(avr, p->base + 0x01, twi_dd_dualctrl_write, p);
 }

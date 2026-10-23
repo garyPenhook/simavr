@@ -23,8 +23,7 @@
 		#include "sim_avrdd.h"
 		<kind declaration with .make = sim_avrdd_make>
 
-	Not modelled yet (the registers read and write as plain memory): the TCD0 TRIG interrupt/inputs/outputs, CRC32 in CRCSCAN, and the
-	TWI dual mode. See doc/avr_dd_support.md.
+	Not modelled yet (the registers read and write as plain memory): the TCD0 input modes/capture/blanking/PROGEV and CRC32 in CRCSCAN. See doc/avr_dd_support.md.
 
  	This file is part of simavr.
 
@@ -135,11 +134,13 @@ struct mcu_t {
 #define AVRDD_GEN_ADC0_RESRDY	0x24
 #define AVRDD_GEN_ZCD3_OUT		0x30
 #define AVRDD_GEN_TCB0_CAPT		0xa0
+#define AVRDD_GEN_TCD0_CMPBCLR	0xb0	/* CMPBCLR, CMPASET, CMPBSET = 0xB0..0xB2 */
 #define AVRDD_GEN_TCB1_CAPT		0xa2
 #define AVRDD_USER_ADC0START	8
 #define AVRDD_USER_TCA0CNTA		15
 #define AVRDD_USER_TCB0CAPT		17
 #define AVRDD_USER_TCB1CAPT		19
+#define AVRDD_USER_TCD0INPUTA	23	/* INPUTA, INPUTB = 23, 24 */
 
 static void
 avrdd_gen_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param, uint8_t gen)
@@ -262,6 +263,15 @@ avrdd_tcd_clock(void * param, uint8_t clksel)
 	}
 }
 
+/* TCD0 CMPBCLR / CMPASET / CMPBSET match pulses -> EVSYS generators 0xB0..0xB2. */
+static void
+avrdd_tcd0_event_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	int ev = irq->irq - mcu->tcd0.base_irq - AVR_TCD_IRQ_EVT_CMPBCLR;
+	avr_evsys_async_generator(&mcu->evsys, AVRDD_GEN_TCD0_CMPBCLR + ev, value & 1);
+}
+
 /* A BOD brown-out resets the device through RSTCTRL, recorded in RSTFR.BORF. */
 static void
 avrdd_bod_brownout(struct avr_t * avr, void * param)
@@ -333,6 +343,7 @@ avrdd_init(struct avr_t * avr)
 	/* TWI0 at 0x900, SPI0 at 0x940. */
 	avr_twi_modern_init(avr, &mcu->twi, 0x0900,
 						TWI0_TWIM_vect_num, TWI0_TWIS_vect_num, '0');
+	avr_twi_modern_enable_dual(avr, &mcu->twi);
 	avr_spi_modern_init(avr, &mcu->spi0, 0x0940, SPI0_INT_vect_num, '0');
 
 	/* RTC + PIT at 0x0140. */
@@ -478,6 +489,34 @@ avrdd_init(struct avr_t * avr)
 				avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('0' + tcb), AVR_TCB_IRQ_WO),
 				avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
 							  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCB0 + tcb)));
+
+	/* TCD0 events and interrupts: the TRIG vector, the CMPBCLR/CMPASET/CMPBSET
+	 * generators and the INPUTA / INPUTB users (DS40002413B 25.3.4, 16.5). */
+	avr_tcd_set_trig_vector(avr, &mcu->tcd0, TCD0_TRIG_vect_num);
+	for (int ev = AVR_TCD_IRQ_EVT_CMPBCLR; ev <= AVR_TCD_IRQ_EVT_CMPBSET; ev++)
+		avr_irq_register_notify(
+				avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), ev),
+				avrdd_tcd0_event_to_evsys, mcu);
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_TCD0INPUTA),
+			avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_IN_A));
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_TCD0INPUTA + 1),
+			avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_IN_B));
+	{
+		/* TCD0 WOA / WOB / WOC -> CCL INSEL 0xC of inputs 0 / 1 / 2. The CCL source
+		 * enum keeps WOC apart from WOA / WOB, so list them explicitly. */
+		static const uint8_t srcs[3] = {
+			AVR_CCL_SRC_TCD0_WOA, AVR_CCL_SRC_TCD0_WOB, AVR_CCL_SRC_TCD0_WOC,
+		};
+		for (int i = 0; i < 3; i++)
+			avr_connect_irq(
+					avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOA + i),
+					avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+								  AVR_CCL_IRQ_SRC_4LUT(srcs[i])));
+	}
 
 	/* CRCSCAN at 0x0120: BOOTSIZE / CODESIZE (512-byte units) bound the sections;
 	 * a CRC failure raises the NMI. */

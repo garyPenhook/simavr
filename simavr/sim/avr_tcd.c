@@ -68,7 +68,23 @@
 /* INTCTRL / INTFLAGS */
 #define OVF_bm		0x01
 
+/* CTRLC / FAULTCTRL extras */
+#define CMPCSEL_bm	0x40
+#define CMPDSEL_bm	0x80
+#define CMPCEN_bm	0x40
+#define CMPDEN_bm	0x80
+
+/* EVCTRLx */
+#define TRIGEI_bm	0x01
+#define EDGE_bm		0x10
+
+/* INTFLAGS / INTCTRL trigger bits */
+#define TRIGA_bm	0x04
+#define TRIGB_bm	0x08
+
 /* STATUS */
+#define PWMACTA_bm	0x40
+#define PWMACTB_bm	0x80
 #define ENRDY_bm	0x01
 #define CMDRDY_bm	0x02
 
@@ -95,14 +111,53 @@ static uint8_t tcd_mode(avr_tcd_t *p)
 	return rd(p->io.avr, p->r_ctrlb) & WGMODE_gm;
 }
 
+static void tcd_pulse(avr_tcd_t *p, int irq)
+{
+	avr_raise_irq(p->io.irq + irq, 1);
+	avr_raise_irq(p->io.irq + irq, 0);
+}
+
+/* WOC / WOD mirror WOA or WOB (CTRLC.CMPCSEL / CMPDSEL) when enabled by
+ * FAULTCTRL.CMPCEN / CMPDEN (25.3.3.7). */
+static void tcd_publish_cd(avr_tcd_t *p)
+{
+	uint8_t ctrlc = rd(p->io.avr, p->r_ctrlc);
+	uint8_t fault = rd(p->io.avr, p->r_faultctrl);
+	uint8_t c = (ctrlc & CMPCSEL_bm) ? p->wob_raw : p->woa_raw;
+	uint8_t d = (ctrlc & CMPDSEL_bm) ? p->wob_raw : p->woa_raw;
+
+	if ((fault & CMPCEN_bm) && c != p->woc) {
+		p->woc = c;
+		avr_raise_irq(p->io.irq + AVR_TCD_IRQ_WOC, c);
+	}
+	if ((fault & CMPDEN_bm) && d != p->wod) {
+		p->wod = d;
+		avr_raise_irq(p->io.irq + AVR_TCD_IRQ_WOD, d);
+	}
+	/* A disabled output is released (driven low) rather than left stuck high. */
+	if (!(fault & CMPCEN_bm) && p->woc) {
+		p->woc = 0;
+		avr_raise_irq(p->io.irq + AVR_TCD_IRQ_WOC, 0);
+	}
+	if (!(fault & CMPDEN_bm) && p->wod) {
+		p->wod = 0;
+		avr_raise_irq(p->io.irq + AVR_TCD_IRQ_WOD, 0);
+	}
+}
+
 static void tcd_publish(avr_tcd_t *p, uint8_t mask, uint8_t *cur, uint8_t next)
 {
-	if (!(rd(p->io.avr, p->r_faultctrl) & mask))
-		return;
-	if (*cur != next) {
+	if (mask == CMPAEN_bm)
+		p->woa_raw = next;
+	else
+		p->wob_raw = next;
+	if ((rd(p->io.avr, p->r_faultctrl) & mask) && *cur != next) {
 		*cur = next;
 		avr_raise_irq(p->io.irq + (mask == CMPAEN_bm ? AVR_TCD_IRQ_WOA : AVR_TCD_IRQ_WOB), next);
+		/* STATUS.PWMACTx: set on every WOx toggle, cleared by software. */
+		p->io.avr->data[p->r_status] |= (mask == CMPAEN_bm ? PWMACTA_bm : PWMACTB_bm);
 	}
+	tcd_publish_cd(p);
 }
 
 /* Publish the waveform-output levels for the current up-ramp state. */
@@ -140,6 +195,29 @@ static void tcd_emit_state(avr_tcd_t *p, int32_t count)
 
 	tcd_publish(p, CMPAEN_bm, &p->woa, woa);
 	tcd_publish(p, CMPBEN_bm, &p->wob, wob);
+
+	/* EVSYS generators: a pulse when the counter matches CMPASET / CMPBSET. */
+	{
+		uint32_t aset = reg12(p, p->r_cmpaset), bset = reg12(p, p->r_cmpbset);
+		switch (mode) {
+		case WGMODE_ONERAMP:
+			if ((uint32_t)count == aset) tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPASET);
+			if ((uint32_t)count == bset) tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPBSET);
+			break;
+		case WGMODE_TWORAMP:
+			if (p->phase == 0 && (uint32_t)count == aset)
+				tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPASET);
+			if (p->phase == 1 && (uint32_t)count == bset)
+				tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPBSET);
+			break;
+		case WGMODE_FOURRAMP:
+			if (count == 0 && p->phase == 1) tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPASET);
+			if (count == 0 && p->phase == 3) tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPBSET);
+			break;
+		default:
+			break;
+		}
+	}
 }
 
 static void tcd_dualslope_action(avr_tcd_t *p, int32_t count)
@@ -147,6 +225,10 @@ static void tcd_dualslope_action(avr_tcd_t *p, int32_t count)
 	uint32_t aset = reg12(p, p->r_cmpaset);
 	uint32_t bset = reg12(p, p->r_cmpbset);
 
+	if (p->dir > 0) {
+		if ((uint32_t)count == aset) tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPASET);
+		if ((uint32_t)count == bset) tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPBSET);
+	}
 	if (p->dir < 0) {
 		if ((uint32_t)count == bset)
 			tcd_publish(p, CMPBEN_bm, &p->wob, 1);
@@ -301,6 +383,7 @@ avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
 			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
 		}
 		if (p->dir > 0 && (uint32_t)count > top) {
+			tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPBCLR);
 			avr_raise_interrupt(avr, &p->ovf);
 			p->start_cycle = when;
 			p->start_count = (int32_t)top;
@@ -331,6 +414,7 @@ avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
 			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
 		}
 
+		tcd_pulse(p, AVR_TCD_IRQ_EVT_CMPBCLR);
 		avr_raise_interrupt(avr, &p->ovf);
 		p->phase = 0;
 		p->top = top;
@@ -403,14 +487,87 @@ avr_tcd_intflags_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *p
 	avr_core_watch_write(avr, addr, res);
 	if (!(res & OVF_bm))
 		avr_clear_interrupt(avr, &p->ovf);
+	if (p->trig.vector && !(res & (TRIGA_bm | TRIGB_bm)))
+		avr_clear_interrupt(avr, &p->trig);
+}
+
+/* INTCTRL: enabling TRIGA/TRIGB while its flag is already set raises the TRIG
+ * request; disabling every flagged source withdraws a pending one. */
+static void
+avr_tcd_intctrl_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	uint8_t flags = rd(avr, p->r_intflags) & (TRIGA_bm | TRIGB_bm);
+
+	avr_core_watch_write(avr, addr, v);
+	if (!p->trig.vector)
+		return;
+	if (flags & v)
+		avr_raise_interrupt(avr, &p->trig);
+	else
+		avr_clear_interrupt(avr, &p->trig);
+}
+
+/* CTRLC only changes which waveform WOC / WOD show: no reschedule. */
+static void
+avr_tcd_ctrlc_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	avr_core_watch_write(avr, addr, v);
+	tcd_publish_cd(p);
+}
+
+/* STATUS.PWMACTA/B are write-1-to-clear; the sync-ready bits read as 1. */
+static void
+avr_tcd_status_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	(void)param;
+	avr->data[addr] = (avr->data[addr] & ~(v & (PWMACTA_bm | PWMACTB_bm))) | ENRDY_bm | CMDRDY_bm;
+}
+
+/* An event input edge (EVCTRLx.EDGE: 1 = rising, 0 = falling) with TRIGEI set
+ * flags TRIGA / TRIGB (25.5.9). */
+static void
+avr_tcd_input_event(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	avr_t *avr = p->io.avr;
+	int b = (irq->irq - p->base_irq) == AVR_TCD_IRQ_IN_B;
+	uint8_t *prev = b ? &p->in_b : &p->in_a;
+	uint8_t level = value & 1;
+	uint8_t ev = rd(avr, b ? p->r_evctrla + 1 : p->r_evctrla);
+	uint8_t bit = b ? TRIGB_bm : TRIGA_bm;
+	int edge = level != *prev && (level == !!(ev & EDGE_bm));
+
+	*prev = level;
+	if (!edge || !(ev & TRIGEI_bm) || !tcd_enabled(p))
+		return;
+	avr_core_watch_write(avr, p->r_intflags, rd(avr, p->r_intflags) | bit);
+	if (p->trig.vector && (rd(avr, p->r_intctrl) & bit))
+		avr_raise_interrupt(avr, &p->trig);
+}
+
+void
+avr_tcd_set_trig_vector(
+		avr_t * avr,
+		avr_tcd_t * p,
+		uint8_t vec_trig)
+{
+	p->trig.vector = vec_trig;
+	p->trig.enable.reg = p->r_intctrl;
+	p->trig.enable.mask = TRIGA_bm | TRIGB_bm;
+	/* No 'raised' regbit: raising a vector sets every bit of its mask, and TRIGA /
+	 * TRIGB are flagged individually by avr_tcd_input_event(). */
+	p->trig.raise_sticky = 1;
+	avr_register_vector(avr, &p->trig);
 }
 
 /* STATUS always reports the double-buffered logic ready. */
 static uint8_t
 avr_tcd_status_read(struct avr_t *avr, avr_io_addr_t addr, void *param)
 {
-	(void)avr; (void)param;
-	return ENRDY_bm | CMDRDY_bm;
+	(void)param;
+	return ENRDY_bm | CMDRDY_bm | (avr->data[addr] & (PWMACTA_bm | PWMACTB_bm));
 }
 
 static void
@@ -424,13 +581,21 @@ avr_tcd_reset(avr_io_t *io)
 	p->top = 0;
 	p->phase = 0;
 	p->dir = 1;
-	p->woa = p->wob = 0;
+	p->woa = p->wob = p->woa_raw = p->wob_raw = p->woc = p->wod = 0;
+	p->in_a = p->in_b = 0;
 	p->io.avr->data[p->r_status] = ENRDY_bm | CMDRDY_bm;
 }
 
 static const char *irq_names[AVR_TCD_IRQ_COUNT] = {
 	[AVR_TCD_IRQ_WOA] = ">tcd.woa",
 	[AVR_TCD_IRQ_WOB] = ">tcd.wob",
+	[AVR_TCD_IRQ_WOC] = ">tcd.woc",
+	[AVR_TCD_IRQ_WOD] = ">tcd.wod",
+	[AVR_TCD_IRQ_EVT_CMPBCLR] = ">tcd.cmpbclr",
+	[AVR_TCD_IRQ_EVT_CMPASET] = ">tcd.cmpaset",
+	[AVR_TCD_IRQ_EVT_CMPBSET] = ">tcd.cmpbset",
+	[AVR_TCD_IRQ_IN_A] = "tcd.ina",
+	[AVR_TCD_IRQ_IN_B] = "tcd.inb",
 };
 
 static avr_io_t _io = {
@@ -464,6 +629,8 @@ avr_tcd_init(
 	p->r_intflags = base + TCDR_INTFLAGS;
 	p->r_status = base + TCDR_STATUS;
 	p->r_faultctrl = base + TCDR_FAULTCTRL;
+	p->r_ctrlc = base + TCDR_CTRLC;
+	p->r_evctrla = base + TCDR_EVCTRLA;
 	p->r_cmpaset = base + TCDR_CMPASETL;
 	p->r_cmpaclr = base + TCDR_CMPACLRL;
 	p->r_cmpbset = base + TCDR_CMPBSETL;
@@ -489,6 +656,11 @@ avr_tcd_init(
 	avr_register_io_write(avr, p->r_ctrla, avr_tcd_ctrla_write, p);
 	avr_register_io_write(avr, p->r_intflags, avr_tcd_intflags_write, p);
 	avr_register_io_read(avr, p->r_status, avr_tcd_status_read, p);
+	avr_register_io_write(avr, p->r_status, avr_tcd_status_write, p);
+	avr_register_io_write(avr, p->r_ctrlc, avr_tcd_ctrlc_write, p);
+	avr_register_io_write(avr, p->r_intctrl, avr_tcd_intctrl_write, p);
+	avr_irq_register_notify(p->io.irq + AVR_TCD_IRQ_IN_A, avr_tcd_input_event, p);
+	avr_irq_register_notify(p->io.irq + AVR_TCD_IRQ_IN_B, avr_tcd_input_event, p);
 
 	/* CTRLB (mode), FAULTCTRL (output enables) and the four compare registers
 	 * all influence the waveform schedule: reschedule when they change. */

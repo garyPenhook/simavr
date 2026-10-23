@@ -59,7 +59,10 @@ extern "C" {
 enum {
 	TCDR_CTRLA = 0x00,
 	TCDR_CTRLB = 0x01,
+	TCDR_CTRLC = 0x02,	/* CMPCSEL / CMPDSEL select the PWM shown on WOC / WOD */
 	TCDR_CTRLE = 0x04,
+	TCDR_EVCTRLA = 0x08,	/* TRIGEI, EDGE for event input A */
+	TCDR_EVCTRLB = 0x09,
 	TCDR_INTCTRL = 0x0c,
 	TCDR_INTFLAGS = 0x0d,
 	TCDR_STATUS = 0x0e,
@@ -71,10 +74,23 @@ enum {
 	TCDR_CMPBCLRH = 0x2f,
 };
 
-/* IRQs: the two waveform outputs (One Ramp mode). */
+/*
+ * IRQs: the waveform outputs WOA/WOB and, on parts that fit them, WOC/WOD (a copy
+ * of WOA or WOB chosen by CTRLC.CMPCSEL / CMPDSEL, enabled by FAULTCTRL.CMPCEN /
+ * CMPDEN); the EVSYS generator pulses (1 then 0) when the counter matches
+ * CMPBCLR / CMPASET / CMPBSET; and the INPUT A / INPUT B event levels, which the
+ * board or EVSYS drives (EVCTRLx.TRIGEI / EDGE select the active edge).
+ */
 enum {
 	AVR_TCD_IRQ_WOA = 0,
 	AVR_TCD_IRQ_WOB,
+	AVR_TCD_IRQ_WOC,
+	AVR_TCD_IRQ_WOD,
+	AVR_TCD_IRQ_EVT_CMPBCLR,
+	AVR_TCD_IRQ_EVT_CMPASET,
+	AVR_TCD_IRQ_EVT_CMPBSET,
+	AVR_TCD_IRQ_IN_A,
+	AVR_TCD_IRQ_IN_B,
 	AVR_TCD_IRQ_COUNT,
 };
 
@@ -85,8 +101,10 @@ typedef struct avr_tcd_t {
 	avr_io_addr_t	base;
 	avr_io_addr_t	r_ctrla, r_ctrlb, r_intctrl, r_intflags, r_status;
 	avr_io_addr_t	r_faultctrl, r_cmpaset, r_cmpaclr, r_cmpbset, r_cmpbclr;
+	avr_io_addr_t	r_ctrlc, r_evctrla;
 
 	avr_int_vector_t	ovf;	/* TCDn_OVF */
+	avr_int_vector_t	trig;	/* TCDn_TRIG (AVR Dx): INTFLAGS.TRIGA / TRIGB */
 
 	/* Optional CLKSEL source resolver (AVR Dx: CLKSEL 0 = OSCHF, 1 = PLL, 2 =
 	 * EXTCLK, 3 = SYSCLK). When set it supplies f_TCD in Hz for CLKSEL 0..2
@@ -104,6 +122,9 @@ typedef struct avr_tcd_t {
 
 	int			base_irq;
 	uint8_t		woa, wob;	/* last published output levels */
+	uint8_t		woa_raw, wob_raw;	/* waveform levels whether or not enabled */
+	uint8_t		woc, wod;	/* published WOC / WOD levels */
+	uint8_t		in_a, in_b;	/* event input levels (edge detection) */
 } avr_tcd_t;
 
 /*
@@ -120,6 +141,18 @@ avr_tcd_init(
 		uint8_t vec_ovf,
 		uint8_t osccfg_fuse_index,
 		char name);
+
+/*
+ * Install the TCDn_TRIG interrupt (AVR Dx): INTCTRL.TRIGA/TRIGB enable it and
+ * INTFLAGS.TRIGA/TRIGB flag an active edge on event input A/B while the
+ * corresponding EVCTRLx.TRIGEI is set (DS40002413B 25.3.5). The input-mode fault
+ * actions and capture are not modelled.
+ */
+void
+avr_tcd_set_trig_vector(
+		avr_t * avr,
+		avr_tcd_t * p,
+		uint8_t vec_trig);
 
 #define AVR_IOCTL_TCD_GETIRQ(_name) AVR_IOCTL_DEF('t','c','d',(_name))
 

@@ -92,6 +92,7 @@ typedef struct avr_twi_modern_t {
 	uint8_t		m_rx_data;	// data byte received from the slave
 
 	/* Slave state */
+	uint8_t		dual;		// AVR Dx: DUALCTRL.ENABLE (client on its own pins)
 	uint8_t		s_selected;	// non-zero when addressed as a slave (holds addr|R/W)
 } avr_twi_modern_t;
 
@@ -109,6 +110,20 @@ avr_twi_modern_init(
 		uint8_t mvector,
 		uint8_t svector,
 		char name);
+
+/*
+ * AVR Dx TWI (DS40002413B chapter 29): DUALCTRL at +0x01 (INPUTLVL bit 6, SDAHOLD
+ * bits 3:2, FMPEN bit 1, ENABLE bit 0) configures the client when the Dual mode is
+ * enabled, while CTRLA (INPUTLVL bit 6, SDASETUP bit 4, SDAHOLD bits 3:2, FMPEN
+ * bit 1) configures the host. In Dual mode the host and the client run
+ * simultaneously and independently (29.3.3.4), which the host/client register
+ * blocks already do; the pin sets (TWIROUTEA) are electrical only and not modelled.
+ * This installs the register masks and records DUALCTRL.ENABLE in ->dual.
+ */
+void
+avr_twi_modern_enable_dual(
+		avr_t * avr,
+		avr_twi_modern_t * p);
 
 #ifdef __cplusplus
 };
