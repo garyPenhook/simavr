@@ -54,6 +54,9 @@ typedef struct avr_io_t {
 	// called externally. allow access to io modules and so on
 	int (*ioctl)(struct avr_io_t *io, uint32_t ctl, void *io_param);
 
+	// optional, called when a debugger front end halts (1) or resumes (0) the CPU
+	void (*debug_halt)(struct avr_io_t *io, int halted);
+
 	// optional, a function to free up allocated system resources
 	void (*dealloc)(struct avr_io_t *io);
 } avr_io_t;
@@ -61,6 +64,14 @@ typedef struct avr_io_t {
 /*
  * IO modules helper functions
  */
+
+// the CPU was halted (1) or resumed (0) by a debugger front end (the GDB stub, the
+// sim_host pause); calls every module's debug_halt() on a change. Call it from the
+// thread that runs avr_run().
+void
+avr_debug_halt(
+		avr_t *avr,
+		int halted);
 
 // registers an IO module, so it's run(), reset() etc are called
 // this is called by the AVR core init functions, you /could/ register an external

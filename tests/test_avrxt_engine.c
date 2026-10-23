@@ -208,6 +208,15 @@ static void cpu_write(avr_t *avr, uint16_t addr, uint8_t v)
 	else
 		avr_core_watch_write(avr, addr, v);
 }
+/* Drive a TCD event input and let the 2-3 clock synchroniser deliver it. */
+static void tcd_in(avr_t *avr, avr_irq_t *irq, int v)
+{
+	avr_raise_irq(irq, v);
+	for (int i = 0; i < 6; i++) {
+		avr_run(avr);
+		if (avr->pc >= 0x1000) avr->pc = 0;
+	}
+}
 static uint8_t cpu_read(avr_t *avr, uint16_t addr)
 {
 	avr_io_addr_t io = AVR_DATA_TO_IO(addr);
@@ -5704,34 +5713,34 @@ int main(void)
 			cpu_write(m, T + 0x00, 0x60 | 0x01);
 			cpu_write(m, T + 0x08, 0x01 | 0x10);		/* EVCTRLA: TRIGEI, RISE_HIGH */
 			cpu_write(m, T + 0x0c, 0x04);			/* INTCTRL.TRIGA */
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("TRIGA set on the rising edge", (m->data[T + 0x0d] >> 2) & 1, 1);
 			check("TRIG interrupt pends", avr_has_pending_interrupts(m), 1);
 			cpu_write(m, T + 0x0d, 0x04);
 			check("TRIGA write-1-to-clear unpends", avr_has_pending_interrupts(m), 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			check("falling edge ignored for RISE_HIGH", (m->data[T + 0x0d] >> 2) & 1, 0);
 			cpu_write(m, T + 0x08, 0x01);			/* FALL_LOW */
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("rising ignored for FALL_LOW", (m->data[T + 0x0d] >> 2) & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			check("falling edge flags TRIGA", (m->data[T + 0x0d] >> 2) & 1, 1);
 			cpu_write(m, T + 0x0d, 0x04);
 			cpu_write(m, T + 0x08, 0x00);			/* TRIGEI off */
-			avr_raise_irq(ina, 1); avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 1); tcd_in(m, ina, 0);
 			check("no TRIGEI, no flag", (m->data[T + 0x0d] >> 2) & 1, 0);
 			/* A flag raised while TRIGA is disabled fires once TRIGA is enabled. */
 			cpu_write(m, T + 0x0d, 0x04);
 			cpu_write(m, T + 0x0c, 0x00);
 			cpu_write(m, T + 0x08, 0x01 | 0x10);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("flag set while disabled: no request yet", avr_has_pending_interrupts(m), 0);
 			cpu_write(m, T + 0x0c, 0x04);
 			check("late enable raises the TRIG request", avr_has_pending_interrupts(m), 1);
 			cpu_write(m, T + 0x0c, 0x00);
 			check("disabling withdraws the request", avr_has_pending_interrupts(m), 0);
 			cpu_write(m, T + 0x0d, 0x04);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			/* STATUS keeps its ready bits in the raw register too. */
 			check("STATUS ready bits in data[]", m->data[T + 0x0e] & 0x03, 0x03);
 			/* Clearing CMPCEN releases WOC. */
@@ -5839,11 +5848,11 @@ int main(void)
 			/* Event capture: ACTION | TRIGEI | RISE_HIGH on input B -> CAPTUREB + TRIGB. */
 			cpu_write(m, T + 0x09, 0x04 | 0x01 | 0x10);
 			TCD_RUN(50);
-			avr_raise_irq(inb, 1);
+			tcd_in(m, inb, 1);
 			uint32_t cb = cpu_read(m, T + 0x24) | (cpu_read(m, T + 0x25) << 8);
 			check("event capture on input B", cb > cap2 && cb < 400, 1);
 			check("capture sets TRIGB", (m->data[T + 0x0d] >> 3) & 1, 1);
-			avr_raise_irq(inb, 0);
+			tcd_in(m, inb, 0);
 			cpu_write(m, T + 0x09, 0x00);
 			cpu_write(m, T + 0x0d, 0x0c);
 
@@ -5859,16 +5868,16 @@ int main(void)
 			cpu_write(m, T + 0x00, 0x60 | 0x01);
 			TCD_RUN(150);
 			check("WOA on before the fault", woa->value & 1, 1);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("mode 4 forces WOA to the fault level", woa->value & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			check("mode 4 releases when the fault ends", woa->value & 1, 1);
 
 			/* Mode 9: positive edge during on-time blocks the rest of that on-time only. */
 			cpu_write(m, T + 0x10, 9);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("mode 9 stops WOA on the edge", woa->value & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			check("mode 9 stays off after release", woa->value & 1, 0);
 			{
 				int again = 0;
@@ -5887,9 +5896,9 @@ int main(void)
 			cpu_write(m, T + 0x08, 0x01 | 0x10);
 			cpu_write(m, T + 0x00, 0x60 | 0x01);
 			TCD_RUN(120);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("mode 10 forces WOA off while active", woa->value & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			check("mode 10 released mid on-time: off for the rest", woa->value & 1, 0);
 
 			/* Mode 7: stop outputs and counter until RESTART. */
@@ -5903,8 +5912,8 @@ int main(void)
 			cpu_write(m, T + 0x08, 0x01 | 0x10);
 			cpu_write(m, T + 0x00, 0x60 | 0x01);
 			TCD_RUN(120);
-			avr_raise_irq(ina, 1);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 1);
+			tcd_in(m, ina, 0);
 			check("mode 7 stops the outputs", woa->value & 1, 0);
 			TCD_RUN(100);
 			check("mode 7: counter halted, no WOB", wob->value & 1, 0);
@@ -5928,13 +5937,13 @@ int main(void)
 			cpu_write(m, T + 0x0c, 0x04);
 			cpu_write(m, T + 0x00, 0x60 | 0x01);
 			TCD_RUN(110);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("blanked event does not flag TRIGA", (m->data[T + 0x0d] >> 2) & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			TCD_RUN(150);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("event after the blanking window flags TRIGA", (m->data[T + 0x0d] >> 2) & 1, 1);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			cpu_write(m, T + 0x0d, 0x04);
 			cpu_write(m, T + 0x0c, 0x00);
 
@@ -5989,11 +5998,11 @@ int main(void)
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(120);
 			check("mode 1: WOA on before the fault", woa->value & 1, 1);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("mode 1: WOA stopped", woa->value & 1, 0);
 			TCD_RUN(300);
 			check("mode 1: counter waits (no WOB)", wob->value & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			TCD_RUN(110);
 			check("mode 1: restarts at dead-time B", wob->value & 1, 1);
 			check("mode 1: WOA stays off", woa->value & 1, 0);
@@ -6002,28 +6011,28 @@ int main(void)
 			TCD_SETUP(400); cpu_write(m, T + 0x11, 1);
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(120);
-			avr_raise_irq(inb, 1);
+			tcd_in(m, inb, 1);
 			check("mode 1 on B ignored during A", woa->value & 1, 1);
-			avr_raise_irq(inb, 0);
+			tcd_in(m, inb, 0);
 
 			/* Mode 2: stop WOA, run dead-time B + on-time B, then wait. */
 			TCD_SETUP(400); cpu_write(m, T + 0x10, 2);
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(120);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			check("mode 2: WOA stopped", woa->value & 1, 0);
 			TCD_RUN(180);
 			check("mode 2: opposite on-time B runs", wob->value & 1, 1);
 			TCD_RUN(400);
 			check("mode 2: waits after on-time B", (woa->value | wob->value) & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			TCD_RUN(110);
 			check("mode 2: restarts at dead-time A", woa->value & 1, 1);
 			/* Released before the opposite cycle ends: no wait. */
 			TCD_SETUP(400); cpu_write(m, T + 0x10, 2);
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(120);
-			avr_raise_irq(ina, 1); avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 1); tcd_in(m, ina, 0);
 			TCD_RUN(350);					/* DTB+OTB 200, DTA 100, into OTA */
 			check("mode 2: early release resumes the normal flow", woa->value & 1, 1);
 
@@ -6033,11 +6042,11 @@ int main(void)
 			TCD_RUN(120);
 			wob_n = 0;
 			woa_n = 0;
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			TCD_RUN(1000);
 			check("mode 3: opposite on-time repeats", wob_n >= 3, 1);
 			check("mode 3: WOA never runs during the fault", woa_n, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			TCD_RUN(600);
 			check("mode 3: normal flow after release", woa_n >= 1, 1);
 
@@ -6046,10 +6055,10 @@ int main(void)
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(120);
 			woa_n = wob_n = 0;
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			TCD_RUN(1500);
 			check("mode 5: no on-time while active", woa_n + wob_n, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			TCD_RUN(450);
 			check("mode 5: on-time resumes after release", woa_n + wob_n >= 1, 1);
 
@@ -6058,10 +6067,10 @@ int main(void)
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(50);
 			woa_n = wob_n = 0;
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			TCD_RUN(600);
 			check("mode 6: counter waits, no outputs", woa_n + wob_n, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 			TCD_RUN(110);
 			check("mode 6: restarts with the other dead-time (B)", wob->value & 1, 1);
 			check("mode 6: WOA not started", woa_n, 0);
@@ -6071,11 +6080,11 @@ int main(void)
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(350);
 			check("mode 8: WOB on before the edge", wob->value & 1, 1);
-			avr_raise_irq(inb, 1);
+			tcd_in(m, inb, 1);
 			check("mode 8: WOB stops on the edge", wob->value & 1, 0);
 			TCD_RUN(110);
 			check("mode 8: WOA runs after the jump", woa->value & 1, 1);
-			avr_raise_irq(inb, 0);
+			tcd_in(m, inb, 0);
 
 			/* Mode 5 in Two Ramp and Four Ramp mode: no on-time while active. */
 			for (int wg = 1; wg <= 2; wg++) {
@@ -6084,11 +6093,11 @@ int main(void)
 				cpu_write(m, T + 0x00, 0x61);
 				TCD_RUN(60);
 				woa_n = wob_n = 0;
-				avr_raise_irq(ina, 1);
+				tcd_in(m, ina, 1);
 				TCD_RUN(1800);
 				check(wg == 1 ? "mode 5, Two Ramp: no on-time while active"
 					      : "mode 5, Four Ramp: no on-time while active", woa_n + wob_n, 0);
-				avr_raise_irq(ina, 0);
+				tcd_in(m, ina, 0);
 				TCD_RUN(1200);
 				check(wg == 1 ? "mode 5, Two Ramp: on-time resumes"
 					      : "mode 5, Four Ramp: on-time resumes", woa_n + wob_n >= 1, 1);
@@ -6099,11 +6108,11 @@ int main(void)
 			TCD_SETUP(400); cpu_write(m, T + 0x10, 1);
 			cpu_write(m, T + 0x00, 0x61);
 			TCD_RUN(120);
-			avr_raise_irq(ina, 1);
+			tcd_in(m, ina, 1);
 			cpu_write(m, T + 0x28, 100);
 			TCD_RUN(600);
 			check("compare write keeps a waiting counter halted", (woa->value | wob->value) & 1, 0);
-			avr_raise_irq(ina, 0);
+			tcd_in(m, ina, 0);
 
 			/* Digital filter: a short pulse is rejected, a long one accepted. */
 			TCD_SETUP(400);
@@ -6115,10 +6124,104 @@ int main(void)
 			avr_raise_irq(ina, 1);
 			TCD_RUN(2);
 			check("filter: not yet after 2 clocks", (m->data[T + 0x0d] >> 2) & 1, 0);
-			TCD_RUN(6);
+			TCD_RUN(8);					/* 4 filter + 3 synchroniser clocks */
 			check("filter accepts a long pulse", (m->data[T + 0x0d] >> 2) & 1, 1);
 			avr_raise_irq(ina, 0); TCD_RUN(10);
 			cpu_write(m, T + 0x0d, 0x04);
+
+			/* Synchroniser: an event takes 3 CLK_TCD_SYNC to reach the input logic. */
+			TCD_SETUP(400);
+			cpu_write(m, T + 0x00, 0x61);
+			TCD_RUN(10);
+			avr_raise_irq(ina, 1);
+			check("synchroniser: nothing at once", (m->data[T + 0x0d] >> 2) & 1, 0);
+			TCD_RUN(2);
+			check("synchroniser: nothing after 2 clocks", (m->data[T + 0x0d] >> 2) & 1, 0);
+			TCD_RUN(2);
+			check("synchroniser: flagged after 3-4 clocks", (m->data[T + 0x0d] >> 2) & 1, 1);
+			avr_raise_irq(ina, 0); TCD_RUN(6);
+			cpu_write(m, T + 0x0d, 0x04);
+
+			/* ASYNCON: the output override is immediate, the flag still waits. */
+			TCD_SETUP(400); cpu_write(m, T + 0x10, 4);
+			cpu_write(m, T + 0x08, 0x01 | 0x10 | 0x80);
+			cpu_write(m, T + 0x00, 0x61);
+			TCD_RUN(120);
+			check("ASYNCON: WOA on before the event", woa->value & 1, 1);
+			avr_raise_irq(ina, 1);
+			check("ASYNCON: output overridden at once", woa->value & 1, 0);
+			check("ASYNCON: flag not yet set", (m->data[T + 0x0d] >> 2) & 1, 0);
+			TCD_RUN(5);
+			check("ASYNCON: flag set after the synchroniser", (m->data[T + 0x0d] >> 2) & 1, 1);
+			avr_raise_irq(ina, 0);
+			check("ASYNCON: release is immediate too", woa->value & 1, 1);
+			TCD_RUN(6);
+			cpu_write(m, T + 0x0d, 0x04);
+
+			/* The generic debug-halt entry point reaches the TCD. */
+			TCD_SETUP(400);
+			cpu_write(m, T + 0x1e, 0x00);			/* DBGRUN = 0 */
+			cpu_write(m, T + 0x00, 0x61);
+			TCD_RUN(120);
+			avr_debug_halt(m, 1);
+			TCD_RUN(400);
+			check("avr_debug_halt freezes TCD0", woa->value & 1, 1);
+			avr_debug_halt(m, 0);
+			TCD_RUN(100);
+			check("avr_debug_halt(0) resumes TCD0", woa->value & 1, 0);
+
+			/* Back-to-back events inside the synchroniser window are all delivered. */
+			TCD_SETUP(400);
+			cpu_write(m, T + 0x00, 0x61);
+			TCD_RUN(10);
+			avr_raise_irq(ina, 1); TCD_RUN(1); avr_raise_irq(ina, 0);
+			TCD_RUN(10);
+			check("2-clock pulse still flags TRIGA", (m->data[T + 0x0d] >> 2) & 1, 1);
+			cpu_write(m, T + 0x0d, 0x04);
+
+			/* Events during a freezing break are ignored; the line level is tracked. */
+			{
+				avr_tcd_t *tcd = NULL;
+				for (avr_io_t *io = m->io_port; io; io = io->next)
+					if (!strcmp(io->kind, "tcd")) tcd = (avr_tcd_t *)io;
+				TCD_SETUP(400);
+				cpu_write(m, T + 0x1e, 0x00);
+				cpu_write(m, T + 0x00, 0x61);
+				TCD_RUN(10);
+				avr_debug_halt(m, 1);
+				avr_raise_irq(ina, 1);
+				avr_debug_halt(m, 0);
+				TCD_RUN(20);
+				check("event during a freezing break is ignored", (m->data[T + 0x0d] >> 2) & 1, 0);
+				avr_raise_irq(ina, 0);
+				TCD_RUN(10);
+				avr_raise_irq(ina, 1);
+				TCD_RUN(10);
+				check("next edge after the break is detected", (m->data[T + 0x0d] >> 2) & 1, 1);
+				avr_raise_irq(ina, 0); TCD_RUN(10);
+				cpu_write(m, T + 0x0d, 0x04);
+
+				/* Halt with an event still in the synchroniser: it is dropped, not replayed. */
+				avr_raise_irq(ina, 1);
+				avr_debug_halt(m, 1);
+				avr_debug_halt(m, 0);
+				TCD_RUN(20);
+				check("pending synchroniser event dropped by a break", (m->data[T + 0x0d] >> 2) & 1, 0);
+				avr_raise_irq(ina, 0); TCD_RUN(10);
+
+				/* The GDB run loop: Stopped and Step hold the halt, Running releases it. */
+				cpu_write(m, T + 0x0d, 0x04);
+				m->state = cpu_Stopped;
+				avr_callback_run_gdb(m);
+				check("GDB stop halts the peripherals", m->dbg_halted, 1);
+				m->state = cpu_Step;
+				avr_callback_run_gdb(m);
+				check("GDB single step keeps the halt", m->dbg_halted, 1);
+				m->state = cpu_Running;
+				avr_callback_run_gdb(m);
+				check("GDB continue resumes", m->dbg_halted, 0);
+				(void)tcd;
+			}
 
 			/* Dithering: DITHER = 8 adds one count every second cycle. */
 			TCD_SETUP(9);
@@ -6181,11 +6284,11 @@ int main(void)
 				cpu_write(m, T + 0x10, 0);
 				cpu_write(m, T + 0x0d, 0x0c);
 				cpu_write(m, T + 0x00, 0x61);
-				avr_raise_irq(ina, 0);
-				avr_raise_irq(ina, 1);
+				tcd_in(m, ina, 0);
+				tcd_in(m, ina, 1);
 				check("events work again after a break ended while disabled",
 				      (m->data[T + 0x0d] >> 2) & 1, 1);
-				avr_raise_irq(ina, 0);
+				tcd_in(m, ina, 0);
 			}
 			cpu_write(m, T + 0x00, 0x60);
 			avr_reset(m);

@@ -44,6 +44,19 @@ avr_ioctl(
 }
 
 void
+avr_debug_halt(
+		avr_t *avr,
+		int halted)
+{
+	if (!!halted == !!avr->dbg_halted)
+		return;
+	avr->dbg_halted = !!halted;
+	for (avr_io_t * port = avr->io_port; port; port = port->next)
+		if (port->debug_halt)
+			port->debug_halt(port, halted);
+}
+
+void
 avr_register_io(
 		avr_t *avr,
 		avr_io_t * io)

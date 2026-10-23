@@ -157,6 +157,12 @@ typedef struct avr_tcd_t {
 	uint8_t		dith_acc, dith_done;	/* dither accumulator, cycle-end hold done */
 	uint8_t		dbg_halted;
 	uint8_t		filt_level[2];		/* digital filter: level being qualified */
+	uint8_t		line[2];		/* current level of each event input */
+	uint8_t		sync_level[2];		/* last level queued into the synchroniser */
+	uint8_t		raw_prev[2];		/* last level seen by the asynchronous path */
+	uint8_t		sq_n[2], sq_head[2];	/* synchroniser FIFO (events are delivered in order) */
+	uint8_t		sq_lvl[2][8];
+	avr_cycle_count_t	sq_due[2][8];
 } avr_tcd_t;
 
 /*
@@ -194,7 +200,8 @@ avr_tcd_set_trig_vector(
  * this. DBGCTRL.DBGRUN = 0 freezes the timer and ignores events during the break;
  * DBGCTRL.FAULTDET = 1 raises a Fault on both inputs for as long as the break lasts
  * and sets TRIGA / TRIGB (DS40002413B 25.3.7). Call it from the simulation thread
- * (the one running avr_run()); nothing in the library calls it yet.
+ * (the one running avr_run()). The GDB stub and sim_host call it for every TCD
+ * through avr_debug_halt() / avr_io_t.debug_halt.
  */
 void
 avr_tcd_debug_halt(

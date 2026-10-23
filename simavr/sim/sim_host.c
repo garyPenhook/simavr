@@ -277,6 +277,9 @@ host_set_mode(
 		int id)
 {
 	h->mode = mode;
+	/* An instance that is not running is a debugger break for the peripherals
+	 * (DBGCTRL); the resume happens on the sim thread, in host_exec(). */
+	avr_debug_halt(h->avr, mode != AVR_HOST_RUNNING);
 	if (mode != AVR_HOST_RUNNING) {
 		h->step_left = 0;
 		h->cycle_limit = 0;
@@ -462,6 +465,7 @@ host_exec(
 		if (h->watch[i].prev)
 			memcpy(h->watch[i].prev, h->avr->data + h->watch[i].addr, h->watch[i].len);
 
+	avr_debug_halt(avr, 0);
 	while (h->mode == AVR_HOST_RUNNING && avr->cycle - start < budget) {
 		if (__atomic_exchange_n(&h->pause_req, 0, __ATOMIC_SEQ_CST)) {
 			host_set_mode(h, AVR_HOST_PAUSED, AVR_HOST_STOP_USER, 0);

@@ -103,6 +103,7 @@
 /* EVCTRLx.CFG (25.5.6) */
 #define CFG_gm		0xc0
 #define CFG_FILTERON	0x40
+#define CFG_ASYNCON	0x80
 
 /* DBGCTRL (25.5.18) */
 #define DBGRUN_bm	0x01
@@ -552,6 +553,29 @@ static avr_cycle_count_t
 avr_tcd_filter_a(struct avr_t *avr, avr_cycle_count_t when, void *param);
 static avr_cycle_count_t
 avr_tcd_filter_b(struct avr_t *avr, avr_cycle_count_t when, void *param);
+static avr_cycle_count_t
+avr_tcd_sync_a(struct avr_t *avr, avr_cycle_count_t when, void *param);
+static avr_cycle_count_t
+avr_tcd_sync_b(struct avr_t *avr, avr_cycle_count_t when, void *param);
+static void tcd_process_input(avr_tcd_t *p, int b, uint8_t level);
+
+/* Drop every event still being filtered or synchronised. */
+static void tcd_cancel_input_timers(avr_tcd_t *p)
+{
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_filter_a, p);
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_filter_b, p);
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_sync_a, p);
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_sync_b, p);
+	p->sq_n[0] = p->sq_n[1] = 0;
+}
+
+/* Events that were dropped (or ignored during a freezing break) still move the
+ * line: track the real level so the next transition is detected correctly. */
+static void tcd_sync_levels(avr_tcd_t *p)
+{
+	p->in_a = p->raw_prev[0] = p->sync_level[0] = p->filt_level[0] = p->line[0];
+	p->in_b = p->raw_prev[1] = p->sync_level[1] = p->filt_level[1] = p->line[1];
+}
 
 /* ---- counter-flow input modes (25.3.3.4.5) ----
  * A TCD cycle is four segments: 0 DTA, 1 OTA, 2 DTB, 3 OTB. Input A acts on
@@ -903,8 +927,7 @@ avr_tcd_ctrla_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *para
 	p->stopped = p->waiting = p->arm_mode = p->pend6 = p->hold_a = p->hold_b = 0;
 	p->dith_acc = p->dith_done = 0;
 	if (!(v & ENABLE_bm)) {
-		avr_cycle_timer_cancel(avr, avr_tcd_filter_a, p);
-		avr_cycle_timer_cancel(avr, avr_tcd_filter_b, p);
+		tcd_cancel_input_timers(p);
 	}
 	avr_tcd_reschedule(p);
 }
@@ -966,17 +989,28 @@ avr_tcd_status_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *par
 	avr->data[addr] = (avr->data[addr] & ~(v & (PWMACTA_bm | PWMACTB_bm))) | ENRDY_bm | CMDRDY_bm;
 }
 
-/* The INPUTMODE action of a Fault change on input 'b' (shared with the debug-break
- * FAULTDET fault). */
-static void tcd_input_fault(avr_tcd_t *p, int b, int changed, int active, int edge)
+/* The output side of an INPUTMODE fault: blocks and stops that act on the
+ * outputs. With EVCTRLx.CFG = ASYNCON this runs on the raw event, ahead of the
+ * synchroniser. */
+static void tcd_input_outputs(avr_tcd_t *p, int b, uint8_t mode, int changed, int active, int edge)
 {
-	uint8_t mode = rd(p->io.avr, p->base + (b ? TCDR_INPUTCTRLB : TCDR_INPUTCTRLA)) & IM_gm;
 	uint8_t nat = b ? p->wob_nat : p->woa_nat;
 
 	if (edge && mode == IM_EDGETRIGFREQ && nat)
 		*(b ? &p->blk_b : &p->blk_a) = 1;
 	if (changed && !active && mode == IM_LVLTRIGFREQ && nat)
 		*(b ? &p->blk_b : &p->blk_a) = 1;	/* released mid on-time */
+}
+
+/* The INPUTMODE action of a Fault change on input 'b' (shared with the debug-break
+ * FAULTDET fault); 'outputs_done' when the asynchronous path already acted. */
+static void tcd_input_fault(avr_tcd_t *p, int b, int changed, int active, int edge,
+			    int outputs_done)
+{
+	uint8_t mode = rd(p->io.avr, p->base + (b ? TCDR_INPUTCTRLB : TCDR_INPUTCTRLA)) & IM_gm;
+
+	if (!outputs_done)
+		tcd_input_outputs(p, b, mode, changed, active, edge);
 	if (edge && mode == IM_WAITSW) {
 		p->stopped = 1;
 		avr_cycle_timer_cancel(p->io.avr, avr_tcd_tick, p);
@@ -1017,7 +1051,8 @@ static void tcd_process_input(avr_tcd_t *p, int b, uint8_t level)
 			*act = active;
 		if (edge && (ev & ACTION_bm))
 			tcd_capture(p, b);
-		tcd_input_fault(p, b, changed, active, edge);
+		tcd_input_fault(p, b, changed, active, edge,
+				(ev & CFG_gm) == CFG_ASYNCON);
 	}
 	if (!edge || !(ev & TRIGEI_bm) || !tcd_enabled(p))
 		return;
@@ -1026,14 +1061,84 @@ static void tcd_process_input(avr_tcd_t *p, int b, uint8_t level)
 		avr_raise_interrupt(avr, &p->trig);
 }
 
+/* The synchroniser: each event reaches the input processing 3 CLK_TCD_SYNC
+ * periods after it is received (the data sheet gives "two/three", 25.3.3.4), in
+ * order. With ASYNCON the output override acts at once on the raw event, and only
+ * the counter flow, flags and capture wait for the synchroniser. */
+static void tcd_sync_pop(avr_tcd_t *p, int b)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t i = p->sq_head[b];
+	uint8_t level = p->sq_lvl[b][i];
+
+	p->sq_head[b] = (i + 1) & 7;
+	p->sq_n[b]--;
+	if (p->sq_n[b]) {		/* the next queued event keeps its own delay */
+		avr_cycle_count_t due = p->sq_due[b][p->sq_head[b]];
+
+		avr_cycle_timer_register(avr, due > avr->cycle ? due - avr->cycle : 1,
+				b ? avr_tcd_sync_b : avr_tcd_sync_a, p);
+	}
+	tcd_process_input(p, b, level);
+}
+
+static avr_cycle_count_t
+avr_tcd_sync_a(struct avr_t *avr, avr_cycle_count_t when, void *param)
+{
+	tcd_sync_pop((avr_tcd_t *)param, 0);
+	return 0;
+}
+
+static avr_cycle_count_t
+avr_tcd_sync_b(struct avr_t *avr, avr_cycle_count_t when, void *param)
+{
+	tcd_sync_pop((avr_tcd_t *)param, 1);
+	return 0;
+}
+
+static void tcd_input_sync(avr_tcd_t *p, int b, uint8_t level)
+{
+	avr_t *avr = p->io.avr;
+	uint8_t ev = rd(avr, b ? p->r_evctrla + 1 : p->r_evctrla);
+	avr_cycle_count_t due = avr->cycle + 3 * (avr_cycle_count_t)tcd_sync_cycles(p);
+	uint8_t slot;
+
+	if (!p->ext) {
+		tcd_process_input(p, b, level);
+		return;
+	}
+	if ((ev & CFG_gm) == CFG_ASYNCON && (ev & TRIGEI_bm) && tcd_enabled(p) &&
+			p->dbg_halted != 2 && !(!b && p->blanking)) {
+		uint8_t active = level == !!(ev & EDGE_bm);
+		int changed = level != p->raw_prev[b];
+
+		*(b ? &p->act_b : &p->act_a) = active;
+		tcd_input_outputs(p, b,
+			rd(avr, p->base + (b ? TCDR_INPUTCTRLB : TCDR_INPUTCTRLA)) & IM_gm,
+			changed, active, changed && active);
+		tcd_reapply(p);
+	}
+	p->raw_prev[b] = level;
+	p->sync_level[b] = level;
+	if (p->sq_n[b] == 8) {		/* full: the newest level replaces the last one */
+		p->sq_lvl[b][(p->sq_head[b] + 7) & 7] = level;
+		return;
+	}
+	slot = (p->sq_head[b] + p->sq_n[b]) & 7;
+	p->sq_lvl[b][slot] = level;
+	p->sq_due[b][slot] = due;
+	if (!p->sq_n[b]++)
+		avr_cycle_timer_register(avr, due - avr->cycle,
+				b ? avr_tcd_sync_b : avr_tcd_sync_a, p);
+}
+
 /* EVCTRLx.CFG = FILTERON: a change must hold for four counter clocks before it is
- * seen (25.3.3.4.2). ASYNCON and the default synchronous path act immediately; the
- * 2-3 CLK_TCD_SYNC synchroniser latency is not modelled. */
+ * seen (25.3.3.4.2). */
 static avr_cycle_count_t
 avr_tcd_filter_a(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
 	avr_tcd_t *p = (avr_tcd_t *)param;
-	tcd_process_input(p, 0, p->filt_level[0]);
+	tcd_input_sync(p, 0, p->filt_level[0]);
 	return 0;
 }
 
@@ -1041,7 +1146,7 @@ static avr_cycle_count_t
 avr_tcd_filter_b(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
 	avr_tcd_t *p = (avr_tcd_t *)param;
-	tcd_process_input(p, 1, p->filt_level[1]);
+	tcd_input_sync(p, 1, p->filt_level[1]);
 	return 0;
 }
 
@@ -1053,17 +1158,22 @@ avr_tcd_input_event(struct avr_irq_t *irq, uint32_t value, void *param)
 	int b = (irq->irq - p->base_irq) == AVR_TCD_IRQ_IN_B;
 	uint8_t level = value & 1;
 
+	p->line[b] = level;
+	if (p->ext && p->dbg_halted == 2) {	/* frozen: the event is ignored, the level tracked */
+		tcd_sync_levels(p);
+		return;
+	}
 	if (p->ext && (rd(avr, b ? p->r_evctrla + 1 : p->r_evctrla) & CFG_gm) == CFG_FILTERON) {
 		avr_cycle_timer_t fn = b ? avr_tcd_filter_b : avr_tcd_filter_a;
 
 		p->filt_level[b] = level;
-		if (level == (b ? p->in_b : p->in_a))
+		if (level == p->sync_level[b])
 			avr_cycle_timer_cancel(avr, fn, p);	/* spike: back to the accepted level */
 		else
 			avr_cycle_timer_register(avr, 4 * (avr_cycle_count_t)tcd_prescale(p), fn, p);
 		return;
 	}
-	tcd_process_input(p, b, level);
+	tcd_input_sync(p, b, level);
 }
 
 /* CTRLE strobes (Dx): SCAPTUREA/B capture the counter, RESTART restarts it (a
@@ -1104,8 +1214,8 @@ avr_tcd_debug_halt(avr_t * avr, avr_tcd_t * p, int halted)
 			p->start_count = (int32_t)tcd_count_now(p);
 			p->dbg_halted = 2;
 			avr_cycle_timer_cancel(avr, avr_tcd_tick, p);
-			avr_cycle_timer_cancel(avr, avr_tcd_filter_a, p);
-			avr_cycle_timer_cancel(avr, avr_tcd_filter_b, p);
+			tcd_cancel_input_timers(p);
+			tcd_sync_levels(p);
 		}
 		if (dbg & FAULTDET_bm) {
 			/* A Fault on both input channels for as long as the break lasts. */
@@ -1115,7 +1225,7 @@ avr_tcd_debug_halt(avr_t * avr, avr_tcd_t * p, int halted)
 			if (p->trig.vector && (rd(avr, p->r_intctrl) & (TRIGA_bm | TRIGB_bm)))
 				avr_raise_interrupt(avr, &p->trig);
 			for (int b = 0; b < 2; b++)
-				tcd_input_fault(p, b, 1, 1, 1);
+				tcd_input_fault(p, b, 1, 1, 1, 0);
 			tcd_reapply(p);
 		}
 		return;
@@ -1208,12 +1318,13 @@ avr_tcd_reset(avr_io_t *io)
 	p->dir = 1;
 	p->woa = p->wob = p->woa_raw = p->wob_raw = p->woc = p->wod = 0;
 	p->in_a = p->in_b = 0;
+	p->raw_prev[0] = p->raw_prev[1] = p->sync_level[0] = p->sync_level[1] = 0;
+	p->line[0] = p->line[1] = p->sq_head[0] = p->sq_head[1] = 0;
 	p->woa_nat = p->wob_nat = p->act_a = p->act_b = p->blk_a = p->blk_b = 0;
 	p->stopped = p->blanking = p->cap_lock_a = p->cap_lock_b = 0;
 	p->waiting = p->wait_all = p->pend6 = p->arm_mode = p->hold_a = p->hold_b = 0;
 	p->jumped = p->dith_acc = p->dith_done = p->dbg_halted = 0;
-	avr_cycle_timer_cancel(p->io.avr, avr_tcd_filter_a, p);
-	avr_cycle_timer_cancel(p->io.avr, avr_tcd_filter_b, p);
+	tcd_cancel_input_timers(p);
 	avr_cycle_timer_cancel(p->io.avr, avr_tcd_blank_end, p);
 	avr_cycle_timer_cancel(p->io.avr, avr_tcd_progev, p);
 	p->io.avr->data[p->r_status] = ENRDY_bm | CMDRDY_bm;
@@ -1232,9 +1343,16 @@ static const char *irq_names[AVR_TCD_IRQ_COUNT] = {
 	[AVR_TCD_IRQ_EVT_PROGEV] = ">tcd.progev",
 };
 
+static void
+avr_tcd_io_debug_halt(avr_io_t *io, int halted)
+{
+	avr_tcd_debug_halt(io->avr, (avr_tcd_t *)io, halted);
+}
+
 static avr_io_t _io = {
 	.kind = "tcd",
 	.reset = avr_tcd_reset,
+	.debug_halt = avr_tcd_io_debug_halt,
 	.irq_names = irq_names,
 };
 

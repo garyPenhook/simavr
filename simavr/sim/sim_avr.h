@@ -511,6 +511,9 @@ typedef struct avr_t {
 	// Table of register names used by gdb and tracing.
 
 	const char ** data_names;
+
+	// a debugger / host front end has halted the CPU (see avr_debug_halt)
+	int		dbg_halted;
 } avr_t;
 
 

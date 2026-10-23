@@ -453,6 +453,8 @@ avr_callback_run_gdb(
 {
 	avr_gdb_processor(avr, avr->state == cpu_Stopped ? 50000 : 0);
 
+	avr_debug_halt(avr, avr->state == cpu_Stopped || avr->state == cpu_Step ||
+			   avr->state == cpu_StepDone);	/* held across single steps */
 	if (avr->state == cpu_Stopped)
 		return ;
 
