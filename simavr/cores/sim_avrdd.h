@@ -272,6 +272,14 @@ avrdd_tcd0_event_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
 	avr_evsys_async_generator(&mcu->evsys, AVRDD_GEN_TCD0_CMPBCLR + ev, value & 1);
 }
 
+static void
+avrdd_tcd0_progev_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, AVRDD_GEN_TCD0_CMPBCLR + 3, value & 1);
+}
+
 /* A BOD brown-out resets the device through RSTCTRL, recorded in RSTFR.BORF. */
 static void
 avrdd_bod_brownout(struct avr_t * avr, void * param)
@@ -497,6 +505,10 @@ avrdd_init(struct avr_t * avr)
 		avr_irq_register_notify(
 				avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), ev),
 				avrdd_tcd0_event_to_evsys, mcu);
+	/* PROGEV is EVSYS generator 0xB3 (16.5.2). */
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_EVT_PROGEV),
+			avrdd_tcd0_progev_to_evsys, mcu);
 	avr_connect_irq(
 			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
 						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_TCD0INPUTA),

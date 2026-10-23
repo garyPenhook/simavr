@@ -83,6 +83,11 @@ typedef struct avr_crcscan_t {
 uint16_t
 avr_crcscan_crc16(const uint8_t * data, uint32_t len);
 
+/* CRC-32 over 'len' bytes (poly 0x04C11DB7, init 0xFFFFFFFF, MSB-first, no final
+ * XOR). The CRC32 start value is not given in DS40002413B: unverified. */
+uint32_t
+avr_crcscan_crc32(const uint8_t * data, uint32_t len);
+
 /*
  * Initialise a CRCSCAN block at data address 'base'. 'flash_size' is the flash
  * size (full-flash section end); 'syscfg0_fuse_index' locates FUSE.SYSCFG0 so

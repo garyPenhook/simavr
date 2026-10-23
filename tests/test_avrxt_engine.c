@@ -5771,12 +5771,21 @@ int main(void)
 			cpu_write(m, C + 0, 0x01);
 			check("corrupted BOOT fails", (m->data[C + 2] >> 1) & 1, 0);
 			m->flash[100] ^= 0x10;
-			m->fuse[5] |= 0x20;				/* CRCSEL = CRC32: not modelled */
+			m->fuse[5] |= 0x20;				/* CRCSEL = CRC32 */
+			uint32_t crc32 = avr_crcscan_crc32(m->flash, 508);
+			m->flash[508] = crc32 & 0xff;			/* Table 30-2: MSB at the highest address */
+			m->flash[509] = (crc32 >> 8) & 0xff;
+			m->flash[510] = (crc32 >> 16) & 0xff;
+			m->flash[511] = crc32 >> 24;
+			cpu_write(m, C + 0, 0x01);
+			check("BOOT CRC32 passes", (m->data[C + 2] >> 1) & 1, 1);
 			m->flash[100] ^= 0x10;
 			cpu_write(m, C + 0, 0x01);
-			check("CRC32 selection is skipped (reports OK)", (m->data[C + 2] >> 1) & 1, 1);
+			check("corrupted BOOT fails CRC32", (m->data[C + 2] >> 1) & 1, 0);
 			m->flash[100] ^= 0x10;
 			m->fuse[5] &= ~0x20;
+			m->flash[510] = crc >> 8;
+			m->flash[511] = crc & 0xff;
 			/* NMI on failure (vector 1). */
 			m->flash[100] ^= 0x10;
 			cpu_write(m, C + 0, 0x02 | 0x01);		/* NMIEN | ENABLE */
@@ -5786,6 +5795,168 @@ int main(void)
 			memset(m->flash, 0xff, 0x2000);		/* back to the erased state */
 			avr_reset(m);
 #undef C
+		}
+
+		printf("== AVR DD TCD0 capture, input modes, blanking, PROGEV ==\n");
+		{
+#define T 0x0b80
+#define TCD_RUN(n) do { for (int _i = 0; _i < (n); _i++) { avr_run(m); \
+				if (m->pc >= 0x1000) m->pc = 0; } } while (0)
+			avr_reset(m);
+			memset(m->flash, 0, 0x1000);
+			m->pc = 0;
+			avr_irq_t *woa = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOA);
+			avr_irq_t *wob = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_WOB);
+			avr_irq_t *ina = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_IN_A);
+			avr_irq_t *inb = avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_IN_B);
+			static int pe_cnt;
+			pe_cnt = 0;
+			avr_irq_register_notify(
+				avr_io_getirq(m, AVR_IOCTL_TCD_GETIRQ('0'), AVR_TCD_IRQ_EVT_PROGEV),
+				tcd_ev_hook, &pe_cnt);
+			/* One Ramp: A on 100..200, B on 300..400, TOP 400. */
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x29, 0);
+			cpu_write(m, T + 0x2a, 200); cpu_write(m, T + 0x2b, 0);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x12, 0x30);			/* CMPAEN, CMPBEN; fault level low */
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+
+			/* Software capture (25.3.3.6); the register is blocked until CAPTUREAH is read. */
+			TCD_RUN(150);
+			cpu_write(m, T + 0x04, 0x08);			/* SCAPTUREA */
+			uint32_t cap1 = cpu_read(m, T + 0x22);		/* low byte only: stays blocked */
+			check("SCAPTUREA captures the running counter", cap1 >= 140 && cap1 <= 160, 1);
+			check("SCAPTUREA strobe reads back 0", m->data[T + 0x04] & 0x08, 0);
+			TCD_RUN(20);
+			cpu_write(m, T + 0x04, 0x08);
+			check("capture blocked until CAPTUREAH is read", cpu_read(m, T + 0x22), cap1);
+			cpu_read(m, T + 0x23);
+			cpu_write(m, T + 0x04, 0x08);
+			uint32_t cap2 = cpu_read(m, T + 0x22) | (cpu_read(m, T + 0x23) << 8);
+			check("capture updates after the high byte read", cap2 > cap1, 1);
+
+			/* Event capture: ACTION | TRIGEI | RISE_HIGH on input B -> CAPTUREB + TRIGB. */
+			cpu_write(m, T + 0x09, 0x04 | 0x01 | 0x10);
+			TCD_RUN(50);
+			avr_raise_irq(inb, 1);
+			uint32_t cb = cpu_read(m, T + 0x24) | (cpu_read(m, T + 0x25) << 8);
+			check("event capture on input B", cb > cap2 && cb < 400, 1);
+			check("capture sets TRIGB", (m->data[T + 0x0d] >> 3) & 1, 1);
+			avr_raise_irq(inb, 0);
+			cpu_write(m, T + 0x09, 0x00);
+			cpu_write(m, T + 0x0d, 0x0c);
+
+			/* Mode 4 (FREQ): outputs forced to the FAULTCTRL level while the input is active. */
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x2a, 200);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x12, 0x30);
+			cpu_write(m, T + 0x10, 4);			/* INPUTCTRLA = FREQ */
+			cpu_write(m, T + 0x08, 0x01 | 0x10);
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			TCD_RUN(150);
+			check("WOA on before the fault", woa->value & 1, 1);
+			avr_raise_irq(ina, 1);
+			check("mode 4 forces WOA to the fault level", woa->value & 1, 0);
+			avr_raise_irq(ina, 0);
+			check("mode 4 releases when the fault ends", woa->value & 1, 1);
+
+			/* Mode 9: positive edge during on-time blocks the rest of that on-time only. */
+			cpu_write(m, T + 0x10, 9);
+			avr_raise_irq(ina, 1);
+			check("mode 9 stops WOA on the edge", woa->value & 1, 0);
+			avr_raise_irq(ina, 0);
+			check("mode 9 stays off after release", woa->value & 1, 0);
+			{
+				int again = 0;
+				for (int i = 0; i < 700 && !again; i++) { TCD_RUN(1); again = woa->value & 1; }
+				check("mode 9: next on-time A runs again", again, 1);
+			}
+
+			/* Mode 10: off while active; released mid on-time stays off for its remainder. */
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x2a, 200);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x12, 0x30);
+			cpu_write(m, T + 0x10, 10);
+			cpu_write(m, T + 0x08, 0x01 | 0x10);
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			TCD_RUN(120);
+			avr_raise_irq(ina, 1);
+			check("mode 10 forces WOA off while active", woa->value & 1, 0);
+			avr_raise_irq(ina, 0);
+			check("mode 10 released mid on-time: off for the rest", woa->value & 1, 0);
+
+			/* Mode 7: stop outputs and counter until RESTART. */
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x2a, 200);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x12, 0x30);
+			cpu_write(m, T + 0x10, 7);
+			cpu_write(m, T + 0x08, 0x01 | 0x10);
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			TCD_RUN(120);
+			avr_raise_irq(ina, 1);
+			avr_raise_irq(ina, 0);
+			check("mode 7 stops the outputs", woa->value & 1, 0);
+			TCD_RUN(100);
+			check("mode 7: counter halted, no WOB", wob->value & 1, 0);
+			TCD_RUN(300);
+			check("mode 7: still stopped", (woa->value | wob->value) & 1, 0);
+			cpu_write(m, T + 0x04, 0x04);			/* RESTART */
+			TCD_RUN(150);
+			check("RESTART resumes at dead-time A", woa->value & 1, 1);
+
+			/* Input blanking (25.3.3.4.1): after CMPASET, input A ignored for
+			 * DLYPRESC * DLYVAL = 2 * 50 = 100 sync clocks. */
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x2a, 200);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x12, 0x30);
+			cpu_write(m, T + 0x14, (1 << 4) | (0 << 2) | 1);	/* DIV2, CMPASET, INBLANK */
+			cpu_write(m, T + 0x15, 50);
+			cpu_write(m, T + 0x08, 0x01 | 0x10);
+			cpu_write(m, T + 0x0c, 0x04);
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			TCD_RUN(110);
+			avr_raise_irq(ina, 1);
+			check("blanked event does not flag TRIGA", (m->data[T + 0x0d] >> 2) & 1, 0);
+			avr_raise_irq(ina, 0);
+			TCD_RUN(150);
+			avr_raise_irq(ina, 1);
+			check("event after the blanking window flags TRIGA", (m->data[T + 0x0d] >> 2) & 1, 1);
+			avr_raise_irq(ina, 0);
+			cpu_write(m, T + 0x0d, 0x04);
+			cpu_write(m, T + 0x0c, 0x00);
+
+			/* PROGEV (25.3.4.1): CMPBSET, delay DIV4 * 10 = 40 sync clocks. */
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+			cpu_write(m, T + 0x28, 100); cpu_write(m, T + 0x2a, 200);
+			cpu_write(m, T + 0x2c, 300 & 0xff); cpu_write(m, T + 0x2d, 1);
+			cpu_write(m, T + 0x2e, 400 & 0xff); cpu_write(m, T + 0x2f, 1);
+			cpu_write(m, T + 0x14, (2 << 4) | (2 << 2) | 2);	/* DIV4, CMPBSET, EVENT */
+			cpu_write(m, T + 0x15, 10);
+			pe_cnt = 0;
+			cpu_write(m, T + 0x00, 0x60 | 0x01);
+			TCD_RUN(320);
+			check("PROGEV not before the delay elapsed", pe_cnt, 0);
+			TCD_RUN(60);
+			check("PROGEV pulsed after the delay", pe_cnt >= 1, 1);
+
+			cpu_write(m, T + 0x00, 0x60);
+			avr_reset(m);
+#undef TCD_RUN
+#undef T
 		}
 
 		printf("== AVR DD NVMCTRL ==\n");

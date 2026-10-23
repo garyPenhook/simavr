@@ -63,6 +63,12 @@ enum {
 	TCDR_CTRLE = 0x04,
 	TCDR_EVCTRLA = 0x08,	/* TRIGEI, EDGE for event input A */
 	TCDR_EVCTRLB = 0x09,
+	TCDR_INPUTCTRLA = 0x10,	/* INPUTMODE for event input A (AVR Dx) */
+	TCDR_INPUTCTRLB = 0x11,
+	TCDR_DLYCTRL = 0x14,	/* input blanking / programmable event (AVR Dx) */
+	TCDR_DLYVAL = 0x15,
+	TCDR_CAPTUREAL = 0x22,	/* CAPTUREA L/H, CAPTUREB L/H (AVR Dx) */
+	TCDR_CAPTUREBL = 0x24,
 	TCDR_INTCTRL = 0x0c,
 	TCDR_INTFLAGS = 0x0d,
 	TCDR_STATUS = 0x0e,
@@ -91,6 +97,7 @@ enum {
 	AVR_TCD_IRQ_EVT_CMPBSET,
 	AVR_TCD_IRQ_IN_A,
 	AVR_TCD_IRQ_IN_B,
+	AVR_TCD_IRQ_EVT_PROGEV,	/* programmable output event (AVR Dx, EVSYS generator 0xB3) */
 	AVR_TCD_IRQ_COUNT,
 };
 
@@ -125,6 +132,16 @@ typedef struct avr_tcd_t {
 	uint8_t		woa_raw, wob_raw;	/* waveform levels whether or not enabled */
 	uint8_t		woc, wod;	/* published WOC / WOD levels */
 	uint8_t		in_a, in_b;	/* event input levels (edge detection) */
+
+	/* AVR Dx extras, enabled by avr_tcd_set_trig_vector(): input modes, capture,
+	 * input blanking and the programmable event output. */
+	uint8_t		ext;
+	uint8_t		woa_nat, wob_nat;	/* waveform before any input-mode override */
+	uint8_t		act_a, act_b;		/* input is at its active level (TRIGEI set) */
+	uint8_t		blk_a, blk_b;		/* output blocked for the rest of the on-time */
+	uint8_t		stopped;		/* input mode 7: counter halted until RESTART */
+	uint8_t		blanking;		/* input A blanking window open */
+	uint8_t		cap_lock_a, cap_lock_b;	/* capture held until the high byte is read */
 } avr_tcd_t;
 
 /*
@@ -145,8 +162,10 @@ avr_tcd_init(
 /*
  * Install the TCDn_TRIG interrupt (AVR Dx): INTCTRL.TRIGA/TRIGB enable it and
  * INTFLAGS.TRIGA/TRIGB flag an active edge on event input A/B while the
- * corresponding EVCTRLx.TRIGEI is set (DS40002413B 25.3.5). The input-mode fault
- * actions and capture are not modelled.
+ * corresponding EVCTRLx.TRIGEI is set (DS40002413B 25.3.5). It also enables the
+ * Dx extras: software / event capture, input modes 0, 4, 7, 9 and 10, input
+ * blanking and PROGEV. The counter-flow input modes 1-3, 5, 6 and 8, the digital
+ * filter / asynchronous detection and dithering are not modelled.
  */
 void
 avr_tcd_set_trig_vector(

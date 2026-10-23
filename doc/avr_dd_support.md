@@ -61,8 +61,13 @@ is not modelled; they are not registered yet.
 * **TWI0 dual mode** (29.3.3.4): `CTRLA` and `DUALCTRL` register fields and
   `DUALCTRL.ENABLE`; host and client already run independently, and the pin sets
   are not modelled.
-* **CRCSCAN** (`avr_crcscan.c`): CRC16 with the 512-byte `BOOTSIZE`/`CODESIZE` units
-  and the Dx `CRCSRC` fuse encoding.
+* **TCD0 capture, input modes, blanking, PROGEV** (25.3.3.4, 25.3.3.6, 25.3.4.1):
+  `CTRLE.SCAPTUREA/B` and event capture (`EVCTRLx.ACTION`) into `CAPTUREA/B`, blocked
+  until the high byte is read; `INPUTMODE` 0, 4, 7 (stop until `CTRLE.RESTART`), 9 and
+  10, forcing the outputs to the `FAULTCTRL.CMPx` level; input-A blanking and the
+  programmable event output (`DLYCTRL`/`DLYVAL`, EVSYS generator 0xB3).
+* **CRCSCAN** (`avr_crcscan.c`): CRC16 and CRC32 with the 512-byte `BOOTSIZE`/`CODESIZE`
+  units and the Dx `CRCSRC` / `CRCSEL` fuse encoding.
 * **CCL** input sources (31.5.7): AC0, ZCD3, TCA0 WO0-2, TCB0/1 WO.
 * **SYSCFG / SIGROW / FUSE / LOCK** (`avr_syscfg_dd.c`): `REVID`, device ID,
   `TEMPSENSEn`, 16-byte serial number, read-only fuse window with the factory
@@ -75,9 +80,9 @@ is not modelled; they are not registered yet.
 
 ## Not modelled yet (registers read and write as plain memory or are inert)
 
-CCL inputs from USART TxD and SPI (no line-level IRQs), TCD0 input modes, capture,
-input blanking, dithering and the programmable event output, CRC32 in CRCSCAN,
-CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
+CCL inputs from USART TxD and SPI (no line-level IRQs), TCD0 input modes 1-3, 5, 6
+and 8 (counter-flow modes), the event input digital filter / asynchronous detection
+(`EVCTRLx.CFG`), dithering, `DBGCTRL.FAULTDET`, CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
 `SLPCTRL.VREGCTRL`, SPM decoding, `BOOTRP` read protection, `FLMAP` for parts with
 more than 32 KB of flash, MVIO pin tri-stating, ADC `RUNSTDBY` and the
 PRESC-dependent CLK_ADC limits, AC `INITVAL` and POWER response times.
@@ -96,8 +101,19 @@ nominal number of cycles and the CPU is never halted. A store replaces the old
 contents instead of clearing bits only. `CHER` is ignored when issued by the CPU
 (it is UPDI-only). The `REVID` and temperature-sensor calibration values are
 placeholders (the temperature-sensor words are chosen so the ADC result is
-3584 - T[K]). The CRC32 start value is not specified in the text used, so a CRC32
-scan is skipped and reports OK.
+3584 - T[K]).
+
+**Unverified:** DS40002413B gives the CRC start value only for CRC16 (0xFFFF). The
+CRC32 scan assumes the IEEE 802.3 polynomial shifted in MSB first (30.3.2), start
+value 0xFFFFFFFF and no final XOR, with the checksum little-endian at the end of the
+section (Table 30-2). If real images use the reflected zlib variant, a valid CRC32
+image would fail the scan.
+
+TCD0 extras: a blanked input-A event is ignored entirely (its level change is not
+re-evaluated when the window closes); the blanking / PROGEV delay is the data-sheet
+`DLYPRESC * DLYVAL` CLK_TCD_SYNC periods rounded to whole CLK_PER cycles;
+`DLYTRIG` value 3 is treated as CMPBCLR (the data sheet table text says CMPASET);
+CMPACLR is signalled at the phase boundary in Two / Four Ramp mode.
 
 ## Testing
 

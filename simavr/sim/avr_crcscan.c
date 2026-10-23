@@ -59,6 +59,21 @@ avr_crcscan_crc16(const uint8_t *data, uint32_t len)
 	return crc;
 }
 
+/* CRC-32 (IEEE 802.3 polynomial), bytes shifted in MSB first as 30.3.2 describes.
+ * DS40002413B gives the start value only for CRC16 (0xFFFF); 0xFFFFFFFF by
+ * analogy, no final XOR: UNVERIFIED against silicon. */
+uint32_t
+avr_crcscan_crc32(const uint8_t *data, uint32_t len)
+{
+	uint32_t crc = 0xffffffffu;
+	for (uint32_t i = 0; i < len; i++) {
+		crc ^= (uint32_t)data[i] << 24;
+		for (int b = 0; b < 8; b++)
+			crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04c11db7u : (crc << 1);
+	}
+	return crc;
+}
+
 /* Last byte index of the section selected by CTRLB.SRC. */
 static uint32_t crcscan_section_end(avr_crcscan_t *p, uint8_t src)
 {
@@ -104,13 +119,16 @@ static int crcscan_scan(avr_crcscan_t *p, uint8_t src, int raise_nmi)
 	avr_t *avr = p->io.avr;
 	uint32_t end = crcscan_section_end(p, src);
 
-	if (p->dd && p->syscfg0_idx != 0xff && (avr->fuse[p->syscfg0_idx] & 0x20)) {	/* CRCSEL = CRC32: not modelled */
-		avr_core_watch_write(avr, p->r_status, OK_bm);
-		return 1;
-	}
-
 	int ok = 0;
-	if (end >= 2) {
+	if (p->dd && p->syscfg0_idx != 0xff && (avr->fuse[p->syscfg0_idx] & 0x20)) {
+		/* FUSE.SYSCFG0.CRCSEL = CRC32; checksum in the last 4 bytes, MSB at
+		 * the highest address (Table 30-2). */
+		if (end >= 4) {
+			uint32_t stored = avr->flash[end - 3] | (avr->flash[end - 2] << 8) |
+					((uint32_t)avr->flash[end - 1] << 16) | ((uint32_t)avr->flash[end] << 24);
+			ok = (avr_crcscan_crc32(avr->flash, end - 3) == stored);
+		}
+	} else if (end >= 2) {
 		uint16_t stored = (avr->flash[end - 1] << 8) | avr->flash[end];
 		uint16_t crc = avr_crcscan_crc16(avr->flash, end - 1);
 		ok = (crc == stored);
