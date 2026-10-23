@@ -256,7 +256,15 @@ static uint32_t tcd_prescale(avr_tcd_t *p)
 
 	uint32_t clk_per = avr->frequency ? avr->frequency : 1;
 	uint32_t f_tcd;
-	switch ((ctrla & CLKSEL_gm) >> CLKSEL_gp) {
+	uint8_t clksel = (ctrla & CLKSEL_gm) >> CLKSEL_gp;
+	if (p->clk_fn && clksel != CLKSEL_SYSCLK) {
+		f_tcd = p->clk_fn(p->clk_param, clksel);
+		if (!f_tcd)
+			f_tcd = clk_per;
+		uint64_t cyc = ((uint64_t)div * clk_per + f_tcd / 2) / f_tcd;
+		return cyc < 1 ? 1 : (uint32_t)cyc;
+	}
+	switch (clksel) {
 	case CLKSEL_OSC20M:
 		f_tcd = p->freq_osc20m ? p->freq_osc20m : clk_per;
 		break;

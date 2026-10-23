@@ -23,9 +23,8 @@
 		#include "sim_avrdd.h"
 		<kind declaration with .make = sim_avrdd_make>
 
-	Not modelled yet (the registers read and write as plain memory): EVSYS,
-	PORTMUX, VREF, ADC0, AC0, DAC0, ZCD3, MVIO, TCD0, CRCSCAN, and the TWI dual
-	mode. See doc/avr_dd_support.md.
+	Not modelled yet (the registers read and write as plain memory): the TCD0 TRIG interrupt/inputs/outputs, CRC32 in CRCSCAN, and the
+	TWI dual mode. See doc/avr_dd_support.md.
 
  	This file is part of simavr.
 
@@ -75,11 +74,22 @@
 #include "avr_cpuint.h"
 #include "avr_rstctrl.h"
 #include "avr_bod.h"
+#include "avr_evsys.h"
+#include "avr_portmux.h"
+#include "avr_vref.h"
+#include "avr_ac_dd.h"
+#include "avr_dac.h"
+#include "avr_zcd.h"
+#include "avr_mvio.h"
+#include "avr_tcd.h"
+#include "avr_adc_dd.h"
+#include "avr_crcscan.h"
 
 /* Fuse indices (DS40002413B 8.8.1). */
 #define SIM_FUSE_BODCFG		1
 #define SIM_FUSE_OSCCFG		2
 #define SIM_FUSE_SYSCFG0	5
+#define SIM_FUSE_SYSCFG1	6
 #define SIM_FUSE_CODESIZE	7
 #define SIM_FUSE_BOOTSIZE	8
 
@@ -92,18 +102,165 @@ struct mcu_t {
 	avr_port_modern_t	*ports[4];
 	avr_tca_t			tca0;
 	avr_tcb_t			tcb0, tcb1;
+	avr_tcd_t			tcd0;
 	avr_usart_modern_t	usart0, usart1;
 	avr_twi_modern_t	twi;
 	avr_spi_modern_t	spi0;
 	avr_rtc_t			rtc;
 	avr_ccl_t			ccl;
+	avr_evsys_t			evsys;
+	avr_portmux_t		portmux;
+	avr_vref_t			vref;
+	avr_adc_dd_t		adc0;
+	avr_ac_dd_t			ac0;
+	avr_dac_t			dac0;
+	avr_zcd_t			zcd3;
+	avr_mvio_t			mvio;
 	avr_wdt_modern_t	wdt;
+	avr_crcscan_t		crcscan;
 	avr_slpctrl_t		slpctrl;
 	avr_cpuint_t		cpuint;
 	avr_rstctrl_t		rstctrl;
 	avr_bod_t			bod;
 	avr_syscfg_dd_t		syscfg;
 };
+
+/*
+ * EVSYS generator values (CHANNELn, DS40002413B 16.5.2) and user indices
+ * (USERxxx at 0x20 + n, 16.5.3).
+ */
+#define AVRDD_GEN_MVIO_OK		0x05
+#define AVRDD_GEN_CCL_LUT0		0x10	/* LUT0..3 = 0x10..0x13 */
+#define AVRDD_GEN_AC0_OUT		0x20
+#define AVRDD_GEN_ADC0_RESRDY	0x24
+#define AVRDD_GEN_ZCD3_OUT		0x30
+#define AVRDD_GEN_TCB0_CAPT		0xa0
+#define AVRDD_GEN_TCB1_CAPT		0xa2
+#define AVRDD_USER_ADC0START	8
+#define AVRDD_USER_TCA0CNTA		15
+#define AVRDD_USER_TCB0CAPT		17
+#define AVRDD_USER_TCB1CAPT		19
+
+static void
+avrdd_gen_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param, uint8_t gen)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_evsys_async_generator(&mcu->evsys, gen, value & 1);
+}
+
+static void
+avrdd_tcb0_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avrdd_gen_to_evsys(irq, value, param, AVRDD_GEN_TCB0_CAPT);
+}
+
+static void
+avrdd_tcb1_capt_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avrdd_gen_to_evsys(irq, value, param, AVRDD_GEN_TCB1_CAPT);
+}
+
+/* CCL LUTn output -> EVSYS generator 0x10 + n. */
+static void
+avrdd_ccl_lut_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	int lut = irq->irq - (mcu->ccl.base_irq + AVR_CCL_LUT_INPUTS * 4);
+	if (lut >= 0 && lut < 4)
+		avr_evsys_async_generator(&mcu->evsys, AVRDD_GEN_CCL_LUT0 + lut, value & 1);
+}
+
+static void
+avrdd_ac0_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avrdd_gen_to_evsys(irq, value, param, AVRDD_GEN_AC0_OUT);
+}
+
+static void
+avrdd_zcd3_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avrdd_gen_to_evsys(irq, value, param, AVRDD_GEN_ZCD3_OUT);
+}
+
+static void
+avrdd_mvio_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avrdd_gen_to_evsys(irq, value, param, AVRDD_GEN_MVIO_OK);
+}
+
+/* VREF.ACREF -> the AC0 DACREF divider; VREF.DAC0REF -> DAC0. */
+static void
+avrdd_vref_to_ac(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_ac_dd_set_vref(&mcu->ac0, value);
+}
+
+static void
+avrdd_vref_to_dac(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_dac_set_vref(&mcu->dac0, value);
+}
+
+static void
+avrdd_adc_res_to_evsys(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	avrdd_gen_to_evsys(irq, value, param, AVRDD_GEN_ADC0_RESRDY);
+}
+
+/* EVSYS ADC0START user: a rising event edge starts a conversion (STARTEI). */
+static void
+avrdd_evsys_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	if (value & 1)
+		avr_adc_dd_event_start(&mcu->adc0);
+}
+
+/* VREF.ADC0REF -> the ADC reference. */
+static void
+avrdd_vref_to_adc(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_adc_dd_set_ref(&mcu->adc0, value);
+}
+
+static void
+avrdd_evsys_to_tcb0(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('0'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+
+static void
+avrdd_evsys_to_tcb1(struct avr_irq_t * irq, uint32_t value, void * param)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+	(void)irq;
+	avr_raise_irq(avr_io_getirq(&mcu->core, AVR_IOCTL_TCB_GETIRQ('1'),
+								AVR_TCB_IRQ_EVENT_IN), value & 1);
+}
+
+/* TCD0 CLKSEL source frequency (DS40002413B 25.5.1): OSCHF, PLL or EXTCLK. */
+static uint32_t
+avrdd_tcd_clock(void * param, uint8_t clksel)
+{
+	struct mcu_t * mcu = (struct mcu_t *)param;
+
+	switch (clksel) {
+	case 0:	return avr_clkctrl_dd_oschf_hz(&mcu->clkctrl);
+	case 1:	return avr_clkctrl_dd_pll_hz(&mcu->clkctrl);
+	default:	return mcu->clkctrl.freq_extclk;
+	}
+}
 
 /* A BOD brown-out resets the device through RSTCTRL, recorded in RSTFR.BORF. */
 static void
@@ -162,6 +319,11 @@ avrdd_init(struct avr_t * avr)
 	avr_tcb_init(avr, &mcu->tcb0, 0x0b00, TCB0_INT_vect_num, '0');
 	avr_tcb_init(avr, &mcu->tcb1, 0x0b10, TCB1_INT_vect_num, '1');
 
+	/* TCD0 at 0xB80: OVF interrupt. The clock source follows CLKCTRL. */
+	avr_tcd_init(avr, &mcu->tcd0, 0x0b80, TCD0_OVF_vect_num, 0xff, '0');
+	mcu->tcd0.clk_fn = avrdd_tcd_clock;
+	mcu->tcd0.clk_param = mcu;
+
 	/* USART0/1 at 0x800/0x820. */
 	avr_usart_modern_init(avr, &mcu->usart0, 0x0800,
 						  USART0_RXC_vect_num, USART0_DRE_vect_num, USART0_TXC_vect_num, '0');
@@ -177,12 +339,150 @@ avrdd_init(struct avr_t * avr)
 	avr_rtc_init(avr, &mcu->rtc, 0x0140, RTC_CNT_vect_num, RTC_PIT_vect_num, '0');
 
 	/* CCL at 0x01C0: 4 LUTs, one CCL_CCL interrupt. */
-	avr_ccl_init_mega(avr, &mcu->ccl, 0x01c0, 4, '0');
+	avr_ccl_init_dd(avr, &mcu->ccl, 0x01c0, 4, '0');
 	avr_ccl_set_interrupt(avr, &mcu->ccl, CCL_CCL_vect_num);
+
+	/* EVSYS at 0x0200: six channels, 25 users (DS40002413B 16.5). */
+	avr_evsys_init_xt(avr, &mcu->evsys, 0x0200, '0', 6, 25);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('0'), AVR_TCB_IRQ_CAPT_OUT),
+			avrdd_tcb0_capt_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('1'), AVR_TCB_IRQ_CAPT_OUT),
+			avrdd_tcb1_capt_to_evsys, mcu);
+	for (int lut = 0; lut < 4; lut++)
+		avr_irq_register_notify(
+				avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+							  AVR_CCL_LUT_INPUTS * 4 + lut),
+				avrdd_ccl_lut_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_TCB0CAPT),
+			avrdd_evsys_to_tcb0, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_TCB1CAPT),
+			avrdd_evsys_to_tcb1, mcu);
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_TCA0CNTA),
+			avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_EV_IN));
+
+	/* PORTMUX at 0x05E0 (offsets 0-9). Routed outputs: USART0/1 TxD
+	 * (USARTROUTEA, 17.3.3) and TCA0 WO0-5 (TCAROUTEA, 17.3.6). Unavailable
+	 * pin choices are left empty and route nowhere. */
+	avr_portmux_init_n(avr, &mcu->portmux, 0x05e0, 10, '0');
+	avr_portmux_set_port(&mcu->portmux, 'A', &mcu->porta);
+	avr_portmux_set_port(&mcu->portmux, 'C', &mcu->portc);
+	avr_portmux_set_port(&mcu->portmux, 'D', &mcu->portd);
+	avr_portmux_set_port(&mcu->portmux, 'F', &mcu->portf);
+	{
+		static const avr_portmux_pin_t usart0_txd[8] = {
+			{ 'A', 0 }, { 'A', 4 }, { 'A', 2 }, { 'D', 4 }, { 'C', 1 },
+		};
+		static const avr_portmux_pin_t usart1_txd[4] = {
+			{ 'C', 1 }, { 0, 0 }, { 'D', 6 },
+		};
+		int fn = avr_portmux_add_func(&mcu->portmux, 2 /* USARTROUTEA */, 0x07, 0,
+									  usart0_txd, 8, 0);
+		avr_portmux_bind_irq(&mcu->portmux, fn,
+			avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('0'), USART_MODERN_IRQ_TXD_PIN));
+		fn = avr_portmux_add_func(&mcu->portmux, 2, 0x18, 3, usart1_txd, 4, 0);
+		avr_portmux_bind_irq(&mcu->portmux, fn,
+			avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('1'), USART_MODERN_IRQ_TXD_PIN));
+	}
+	{
+		/* TCAROUTEA.TCA0: 0 = PORTA (PA0-5), 2 = PORTC (PC1-3), 3 = PORTD (PD4-5). */
+		static const avr_portmux_pin_t wo[6][4] = {
+			{ { 'A', 0 } },
+			{ { 'A', 1 }, { 0, 0 }, { 'C', 1 } },
+			{ { 'A', 2 }, { 0, 0 }, { 'C', 2 } },
+			{ { 'A', 3 }, { 0, 0 }, { 'C', 3 } },
+			{ { 'A', 4 }, { 0, 0 }, { 0, 0 }, { 'D', 4 } },
+			{ { 'A', 5 }, { 0, 0 }, { 0, 0 }, { 'D', 5 } },
+		};
+		for (int ch = 0; ch < 6; ch++) {
+			int fn = avr_portmux_add_func(&mcu->portmux, 7 /* TCAROUTEA */, 0x07, 0,
+										  wo[ch], 4, 0 /* DIR is the user's */);
+			avr_portmux_bind_irq(&mcu->portmux, fn,
+				avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_PIN0 + ch));
+		}
+	}
+
+	/* VREF at 0x00B0: ADC0REF / DAC0REF / ACREF feed their consumers. */
+	avr_vref_init_dd(avr, &mcu->vref, 0x00b0, '0');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DD_AC0_MV),
+			avrdd_vref_to_ac, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC0_MV),
+			avrdd_vref_to_dac, mcu);
+
+	/* AC0 at 0x0680, DAC0 at 0x06A0, ZCD3 at 0x06D8, MVIO at 0x00C0. */
+	avr_ac_dd_init(avr, &mcu->ac0, 0x0680, AC0_AC_vect_num, '0');
+	avr_dac_init_dd(avr, &mcu->dac0, 0x06a0, '0');
+	avr_zcd_init(avr, &mcu->zcd3, 0x06d8, ZCD3_ZCD_vect_num, '3');
+	avr_mvio_init(avr, &mcu->mvio, 0x00c0, MVIO_MVIO_vect_num, SIM_FUSE_SYSCFG1, '0');
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_OUT),
+			avrdd_ac0_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_ZCD_GETIRQ('3'), AVR_ZCD_IRQ_OUT),
+			avrdd_zcd3_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_MVIO_GETIRQ('0'), AVR_MVIO_IRQ_OK),
+			avrdd_mvio_to_evsys, mcu);
+
+	/* ADC0 at 0x0600: RESRDY and WCMP vectors; its DAC0 and DACREF0 inputs follow
+	 * DAC0 and the AC0 DACREF divider; ADC0REF selects the reference. */
+	avr_adc_dd_init(avr, &mcu->adc0, 0x0600, ADC0_RESRDY_vect_num,
+					ADC0_WCMP_vect_num, '0');
+	avr_adc_dd_set_tempsense(&mcu->adc0, SIGROW_TEMPSENSE0);
+	avr_adc_dd_set_dacref_source(&mcu->adc0, &mcu->ac0.dacref_mv);
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_ADC_DD_GETIRQ('0'), AVR_ADC_DD_CH_DAC0));
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_ADC0_MV),
+			avrdd_vref_to_adc, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_ADC_DD_GETIRQ('0'), AVR_ADC_DD_IRQ_EVT_RES),
+			avrdd_adc_res_to_evsys, mcu);
+	avr_irq_register_notify(
+			avr_io_getirq(avr, AVR_IOCTL_EVSYS_GETIRQ('0'),
+						  AVR_EVSYS_IRQ_USER0 + AVRDD_USER_ADC0START),
+			avrdd_evsys_to_adc, mcu);
 
 	/* WDT at 0x0100 (reset-only). */
 	avr_wdt_modern_init(avr, &mcu->wdt, 0x0100, '0');
 	avr_wdt_modern_set_reset_handler(&mcu->wdt, avrdd_wdt_reset, mcu);
+
+	/* Live peripheral outputs into the CCL input-source MUX (DS40002413B 31.5.7):
+	 * AC0 OUT = INSEL 0x6, ZCD3 OUT = 0x7, TCA0 WO0-2 = 0xA, TCB0/1 WO = 0xB. The
+	 * USART TxD, SPI and TCD0 waveform outputs have no line-level IRQs yet. */
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_AC0)));
+	avr_connect_irq(
+			avr_io_getirq(avr, AVR_IOCTL_ZCD_GETIRQ('3'), AVR_ZCD_IRQ_OUT),
+			avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+						  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_ZCD3)));
+	for (int wo = 0; wo < 3; wo++)
+		avr_connect_irq(
+				avr_io_getirq(avr, AVR_IOCTL_TCA_GETIRQ('0'), AVR_TCA_IRQ_WO0 + wo),
+				avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+							  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCA0_WO0 + wo)));
+	for (int tcb = 0; tcb < 2; tcb++)
+		avr_connect_irq(
+				avr_io_getirq(avr, AVR_IOCTL_TCB_GETIRQ('0' + tcb), AVR_TCB_IRQ_WO),
+				avr_io_getirq(avr, AVR_IOCTL_CCL_GETIRQ('0'),
+							  AVR_CCL_IRQ_SRC_4LUT(AVR_CCL_SRC_TCB0 + tcb)));
+
+	/* CRCSCAN at 0x0120: BOOTSIZE / CODESIZE (512-byte units) bound the sections;
+	 * a CRC failure raises the NMI. */
+	avr_crcscan_init_dd(avr, &mcu->crcscan, 0x0120, FLASHEND + 1, SIM_FUSE_SYSCFG0,
+						SIM_FUSE_CODESIZE, SIM_FUSE_BOOTSIZE, NMI_vect_num, '0');
 
 	/* SLPCTRL at 0x0050, RSTCTRL at 0x0040. */
 	avr_slpctrl_init(avr, &mcu->slpctrl, 0x0050, '0');

@@ -72,6 +72,7 @@ typedef struct avr_crcscan_t {
 
 	avr_int_vector_t	nmi;	/* CRC-failure NMI (vector 1) */
 
+	uint8_t		dd;		/* AVR Dx: 512-byte fuse units, CRCSRC encoding, CRCSEL */
 	uint8_t		locked;		/* NMIEN set => CTRLA read-only until reset */
 } avr_crcscan_t;
 
@@ -99,6 +100,27 @@ avr_crcscan_init(
 		uint8_t syscfg0_fuse_index,
 		uint8_t append_fuse_index,
 		uint8_t bootend_fuse_index,
+		uint8_t nmi_vector,
+		char name);
+
+/*
+ * AVR Dx CRCSCAN (DS40002413B chapter 30). 'codesize_fuse_index' and
+ * 'bootsize_fuse_index' locate FUSE.CODESIZE / FUSE.BOOTSIZE, whose units are
+ * 512-byte blocks (APPEND / BOOTEND of the older parts are 256-byte), and the
+ * start-up CRCSRC field in FUSE.SYSCFG0 uses 0 = FLASH, 1 = BOOT, 2 = BOOTAPP,
+ * 3 = NOCRC. FUSE.SYSCFG0.CRCSEL = CRC32 is not modelled: the CRC32 start value
+ * and final handling are not given in the data sheet text used, so such a scan
+ * is skipped and reports OK.
+ */
+void
+avr_crcscan_init_dd(
+		avr_t * avr,
+		avr_crcscan_t * p,
+		avr_io_addr_t base,
+		uint32_t flash_size,
+		uint8_t syscfg0_fuse_index,
+		uint8_t codesize_fuse_index,
+		uint8_t bootsize_fuse_index,
 		uint8_t nmi_vector,
 		char name);
 

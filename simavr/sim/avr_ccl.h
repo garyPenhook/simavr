@@ -105,6 +105,8 @@ enum avr_ccl_src {
 	AVR_CCL_SRC_SPI0_SCK,
 	AVR_CCL_SRC_SPI0_MOSI,
 	AVR_CCL_SRC_SPI0_MISO,
+	AVR_CCL_SRC_ZCD3,	/* AVR Dx only */
+	AVR_CCL_SRC_TCD0_WOC,	/* AVR Dx only */
 	AVR_CCL_NSRC,
 };
 
@@ -126,6 +128,7 @@ typedef struct avr_ccl_t {
 	uint8_t		clksrc_mask;
 	uint8_t		clksrc_shift;
 	uint8_t		is_mega;	/* selects the INSEL source-decode table */
+	uint8_t		is_dd;		/* AVR Dx INSEL table (implies the mega register layout) */
 
 	uint8_t		direct[AVR_CCL_MAX_LUTS];	/* direct LUT truth output */
 	uint8_t		filtered[AVR_CCL_MAX_LUTS];	/* synchronizer/filter output */
@@ -185,6 +188,19 @@ avr_ccl_set_interrupt(
 		uint8_t vector);
 
 #define AVR_IOCTL_CCL_GETIRQ(_name) AVR_IOCTL_DEF('c','c','l',(_name))
+
+/*
+ * AVR Dx CCL (DS40002413B chapter 31): the megaAVR-style register layout with the
+ * Dx INSEL map (0x6 AC0, 0x7 ZCD3, 0x8 USART0/1/1 TXD, 0x9 SPI0 MOSI/MOSI/SCK,
+ * 0xA TCA0 WO0-2, 0xB TCB0/TCB1 WO, 0xC TCD0 WOA/WOB/WOC).
+ */
+void
+avr_ccl_init_dd(
+		avr_t * avr,
+		avr_ccl_t * p,
+		avr_io_addr_t base,
+		uint8_t nluts,
+		char name);
 
 #ifdef __cplusplus
 };

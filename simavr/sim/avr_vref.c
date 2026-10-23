@@ -94,6 +94,8 @@ avr_vref_store_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *par
 	avr_core_watch_write(avr, addr, v);
 }
 
+static void vref_dd_publish(avr_vref_t *p);
+
 static void
 avr_vref_reset(avr_io_t *io)
 {
@@ -101,8 +103,11 @@ avr_vref_reset(avr_io_t *io)
 	avr_t *avr = p->io.avr;
 	for (int i = 0; i < p->nregs; i++)
 		avr->data[p->base + i] = 0;	/* all CTRL registers reset to 0x00 */
-	/* No IRQ raise at reset: peripherals keep their own reference defaults
-	 * until firmware programs VREF.CTRLA. */
+	/* No IRQ raise at reset on the older parts: peripherals keep their own
+	 * reference defaults until firmware programs VREF.CTRLA. The AVR Dx
+	 * consumers may hold a level from before the reset, so republish. */
+	if (p->dd)
+		vref_dd_publish(p);
 }
 
 static const char *irq_names[AVR_VREF_IRQ_COUNT] = {
@@ -171,6 +176,8 @@ void
 avr_vref_set_vdd(avr_vref_t * p, uint32_t vdd_mv)
 {
 	p->vdd_mv = vdd_mv;
+	if (p->dd)
+		vref_dd_publish(p);
 }
 
 void
@@ -194,4 +201,74 @@ avr_vref_init_tiny2(
 	/* CTRLB: NVMREFEN/ADC0REFEN/AC0REFEN force-enables (bits 2:0); no
 	 * behavioural effect in this ideal model. */
 	avr_register_io_write(avr, base + VREFR_CTRLB, avr_vref_store_write, p);
+}
+
+/* AVR Dx REFSEL[2:0] (DS40002413B Tables 21-1 to 21-3). */
+static uint32_t
+vref_dd_sel_to_mv(avr_vref_t *p, uint8_t sel)
+{
+	switch (sel & 0x07) {
+	case 0x0: return 1024;
+	case 0x1: return 2048;
+	case 0x2: return 4096;
+	case 0x3: return 2500;
+	case 0x5: return p->vdd_mv;
+	case 0x6: return p->vrefa_mv;
+	default:  return 0;	/* reserved */
+	}
+}
+
+static void
+vref_dd_publish(avr_vref_t *p)
+{
+	static const uint8_t irq_for[3] = {
+		AVR_VREF_IRQ_ADC0_MV, AVR_VREF_IRQ_DAC0_MV, AVR_VREF_IRQ_DD_AC0_MV,
+	};
+	for (int i = 0; i < 3; i++)
+		avr_raise_irq(p->io.irq + irq_for[i],
+					  vref_dd_sel_to_mv(p, p->io.avr->data[p->base + 2 * i]));
+}
+
+static void
+avr_vref_dd_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	avr_vref_t *p = (avr_vref_t *)param;
+	static const uint8_t irq_for[3] = {
+		AVR_VREF_IRQ_ADC0_MV, AVR_VREF_IRQ_DAC0_MV, AVR_VREF_IRQ_DD_AC0_MV,
+	};
+	int reg = (addr - p->base) / 2;		// 0: ADC0REF, 1: DAC0REF, 2: ACREF
+
+	v &= 0x87;				// ALWAYSON, REFSEL[2:0]
+	avr_core_watch_write(avr, addr, v);
+	avr_raise_irq(p->io.irq + irq_for[reg], vref_dd_sel_to_mv(p, v));
+}
+
+void
+avr_vref_set_vrefa(avr_vref_t * p, uint32_t vrefa_mv)
+{
+	p->vrefa_mv = vrefa_mv;
+	if (p->dd)
+		vref_dd_publish(p);
+}
+
+void
+avr_vref_init_dd(
+		avr_t * avr,
+		avr_vref_t * p,
+		avr_io_addr_t base,
+		char name)
+{
+	memset(p, 0, sizeof(*p));
+	p->io = _io;
+	p->name = name;
+	p->base = base;
+	p->nregs = 5;
+	p->dd = 1;
+	p->vdd_mv = 3300;
+
+	avr_register_io(avr, &p->io);
+	avr_io_setirqs(&p->io, AVR_IOCTL_VREF_GETIRQ(name), AVR_VREF_IRQ_COUNT, NULL);
+
+	for (int i = 0; i < 3; i++)
+		avr_register_io_write(avr, base + 2 * i, avr_vref_dd_write, p);
 }

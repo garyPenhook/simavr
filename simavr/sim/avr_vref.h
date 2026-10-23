@@ -95,6 +95,8 @@ enum {
 	/* tinyAVR 2-series: CTRLA.AC0REFSEL is published on the DAC0 slot (there
 	 * is no DAC0; the ADC0 reference is selected inside the ADC itself). */
 	AVR_VREF_IRQ_AC0_MV = AVR_VREF_IRQ_DAC0_MV,
+	/* AVR Dx: ADC0REF, DAC0REF and ACREF each publish on their own slot. */
+	AVR_VREF_IRQ_DD_AC0_MV = AVR_VREF_IRQ_ADC1_MV,
 };
 
 typedef struct avr_vref_t {
@@ -103,7 +105,9 @@ typedef struct avr_vref_t {
 
 	avr_io_addr_t	base;
 	uint8_t		nregs;		/* CTRLx registers fitted (4, or 2 on tinyAVR-2) */
-	uint32_t	vdd_mv;		/* AC0REFSEL = VDD (tinyAVR-2 only; default 3300) */
+	uint32_t	vdd_mv;		/* REFSEL = VDD (tinyAVR-2 / AVR Dx; default 3300) */
+	uint8_t		dd;		/* AVR Dx register set (republish on reset / level change) */
+	uint32_t	vrefa_mv;	/* REFSEL = VREFA external reference (AVR Dx; default 0) */
 } avr_vref_t;
 
 /*
@@ -143,6 +147,24 @@ void
 avr_vref_set_vdd(avr_vref_t * p, uint32_t vdd_mv);
 
 #define AVR_IOCTL_VREF_GETIRQ(_name) AVR_IOCTL_DEF('v','r','f',(_name))
+
+/*
+ * AVR Dx VREF (DS40002413B 21): ADC0REF at +0x00, DAC0REF at +0x02 and ACREF at
+ * +0x04, each ALWAYSON (bit 7) plus REFSEL[2:0]: 1.024 / 2.048 / 4.096 / 2.5 V,
+ * VDD (5) or VREFA (6); 4 and 7 are reserved and publish 0. The decoded
+ * millivolts are published on AVR_VREF_IRQ_ADC0_MV / _DAC0_MV / _DD_AC0_MV on
+ * every write. The VDD and VREFA levels default to 3300 / 0 mV (see
+ * avr_vref_set_vdd() and avr_vref_set_vrefa()).
+ */
+void
+avr_vref_init_dd(
+		avr_t * avr,
+		avr_vref_t * p,
+		avr_io_addr_t base,
+		char name);
+
+void
+avr_vref_set_vrefa(avr_vref_t * p, uint32_t vrefa_mv);
 
 #ifdef __cplusplus
 };

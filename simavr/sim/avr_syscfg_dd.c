@@ -31,9 +31,10 @@ static const uint8_t fuse_defaults[AVR_FUSE_DD_COUNT] = {
 	0x00, 0x00, 0x00, 0x00, 0x00, 0xd0, 0x08, 0x00, 0x00,
 };
 
-/* Temperature-sensor calibration placeholders (device specific on real parts). */
-#define TEMPSENSE0_CAL	0x0100
-#define TEMPSENSE1_CAL	0x0032
+/* Temperature-sensor calibration placeholders (device specific on real parts):
+ * slope 4096 and offset 3584 make the ADC result 3584 - T[K] (33.3.3.8). */
+#define TEMPSENSE0_CAL	0x1000
+#define TEMPSENSE1_CAL	0x0e00
 
 /* Read-only registers: the CPU cannot write SIGROW, FUSE or LOCK. */
 static void

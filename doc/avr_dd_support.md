@@ -23,7 +23,8 @@ is not modelled; they are not registered yet.
 * **CLKCTRL** (`avr_clkctrl_dd.c`, 12): OSCHF `FRQSEL` 1-24 MHz (4 MHz at reset),
   OSC32K, XOSC32K, `EXTCLK`, the `PDIV` prescaler (2..64, 6/10/12/24/48),
   `FUSE.OSCCFG` start-up clock, `MCLKSTATUS`, CCP on every protected register. A
-  switch to a not-yet-enabled external source stays pending (`SOSC`).
+  switch to a not-yet-enabled external source stays pending (`SOSC`). OSCHF and PLL
+  (2x/3x) frequencies are available to TCD0.
 * **NVMCTRL** (`avr_nvmctrl_dd.c`, 11): command-then-store model (`FLWR`, `FLPER`,
   `FLMPERn`, `EEWR`, `EEERWR`, `EEBER`, `EEMBERn`, `EECHER`), USERROW writes and
   erase, `STATUS.ERROR`, BOOT/APPCODE/APPDATA sections from `FUSE.BOOTSIZE` and
@@ -32,23 +33,51 @@ is not modelled; they are not registered yet.
   across reset.
 * **PORT** multi-pin configuration (`PINCONFIG` mirrored across ports,
   `PINCTRLUPD/SET/CLR`, 18.3.2.4).
+* **EVSYS** at `0x200` (6 channels, 25 users, 16.5); generators: AC0 OUT, ADC0
+  RESRDY, ZCD3 OUT, MVIO VDDIO2OK, CCL LUT0-3, TCB0/1 CAPT; users: ADC0 START, TCA0
+  CNTA, TCB0/1 CAPT.
+* **PORTMUX** at `0x5E0` (offsets 0-9): USART0/1 TxD (`USARTROUTEA`) and TCA0 WO0-5
+  (`TCAROUTEA`) are routed to their pins.
+* **VREF** (21): `ADC0REF`, `DAC0REF`, `ACREF` decoded to millivolts and fed to
+  ADC0, DAC0 and the AC0 DACREF divider; republished on reset and when the host
+  changes the VDD / VREFA level (`avr_vref_set_vdd()` / `avr_vref_set_vrefa()`; VREFA
+  defaults to 0 mV because the data sheet gives no value).
+* **AC0** (`avr_ac_dd.c`, 32): AINP3/4, AINN2/3, DACREF, INVERT, HYSMODE (typical
+  VHYST of Table 38-26), `INTCTRL.INTMODE`, `CMPIF`/`CMPSTATE`.
+* **DAC0** (34): 10-bit left-aligned `DATA`, output on `DATAH` write.
+* **ZCD3** (35): switching level ZCPINV = 0.95 V, `INVERT`, `INTMODE`, `CROSSIF`.
+* **MVIO** (19): `VDDIO2S`/`VDDIO2IF` driven by an input IRQ in the dual-supply
+  fuse configuration, always OK in single-supply.
+* **ADC0** (`avr_adc_dd.c`, 33): single-ended/differential 12/10-bit, accumulation
+  with the Table 33-1/33-2 formats, free-running, `STCONV`/`SPCONV`, event start,
+  window comparator, `RES` read clears the flags, and the 33.3.3.4 conversion time.
+  Inputs: AINn, GND, TEMPSENSE (Kelvin), VDD/10, VDDIO2/10, DAC0, DACREF0.
+* **TCD0** clock source (OSCHF / PLL / EXTCLK / SYSCLK) follows CLKCTRL.
+* **CRCSCAN** (`avr_crcscan.c`): CRC16 with the 512-byte `BOOTSIZE`/`CODESIZE` units
+  and the Dx `CRCSRC` fuse encoding.
+* **CCL** input sources (31.5.7): AC0, ZCD3, TCA0 WO0-2, TCB0/1 WO.
 * **SYSCFG / SIGROW / FUSE / LOCK** (`avr_syscfg_dd.c`): `REVID`, device ID,
   `TEMPSENSEn`, 16-byte serial number, read-only fuse window with the factory
   defaults of 8.8.2.
 * **CPUINT** vector base from `FUSE.BOOTSIZE` in 512-byte units.
 * Re-used AVRxt blocks whose register layouts are identical to the tinyAVR
   2-series (checked register-by-register against the device files): PORT/VPORT
-  A, C, D, F; TCA0; TCB0-1; USART0-1; SPI0; RTC/PIT; WDT; BOD; CCL (4 LUTs);
-  SLPCTRL; RSTCTRL; TWI0.
+  A, C, D, F; TCA0; TCB0-1; USART0-1; SPI0; RTC/PIT; WDT; BOD; SLPCTRL; RSTCTRL;
+  TWI0.
 
-## Not modelled yet (registers read and write as plain memory)
+## Not modelled yet (registers read and write as plain memory or are inert)
 
-EVSYS (different generator/user map), PORTMUX, VREF (`ADC0REF/DAC0REF/ACREF`),
-ADC0 (12-bit differential, `adc_12b_diff_ctrl_v1`), AC0 (`MUXCTRL`), DAC0, ZCD3,
-MVIO, TCD0, CRCSCAN (the Dx sections are 512-byte units), TWI dual mode, CLKCTRL
-PLL output / auto-tune / clock failure detection, `SLPCTRL.VREGCTRL`, SPM
-decoding, `BOOTRP` read protection, CCL input sources, `FLMAP` for parts with more
-than 32 KB of flash.
+CCL inputs from USART TxD, SPI and TCD0 WOA-C (no line-level IRQs), TCD0 `TRIG`
+interrupt/inputs/outputs and its EVSYS generators/users, CRC32 in CRCSCAN, TWI dual
+mode, CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
+`SLPCTRL.VREGCTRL`, SPM decoding, `BOOTRP` read protection, `FLMAP` for parts with
+more than 32 KB of flash, MVIO pin tri-stating, ADC `RUNSTDBY` and the
+PRESC-dependent CLK_ADC limits, AC `INITVAL` and POWER response times.
+
+## Known limitations
+
+The PLL is used without modelling lock; TCD0 does not re-time its counter when the
+clock changes while it runs; reserved `REFSEL` values publish 0 mV.
 
 ## Simplifications
 
@@ -56,12 +85,15 @@ Stores to flash/EEPROM take effect immediately; `STATUS.FBUSY/EEBUSY` is held fo
 nominal number of cycles and the CPU is never halted. A store replaces the old
 contents instead of clearing bits only. `CHER` is ignored when issued by the CPU
 (it is UPDI-only). The `REVID` and temperature-sensor calibration values are
-placeholders.
+placeholders (the temperature-sensor words are chosen so the ADC result is
+3584 - T[K]). The CRC32 start value is not specified in the text used, so a CRC32
+scan is skipped and reports OK.
 
 ## Testing
 
 `tests/test_avrxt_engine.c` has `AVR DD (AVR32DD14) core`, `AVR DD CLKCTRL`, `AVR DD
-PORT multi-pin configuration` and `AVR DD NVMCTRL` groups. A firmware smoke test
+PORT multi-pin configuration`, `EVSYS / PORTMUX`, `VREF / AC / DAC / ZCD / MVIO`,
+`TCD0 clock sources`, `ADC0`, `CCL input sources`, `CRCSCAN` and `NVMCTRL` groups. A firmware smoke test
 builds with
 
     D=~/.mchp_packs/Microchip/AVR-Dx_DFP/2.8.343

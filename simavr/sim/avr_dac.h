@@ -70,6 +70,7 @@ typedef struct avr_dac_t {
 	uint32_t	vref_mv;	/* reference voltage in mV (default 1100) */
 	uint32_t	out_mv;		/* last published internal output (mV) */
 	uint32_t	pin_mv;		/* last published pin-buffer output (mV) */
+	uint8_t		dd;		/* AVR Dx: 10-bit DATA at +0x02/+0x03 (DATAL, DATAH) */
 } avr_dac_t;
 
 /*
@@ -86,6 +87,19 @@ avr_dac_init(
 /* Override the modelled reference voltage (millivolts). */
 void
 avr_dac_set_vref(avr_dac_t * p, uint32_t vref_mv);
+
+/*
+ * AVR Dx DAC (DS40002413B chapter 34): CTRLA at +0x00 and the 10-bit left-aligned
+ * DATA at +0x02 (DATAL = DATA[1:0] in bits 7:6, DATAH = DATA[9:2] at +0x03).
+ * VOUT = DATA * VREF / 1024, and the output is updated when DATAH is written or
+ * the DAC is enabled. The VREF defaults to 1024 mV (VREF.DAC0REF resets to 1V024).
+ */
+void
+avr_dac_init_dd(
+		avr_t * avr,
+		avr_dac_t * p,
+		avr_io_addr_t base,
+		char name);
 
 #define AVR_IOCTL_DAC_GETIRQ(_name) AVR_IOCTL_DEF('d','a','c',(_name))
 

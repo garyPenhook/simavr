@@ -261,3 +261,20 @@ avr_clkctrl_dd_init(
 	avr_register_io_write(avr, base + CLKCTRL_DD_MCLKINTFLAGS_O, clkctrl_dd_intflags_write, p);
 	avr_register_io_write(avr, base + CLKCTRL_DD_MCLKSTATUS_O, clkctrl_dd_status_write, p);
 }
+
+uint32_t
+avr_clkctrl_dd_oschf_hz(avr_clkctrl_dd_t * p)
+{
+	return frqsel_mhz[(reg(p, CLKCTRL_DD_OSCHFCTRLA_O) & OSCHF_FRQSEL_gm) >>
+					  OSCHF_FRQSEL_gp] * 1000000;
+}
+
+uint32_t
+avr_clkctrl_dd_pll_hz(avr_clkctrl_dd_t * p)
+{
+	uint8_t pll = reg(p, CLKCTRL_DD_PLLCTRLA_O);
+	uint32_t src = (pll & 0x40) ? p->freq_extclk : avr_clkctrl_dd_oschf_hz(p);
+	static const uint8_t mul[4] = { 0, 2, 3, 0 };	// DISABLE, 2x, 3x, reserved
+
+	return src * mul[pll & PLL_MULFAC_gm];
+}

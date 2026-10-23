@@ -149,7 +149,9 @@ static const char *irq_names[AVR_EVSYS_IRQ_COUNT] = {
 	">evsys.u5",  ">evsys.u6",  ">evsys.u7",  ">evsys.u8",  ">evsys.u9",
 	">evsys.u10", ">evsys.u11", ">evsys.u12", ">evsys.u13", ">evsys.u14",
 	">evsys.u15", ">evsys.u16", ">evsys.u17", ">evsys.u18", ">evsys.u19",
-	">evsys.u20", ">evsys.u21", ">evsys.u22", ">evsys.u23",
+	">evsys.u20", ">evsys.u21", ">evsys.u22", ">evsys.u23", ">evsys.u24",
+	">evsys.u25", ">evsys.u26", ">evsys.u27", ">evsys.u28", ">evsys.u29",
+	">evsys.u30", ">evsys.u31",
 };
 
 static avr_io_t _io = {

@@ -43,8 +43,14 @@ static void dac_update(avr_dac_t *p)
 	uint8_t ctrla = rd(avr, p->r_ctrla);
 	uint32_t out = 0;
 
-	if (ctrla & ENABLE_bm)
-		out = (uint32_t)rd(avr, p->r_data) * p->vref_mv / 256;
+	if (ctrla & ENABLE_bm) {
+		if (p->dd) {
+			uint32_t data = (rd(avr, p->r_data + 1) << 2) | (rd(avr, p->r_data) >> 6);
+			out = data * p->vref_mv / 1024;
+		} else {
+			out = (uint32_t)rd(avr, p->r_data) * p->vref_mv / 256;
+		}
+	}
 
 	/* Internal output (to AC/ADC): available whenever ENABLE=1. */
 	if (out != p->out_mv) {
@@ -122,4 +128,29 @@ avr_dac_init(
 
 	avr_register_io_write(avr, p->r_ctrla, avr_dac_ctrla_write, p);
 	avr_register_io_write(avr, p->r_data, avr_dac_data_write, p);
+}
+
+/* DATAL (DATA[1:0] in bits 7:6) only stores; the output follows DATAH. */
+static void
+avr_dac_dd_datal_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	(void)param;
+	avr_core_watch_write(avr, addr, v & 0xc0);
+}
+
+void
+avr_dac_init_dd(
+		avr_t * avr,
+		avr_dac_t * p,
+		avr_io_addr_t base,
+		char name)
+{
+	avr_dac_init(avr, p, base, name);
+	p->dd = 1;
+	p->r_data = base + 0x02;
+	p->vref_mv = 1024;
+	/* avr_dac_init() hooked CTRLA and +0x01; DATAL/DATAH are the Dx registers.
+	 * Writes to the reserved +0x01 are harmless stores. */
+	avr_register_io_write(avr, p->r_data, avr_dac_dd_datal_write, p);
+	avr_register_io_write(avr, p->r_data + 1, avr_dac_data_write, p);
 }

@@ -151,6 +151,19 @@ static int ccl_src_for_insel(avr_ccl_t *p, uint8_t insel, int i)
 		return AVR_CCL_SRC_EVENT0;
 	if (insel == 0x4)
 		return AVR_CCL_SRC_EVENT1;
+	if (p->is_dd) {
+		switch (insel) {
+		case 0x6: return AVR_CCL_SRC_AC0;
+		case 0x7: return AVR_CCL_SRC_ZCD3;
+		case 0x8: return i == 0 ? AVR_CCL_SRC_USART0_TXD : AVR_CCL_SRC_USART1_TXD;
+		case 0x9: return i == 2 ? AVR_CCL_SRC_SPI0_SCK : AVR_CCL_SRC_SPI0_MOSI;
+		case 0xA: return AVR_CCL_SRC_TCA0_WO0 + i;
+		case 0xB: return i == 0 ? AVR_CCL_SRC_TCB0 : i == 1 ? AVR_CCL_SRC_TCB1 : -1;
+		case 0xC: return i == 0 ? AVR_CCL_SRC_TCD0_WOA :
+				 i == 1 ? AVR_CCL_SRC_TCD0_WOB : AVR_CCL_SRC_TCD0_WOC;
+		default:  return -1;
+		}
+	}
 	if (!p->is_mega) {
 		switch (insel) {
 		case 0x6: return AVR_CCL_SRC_AC0;
@@ -544,7 +557,9 @@ avr_ccl_reset(avr_io_t *io)
 	[(base) + AVR_CCL_SRC_USART2_TXD] = "ccl.us2txd", \
 	[(base) + AVR_CCL_SRC_SPI0_SCK] = "ccl.spi0sck", \
 	[(base) + AVR_CCL_SRC_SPI0_MOSI] = "ccl.spi0mosi", \
-	[(base) + AVR_CCL_SRC_SPI0_MISO] = "ccl.spi0miso"
+	[(base) + AVR_CCL_SRC_SPI0_MISO] = "ccl.spi0miso", \
+	[(base) + AVR_CCL_SRC_ZCD3] = "ccl.zcd3", \
+	[(base) + AVR_CCL_SRC_TCD0_WOC] = "ccl.tcd0woc"
 
 static const char *irq_names_2lut[AVR_CCL_LUT_IRQS(2) + AVR_CCL_NSRC] = {
 	[AVR_CCL_IRQ_LUT0_IN0] = "ccl.l0in0", [AVR_CCL_IRQ_LUT0_IN1] = "ccl.l0in1",
@@ -722,4 +737,16 @@ avr_ccl_set_interrupt(
 
 	avr_register_io_write(avr, p->r_intctrl, avr_ccl_intctrl_write, p);
 	avr_register_io_write(avr, p->r_intflags, avr_ccl_intflags_write, p);
+}
+
+void
+avr_ccl_init_dd(
+		avr_t * avr,
+		avr_ccl_t * p,
+		avr_io_addr_t base,
+		uint8_t nluts,
+		char name)
+{
+	avr_ccl_init_mega(avr, p, base, nluts, name);
+	p->is_dd = 1;
 }

@@ -88,6 +88,11 @@ typedef struct avr_tcd_t {
 
 	avr_int_vector_t	ovf;	/* TCDn_OVF */
 
+	/* Optional CLKSEL source resolver (AVR Dx: CLKSEL 0 = OSCHF, 1 = PLL, 2 =
+	 * EXTCLK, 3 = SYSCLK). When set it supplies f_TCD in Hz for CLKSEL 0..2
+	 * (0 = unknown: track CLK_PER); freq_osc20m is then unused. */
+	uint32_t		(*clk_fn)(void * param, uint8_t clksel);
+	void *			clk_param;
 	uint32_t		freq_osc20m;	/* unprescaled OSC20M, for CLKSEL=OSC20M */
 
 	avr_cycle_count_t	start_cycle;

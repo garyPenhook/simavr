@@ -65,10 +65,12 @@ static uint32_t crcscan_section_end(avr_crcscan_t *p, uint8_t src)
 	avr_t *avr = p->io.avr;
 	uint32_t end = p->flash_size - 1;	/* full flash */
 
+	uint32_t unit = p->dd ? 512 : 256;
+
 	if (src == SRC_APP && p->append_idx != 0xff && avr->fuse[p->append_idx])
-		end = (uint32_t)avr->fuse[p->append_idx] * 256 - 1;
+		end = (uint32_t)avr->fuse[p->append_idx] * unit - 1;
 	else if (src == SRC_BOOT && p->bootend_idx != 0xff && avr->fuse[p->bootend_idx])
-		end = (uint32_t)avr->fuse[p->bootend_idx] * 256 - 1;
+		end = (uint32_t)avr->fuse[p->bootend_idx] * unit - 1;
 
 	if (end >= p->flash_size)
 		end = p->flash_size - 1;
@@ -84,6 +86,11 @@ static uint8_t crcscan_boot_src(avr_crcscan_t *p)
 
 	if (p->syscfg0_idx == 0xff)
 		return SRC_NOCRC;
+	if (p->dd) {
+		/* FUSE.SYSCFG0.CRCSRC: FLASH, BOOT, BOOTAPP, NOCRC (DS40002413B 8.8.2.4). */
+		static const uint8_t map[4] = { SRC_FLASH, SRC_BOOT, SRC_APP, SRC_NOCRC };
+		return map[(avr->fuse[p->syscfg0_idx] >> 6) & SRC_gm];
+	}
 	if (avr->fuse[p->syscfg0_idx] == 0x00)
 		return SRC_NOCRC;
 	return (avr->fuse[p->syscfg0_idx] >> 6) & SRC_gm;
@@ -96,6 +103,11 @@ static int crcscan_scan(avr_crcscan_t *p, uint8_t src, int raise_nmi)
 {
 	avr_t *avr = p->io.avr;
 	uint32_t end = crcscan_section_end(p, src);
+
+	if (p->dd && p->syscfg0_idx != 0xff && (avr->fuse[p->syscfg0_idx] & 0x20)) {	/* CRCSEL = CRC32: not modelled */
+		avr_core_watch_write(avr, p->r_status, OK_bm);
+		return 1;
+	}
 
 	int ok = 0;
 	if (end >= 2) {
@@ -193,4 +205,21 @@ avr_crcscan_init(
 	avr_register_io(avr, &p->io);
 	avr_register_vector(avr, &p->nmi);
 	avr_register_io_write(avr, p->r_ctrla, avr_crcscan_ctrla_write, p);
+}
+
+void
+avr_crcscan_init_dd(
+		avr_t * avr,
+		avr_crcscan_t * p,
+		avr_io_addr_t base,
+		uint32_t flash_size,
+		uint8_t syscfg0_fuse_index,
+		uint8_t codesize_fuse_index,
+		uint8_t bootsize_fuse_index,
+		uint8_t nmi_vector,
+		char name)
+{
+	avr_crcscan_init(avr, p, base, flash_size, syscfg0_fuse_index,
+					 codesize_fuse_index, bootsize_fuse_index, nmi_vector, name);
+	p->dd = 1;
 }

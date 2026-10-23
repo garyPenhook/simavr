@@ -36,6 +36,11 @@
 #include "avr_adc_tiny2.h"
 #include "avr_spi_modern.h"
 #include "avr_ac.h"
+#include "avr_ac_dd.h"
+#include "avr_zcd.h"
+#include "avr_adc_dd.h"
+#include "avr_clkctrl_dd.h"
+#include "avr_mvio.h"
 #include "avr_dac.h"
 #include "avr_ccl.h"
 #include "avr_evsys.h"
@@ -5225,6 +5230,442 @@ int main(void)
 		check("CLR clears PULLUPEN in PIN1CTRL", m->data[0x440 + 0x11], 0x03);
 		cpu_write(m, 0x440 + 0x0b, 0xff);
 		check("PINCONFIG reserved bits read 0", m->data[0x440 + 0x0b], 0xcf);
+
+		printf("== AVR DD EVSYS / PORTMUX ==\n");
+		{
+			/* 16.5: EVSYS at 0x200, CHANNELn at +0x10, 25 users from +0x20. */
+			cpu_write(m, 0x0215, 0x20);
+			check("EVSYS CHANNEL5 @0x215", m->data[0x0215], 0x20);
+			cpu_write(m, 0x0215, 0x00);
+			check("EVSYS USER24 @0x238", HAS_W(m, 0x0238), 1);
+			check("no EVSYS @tiny 0x180", HAS_W(m, 0x0180), 0);
+			avr_irq_t *u = avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+										 AVR_EVSYS_IRQ_USER0 + 24);
+			avr_irq_t *ch0 = avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'),
+										   AVR_EVSYS_IRQ_CH0);
+			g_evsys_pulses = 0;
+			avr_irq_register_notify(u, evsys_count_hook, NULL);
+			cpu_write(m, 0x0238, 1);		/* USERTCD0INPUTB -> CHANNEL0 */
+			avr_raise_irq(ch0, 1);
+			check("event reaches user 24", g_evsys_pulses, 1);
+			cpu_write(m, 0x0238, 0);
+			avr_raise_irq(ch0, 0);
+			avr_raise_irq(ch0, 1);
+			check("unrouted user gets nothing", g_evsys_pulses, 1);
+			avr_raise_irq(ch0, 0);
+			/* A TCB1 CAPT generator (0xA2) on channel 2 reaches no user unless
+			 * routed; the generator table is the DD one. */
+			cpu_write(m, 0x0212, 0xa2);
+			check("CHANNEL2 holds generator", m->data[0x0212], 0xa2);
+
+			/* 17.3.3: USART0 TxD on PA0 by default, PC1 for USARTROUTEA.USART0=ALT4. */
+			avr_irq_t *pc1 = avr_io_getirq(m, AVR_IOCTL_IOPORT_GETIRQ('C'), 1);
+			avr_irq_t *pa0 = avr_io_getirq(m, AVR_IOCTL_IOPORT_GETIRQ('A'), 0);
+			avr_irq_t *txd = avr_io_getirq(m, AVR_IOCTL_UART_GETIRQ('0'), USART_MODERN_IRQ_TXD_PIN);
+			cpu_write(m, 0x0400 + 0x01, 0x01);	/* PORTA.DIRSET PA0 */
+			cpu_write(m, 0x0440 + 0x01, 0x02);	/* PORTC.DIRSET PC1 */
+			avr_raise_irq(txd, 3);			/* active, level 1 */
+			check("TxD drives PA0 by default", pa0->value & 1, 1);
+			check("PC1 not driven by default", pc1->value & 1, 0);
+			cpu_write(m, 0x05e0 + 2, 0x04);		/* USART0 = ALT4 */
+			check("ALT4 moves TxD to PC1", pc1->value & 1, 1);
+			cpu_write(m, 0x05e0 + 2, 0x05);		/* USART0 = NONE */
+			check("NONE releases PC1", pc1->value & 1, 0);
+			avr_raise_irq(txd, 0);
+			cpu_write(m, 0x05e0 + 2, 0x00);
+			check("PORTMUX TCDROUTEA @0x5E9", HAS_W(m, 0x05e9), 1);
+		}
+
+		printf("== AVR DD VREF / AC / DAC / ZCD / MVIO ==\n");
+		{
+			avr_reset(m);
+			/* VREF (21.5): REFSEL 0..3 = 1.024/2.048/4.096/2.5 V, 5 = VDD. */
+			avr_irq_t *acin_p3 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_AINP3);
+			avr_irq_t *acin_p4 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_AINP4);
+			avr_irq_t *acin_n2 = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_AINN2);
+			avr_irq_t *acout = avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_OUT);
+			cpu_write(m, 0x00b0 + 4, 0x01);		/* ACREF = 2V048 */
+			cpu_write(m, 0x0680 + 2, (3 << 3) | 4);	/* MUXPOS = AINP3, MUXNEG = DACREF */
+			check("AC DACREF reset 0xFF", m->data[0x0680 + 5], 0xff);
+			cpu_write(m, 0x0680 + 5, 128);		/* DACREF = 128 -> 1024 mV */
+			avr_raise_irq(acin_p3, 1100);
+			cpu_write(m, 0x0680 + 0, 0x01);		/* ENABLE */
+			check("AINP3 1100 > DACREF 1024", acout->value, 1);
+			check("CMPSTATE", (m->data[0x0687] >> 4) & 1, 1);
+			avr_raise_irq(acin_p3, 900);
+			check("AINP3 900 < DACREF 1024", acout->value, 0);
+			cpu_write(m, 0x0680 + 6, 0x30 | 0x01);	/* POSEDGE, CMP interrupt */
+			avr_raise_irq(acin_p3, 1100);
+			check("POSEDGE sets CMPIF", m->data[0x0687] & 1, 1);
+			check("AC interrupt pending", avr_has_pending_interrupts(m), 1);
+			cpu_write(m, 0x0687, 0x01);
+			check("CMPIF write-1-to-clear", m->data[0x0687] & 1, 0);
+			cpu_write(m, 0x0680 + 2, (4 << 3) | 2);	/* AINP4 vs AINN2 */
+			avr_raise_irq(acin_p4, 300);
+			avr_raise_irq(acin_n2, 500);
+			check("AINP4 300 < AINN2 500", acout->value, 0);
+			cpu_write(m, 0x0680 + 2, 0x80 | (4 << 3) | 2);	/* INVERT */
+			check("INVERT flips the output", acout->value, 1);
+			cpu_write(m, 0x0680 + 0, 0x00);
+			check("disabled AC reads 0", acout->value, 0);
+			cpu_write(m, 0x0680 + 6, 0x00);
+
+			/* A reset republishes the (zeroed) VREF registers to the consumers. */
+			avr_reset(m);
+			check("reset restores DAC0 reference", avr_io_getirq(m, AVR_IOCTL_VREF_GETIRQ('0'), AVR_VREF_IRQ_DAC0_MV)->value, 1024);
+			cpu_write(m, 0x00b0 + 2, 0x05);		/* DAC0REF = VDD */
+			cpu_write(m, 0x06a0 + 0, 0x01);
+			cpu_write(m, 0x06a0 + 2, 0x00);
+			cpu_write(m, 0x06a0 + 3, 0x80);
+			check("DAC with VDD reference (3300/2)", avr_io_getirq(m, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT)->value, 1650);
+			cpu_write(m, 0x06a0 + 0, 0x00);
+			avr_reset(m);
+			cpu_write(m, 0x00b0 + 4, 0x01);		/* ACREF = 2V048 again for the rest */
+			/* DAC (34): DATA is 10-bit, DATAH = DATA[9:2], output after DATAH. */
+			avr_irq_t *dacout = avr_io_getirq(m, AVR_IOCTL_DAC_GETIRQ('0'), AVR_DAC_IRQ_OUT);
+			cpu_write(m, 0x00b0 + 2, 0x02);		/* DAC0REF = 4V096 */
+			cpu_write(m, 0x06a0 + 0, 0x01);		/* ENABLE */
+			cpu_write(m, 0x06a0 + 2, 0x00);		/* DATAL */
+			cpu_write(m, 0x06a0 + 3, 0x80);		/* DATAH: DATA = 0x200 = half scale */
+			check("DAC half scale = 2048 mV", dacout->value, 2048);
+			cpu_write(m, 0x06a0 + 2, 0xc0);		/* DATA[1:0] = 3 */
+			cpu_write(m, 0x06a0 + 3, 0xff);
+			check("DAC full scale 1023/1024 * 4096", dacout->value, 4092);
+			cpu_write(m, 0x06a0 + 2, 0x3f);
+			check("DATAL keeps bits 7:6 only", m->data[0x06a0 + 2], 0x00);
+
+			/* ZCD (35): above 0.95 V = 1, INVERT reverses, INTMODE edges. */
+			avr_irq_t *zin = avr_io_getirq(m, AVR_IOCTL_ZCD_GETIRQ('3'), AVR_ZCD_IRQ_ZCIN);
+			avr_irq_t *zout = avr_io_getirq(m, AVR_IOCTL_ZCD_GETIRQ('3'), AVR_ZCD_IRQ_OUT);
+			cpu_write(m, 0x06d8 + 2, 0x01);		/* INTMODE = RISING */
+			cpu_write(m, 0x06d8 + 0, 0x01);
+			avr_raise_irq(zin, 2000);
+			check("ZCD above reference", zout->value, 1);
+			check("ZCD STATE", (m->data[0x06db] >> 4) & 1, 1);
+			check("ZCD rising sets CROSSIF", m->data[0x06db] & 1, 1);
+			cpu_write(m, 0x06db, 0x01);
+			avr_raise_irq(zin, 100);
+			check("ZCD below reference", zout->value, 0);
+			check("ZCD falling does not flag on RISING", m->data[0x06db] & 1, 0);
+			cpu_write(m, 0x06d8 + 0, 0x09);		/* INVERT | ENABLE */
+			check("ZCD INVERT", zout->value, 1);
+
+			/* MVIO (19): default fuses = DUAL; SINGLE reads VDDIO2S = 1 always. */
+			avr_irq_t *vio = avr_io_getirq(m, AVR_IOCTL_MVIO_GETIRQ('0'), AVR_MVIO_IRQ_VDDIO2);
+			check("MVIO default dual, VDDIO2S", m->data[0x00c0 + 2] & 1, 1);
+			cpu_write(m, 0x00c0 + 0, 0x01);
+			avr_raise_irq(vio, 0);
+			check("VDDIO2 lost clears VDDIO2S", m->data[0x00c0 + 2] & 1, 0);
+			check("VDDIO2S change sets VDDIO2IF", m->data[0x00c0 + 1] & 1, 1);
+			cpu_write(m, 0x00c0 + 1, 0x01);
+			check("VDDIO2IF write-1-to-clear", m->data[0x00c0 + 1] & 1, 0);
+			m->fuse[6] = 0x10;				/* MVSYSCFG = SINGLE */
+			avr_reset(m);
+			check("single supply VDDIO2S = 1", m->data[0x00c0 + 2] & 1, 1);
+			avr_raise_irq(vio, 0);
+			check("single supply ignores VDDIO2", m->data[0x00c0 + 2] & 1, 1);
+			check("single supply flag stays 0", m->data[0x00c0 + 1] & 1, 0);
+			m->fuse[6] = 0x08;
+			avr_reset(m);
+		}
+
+		printf("== AVR DD TCD0 clock sources ==\n");
+		{
+			/* A private CLKCTRL on a second core: exercises the OSCHF / PLL
+			 * frequency helpers the TCD0 CLKSEL resolver uses (12.5.7, 12.5.9). */
+			avr_t *m2 = avr_make_mcu_by_name("avr32dd14");
+			m2->log = LOG_ERROR;
+			avr_init(m2);
+			avr_clkctrl_dd_t c;
+			avr_clkctrl_dd_init(m2, &c, 0x0060, 2);
+			avr_reset(m2);
+			check("OSCHF 4 MHz at reset", avr_clkctrl_dd_oschf_hz(&c), 4000000);
+			check("PLL disabled", avr_clkctrl_dd_pll_hz(&c), 0);
+			avr_ccp_write(m2, AVR_CCP_IOREG);
+			cpu_write(m2, 0x68, 0x07 << 2);		/* FRQSEL = 16 MHz */
+			check("OSCHF 16 MHz", avr_clkctrl_dd_oschf_hz(&c), 16000000);
+			avr_ccp_write(m2, AVR_CCP_IOREG);
+			cpu_write(m2, 0x70, 0x01);			/* PLL 2x from OSCHF */
+			check("PLL 2x OSCHF = 32 MHz", avr_clkctrl_dd_pll_hz(&c), 32000000);
+			check("PLLS status", (m2->data[0x65] >> 5) & 1, 1);
+			avr_ccp_write(m2, AVR_CCP_IOREG);
+			cpu_write(m2, 0x70, 0x02);			/* 3x */
+			check("PLL 3x OSCHF = 48 MHz", avr_clkctrl_dd_pll_hz(&c), 48000000);
+			avr_ccp_write(m2, AVR_CCP_IOREG);
+			cpu_write(m2, 0x70, 0x40 | 0x02);		/* source XOSCHF (unknown) */
+			check("PLL from unknown XOSCHF = 0", avr_clkctrl_dd_pll_hz(&c), 0);
+			/* TCD0 itself is on the core: registers respond. */
+			check("TCD0 CTRLA @0xB80", HAS_W(m, 0x0b80), 1);
+		}
+
+		printf("== AVR DD ADC0 ==\n");
+		{
+#define A 0x0600
+#define ADC_IN(code, mv) avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_ADC_DD_GETIRQ('0'), (code)), (mv))
+#define RES16(m) ((uint16_t)((m)->data[A + 0x10] | ((m)->data[A + 0x11] << 8)))
+			avr_reset(m);
+			m->pc = 0;
+			cpu_write(m, 0x00b0 + 0, 0x01);		/* ADC0REF = 2V048 */
+			cpu_write(m, A + 0x08, 0x04);		/* MUXPOS = AIN4 */
+			ADC_IN(4, 1024);
+			cpu_write(m, A + 0x00, 0x01);		/* ENABLE */
+			cpu_write(m, A + 0x0a, 0x01);		/* STCONV */
+			check("STCONV reads 1 while converting", m->data[A + 0x0a] & 1, 1);
+			long cyc = run_until_set(m, A + 0x0d, 0x01, 200);
+			/* 4 CLK_PER + (13.5 + 2) * DIV2 = 4 + 31 (33.3.3.4) */
+			check("conversion time (PRESC=DIV2)", cyc, 35);
+			check("12-bit single-ended 1024/2048", RES16(m), 2048);
+			check("STCONV cleared on completion", m->data[A + 0x0a] & 1, 0);
+			check("RESRDY set", m->data[A + 0x0d] & 1, 1);
+			check("RESRDY pends the vector? no (disabled)", avr_has_pending_interrupts(m), 0);
+			(void)cpu_read(m, A + 0x10);
+			check("RES read clears RESRDY", m->data[A + 0x0d] & 1, 0);
+
+			cpu_write(m, A + 0x00, 0x01 | 0x10);	/* LEFTADJ */
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("12-bit left-adjusted", RES16(m), 0x8000);
+			cpu_write(m, A + 0x00, 0x01 | 0x04);	/* 10-bit */
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			cyc = run_until_set(m, A + 0x0d, 0x01, 200);
+			check("10-bit conversion time", cyc, 4 + 27);
+			check("10-bit single-ended", RES16(m), 512);
+			ADC_IN(4, 3000);
+			cpu_write(m, A + 0x00, 0x01);
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("input above reference saturates", RES16(m), 4095);
+
+			/* Differential: (VP - VN) / VREF * 2048, signed (Eq. 33-5). */
+			ADC_IN(4, 1500); ADC_IN(5, 500);
+			cpu_write(m, A + 0x08, 0x04);
+			cpu_write(m, A + 0x09, 0x05);
+			cpu_write(m, A + 0x00, 0x01 | 0x20);	/* CONVMODE = DIFF */
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("differential +1000 mV", (int16_t)RES16(m), 1000);
+			cpu_write(m, A + 0x08, 0x05);
+			cpu_write(m, A + 0x09, 0x04);
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("differential -1000 mV", (int16_t)RES16(m), -1000);
+			ADC_IN(4, 3000);
+			cpu_write(m, A + 0x08, 0x04);
+			cpu_write(m, A + 0x09, 0x05);
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("differential saturates at 2047", (int16_t)RES16(m), 2047);
+
+			/* Accumulation (Table 33-1): 4 x 2048, left-adjusted << 2. */
+			ADC_IN(4, 1024); ADC_IN(5, 0);
+			cpu_write(m, A + 0x09, 0x00);
+			cpu_write(m, A + 0x01, 0x02);		/* ACC4 */
+			cpu_write(m, A + 0x00, 0x01);
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			cyc = run_until_set(m, A + 0x0d, 0x01, 400);
+			check("ACC4 sum", RES16(m), 8192);
+			check("ACC4 conversion time", cyc, 4 + 4 * 31);
+			cpu_write(m, A + 0x00, 0x01 | 0x10);
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 400);
+			check("ACC4 left-adjusted", RES16(m), 32768);
+			cpu_write(m, A + 0x01, 0x05);		/* ACC32: truncated by 1 bit */
+			cpu_write(m, A + 0x00, 0x01);
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 4000);
+			check("ACC32 truncated", RES16(m), 32768);
+			cpu_write(m, A + 0x01, 0x00);
+
+			/* Sample timing: SAMPLEN and SAMPDLY add CLK_ADC cycles (33.3.3.4.4). */
+			cpu_write(m, A + 0x05, 4);			/* SAMPLEN = 4 */
+			cpu_write(m, A + 0x03, 2);			/* SAMPDLY = 2 */
+			cpu_write(m, A + 0x0d, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			cyc = run_until_set(m, A + 0x0d, 0x01, 400);
+			check("SAMPLEN/SAMPDLY extend the sample", cyc, 4 + 31 + 2 * (4 + 2));
+			cpu_write(m, A + 0x05, 0); cpu_write(m, A + 0x03, 0);
+
+			/* Window comparator (33.5.5). */
+			cpu_write(m, A + 0x12, 1000 & 0xff); cpu_write(m, A + 0x13, 1000 >> 8);
+			cpu_write(m, A + 0x14, 3000 & 0xff); cpu_write(m, A + 0x15, 3000 >> 8);
+			cpu_write(m, A + 0x04, 0x03);		/* INSIDE */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("INSIDE: 2048 in [1000,3000]", (m->data[A + 0x0d] >> 1) & 1, 1);
+			cpu_write(m, A + 0x04, 0x04);		/* OUTSIDE */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("OUTSIDE: 2048 not outside", (m->data[A + 0x0d] >> 1) & 1, 0);
+			cpu_write(m, A + 0x04, 0x01);		/* BELOW 1000 */
+			cpu_write(m, A + 0x0d, 0x03);
+			ADC_IN(4, 300);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("BELOW: 600 < 1000", (m->data[A + 0x0d] >> 1) & 1, 1);
+			cpu_write(m, A + 0x04, 0x00);
+			ADC_IN(4, 1024);
+
+			/* Internal inputs. */
+			cpu_write(m, A + 0x08, 0x42);		/* TEMPSENSE */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("temperature 298 K -> 3584 - 298", RES16(m), 3286);
+			cpu_write(m, A + 0x08, 0x44);		/* VDDDIV10 */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("VDD/10 = 330 mV", RES16(m), 660);
+			cpu_write(m, A + 0x08, 0x40);		/* GND */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("GND = 0", RES16(m), 0);
+			cpu_write(m, A + 0x08, 0x49);		/* DACREF0: 0xFF*1024/256 = 1020 */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("AC0 DACREF0 input", RES16(m), 2040);
+			cpu_write(m, 0x00b0 + 2, 0x01);		/* DAC0REF = 2V048 */
+			cpu_write(m, 0x06a0 + 0, 0x01);
+			cpu_write(m, 0x06a0 + 2, 0x00);
+			cpu_write(m, 0x06a0 + 3, 0x80);		/* half scale = 1024 mV */
+			cpu_write(m, A + 0x08, 0x48);		/* DAC0 */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("DAC0 input", RES16(m), 2048);
+			cpu_write(m, 0x06a0 + 0, 0x00);
+
+			/* Free-running: STCONV stays set and results keep coming. */
+			cpu_write(m, A + 0x08, 0x04);
+			cpu_write(m, A + 0x00, 0x01 | 0x02);
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("free-run: first result", RES16(m), 2048);
+			check("free-run: STCONV still set", m->data[A + 0x0a] & 1, 1);
+			cpu_write(m, A + 0x0d, 0x01);
+			cyc = run_until_set(m, A + 0x0d, 0x01, 200);
+			check("free-run: next result without a restart", cyc > 0, 1);
+			cpu_write(m, A + 0x0a, 0x02);		/* SPCONV */
+			check("SPCONV ends free-run", m->data[A + 0x0a] & 1, 0);
+			cpu_write(m, A + 0x00, 0x01);
+
+			/* Event start: EVCTRL.STARTEI + EVSYS user ADC0START (index 8). */
+			cpu_write(m, A + 0x0d, 0x03);
+			cpu_write(m, A + 0x0b, 0x01);
+			cpu_write(m, 0x0200 + 0x20 + 8, 1);	/* ADC0START -> CHANNEL0 */
+			avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_CH0), 1);
+			check("event starts a conversion", m->data[A + 0x0a] & 1, 1);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("event conversion completes", m->data[A + 0x0d] & 1, 1);
+			cpu_write(m, A + 0x0b, 0x00);
+			avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_EVSYS_GETIRQ('0'), AVR_EVSYS_IRQ_CH0), 0);
+			cpu_write(m, 0x0200 + 0x20 + 8, 0);
+
+			/* Interrupt: RESRDY pends vector 26 when enabled. */
+			cpu_write(m, A + 0x0d, 0x03);
+			(void)cpu_read(m, A + 0x10);
+			cpu_write(m, A + 0x0c, 0x01);
+			cpu_write(m, A + 0x0a, 0x01);
+			run_until_set(m, A + 0x0d, 0x01, 200);
+			check("RESRDY interrupt pends", avr_has_pending_interrupts(m), 1);
+			cpu_write(m, A + 0x0d, 0x01);
+			check("RESRDY write-1-to-clear unpends", avr_has_pending_interrupts(m), 0);
+			cpu_write(m, A + 0x0c, 0x00);
+			/* Disabling the ADC aborts a conversion. */
+			cpu_write(m, A + 0x0a, 0x01);
+			cpu_write(m, A + 0x00, 0x00);
+			check("disable clears STCONV", m->data[A + 0x0a] & 1, 0);
+#undef A
+#undef ADC_IN
+#undef RES16
+		}
+
+		printf("== AVR DD CCL input sources ==\n");
+		{
+			avr_reset(m);
+			avr_irq_t *lut1 = avr_io_getirq(m, AVR_IOCTL_CCL_GETIRQ('0'), AVR_CCL_LUT_INPUTS * 4 + 1);
+			avr_irq_t *zin = avr_io_getirq(m, AVR_IOCTL_ZCD_GETIRQ('3'), AVR_ZCD_IRQ_ZCIN);
+			/* LUT1: IN0 = ZCD3 OUT (INSEL 0x7), TRUTH1 = 0xAA (output = IN0). */
+			cpu_write(m, 0x06d8 + 0, 0x01);			/* enable ZCD3 */
+			cpu_write(m, 0x01c0 + 0x0d, 0x07);		/* LUT1CTRLB: INSEL0 = ZCD3 */
+			cpu_write(m, 0x01c0 + 0x0f, 0xaa);		/* TRUTH1 */
+			cpu_write(m, 0x01c0 + 0x0c, 0x01);		/* LUT1CTRLA: ENABLE */
+			cpu_write(m, 0x01c0 + 0x00, 0x01);		/* CCL ENABLE */
+			avr_raise_irq(zin, 2000);
+			avr_run(m);
+			check("ZCD3 OUT drives LUT1 (INSEL 0x7)", lut1->value & 1, 1);
+			avr_raise_irq(zin, 100);
+			avr_run(m);
+			check("ZCD3 low drives LUT1 low", lut1->value & 1, 0);
+			/* INSEL 0x6 = AC0 on the same input. */
+			cpu_write(m, 0x01c0 + 0x00, 0x00);
+			cpu_write(m, 0x01c0 + 0x0c, 0x00);
+			cpu_write(m, 0x01c0 + 0x0d, 0x06);
+			cpu_write(m, 0x01c0 + 0x0c, 0x01);
+			cpu_write(m, 0x01c0 + 0x00, 0x01);
+			cpu_write(m, 0x0680 + 2, (3 << 3) | 2);	/* AINP3 vs AINN2 */
+			avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_AINN2), 500);
+			avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_AINP3), 100);
+			cpu_write(m, 0x0680 + 0, 0x01);
+			avr_run(m);
+			check("AC0 low -> LUT1 low (INSEL 0x6)", lut1->value & 1, 0);
+			avr_raise_irq(avr_io_getirq(m, AVR_IOCTL_AC_GETIRQ('0'), AVR_AC_DD_IRQ_AINP3), 900);
+			avr_run(m);
+			check("AC0 high -> LUT1 high (INSEL 0x6)", lut1->value & 1, 1);
+			cpu_write(m, 0x0680 + 0, 0x00);
+			cpu_write(m, 0x06d8 + 0, 0x00);
+			avr_reset(m);
+		}
+
+		printf("== AVR DD CRCSCAN ==\n");
+		{
+#define C 0x0120
+			avr_reset(m);
+			memset(m->flash, 0x00, 0x2000);
+			/* BOOTSIZE = 1 (512-byte unit): BOOT is 0..0x1FF, checksum big-endian
+			 * in the last two bytes (Table 30-1). */
+			m->fuse[8] = 1;
+			for (int i = 0; i < 510; i++)
+				m->flash[i] = (uint8_t)(i * 7 + 3);
+			uint16_t crc = avr_crcscan_crc16(m->flash, 510);
+			m->flash[510] = crc >> 8;
+			m->flash[511] = crc & 0xff;
+			cpu_write(m, C + 1, 0x02);			/* SRC = BOOT */
+			cpu_write(m, C + 0, 0x01);			/* ENABLE */
+			check("BOOT CRC16 passes (512-byte unit)", (m->data[C + 2] >> 1) & 1, 1);
+			m->flash[100] ^= 0x10;
+			cpu_write(m, C + 0, 0x01);
+			check("corrupted BOOT fails", (m->data[C + 2] >> 1) & 1, 0);
+			m->flash[100] ^= 0x10;
+			m->fuse[5] |= 0x20;				/* CRCSEL = CRC32: not modelled */
+			m->flash[100] ^= 0x10;
+			cpu_write(m, C + 0, 0x01);
+			check("CRC32 selection is skipped (reports OK)", (m->data[C + 2] >> 1) & 1, 1);
+			m->flash[100] ^= 0x10;
+			m->fuse[5] &= ~0x20;
+			/* NMI on failure (vector 1). */
+			m->flash[100] ^= 0x10;
+			cpu_write(m, C + 0, 0x02 | 0x01);		/* NMIEN | ENABLE */
+			check("CRC failure with NMIEN pends the NMI", avr_has_pending_interrupts(m), 1);
+			m->flash[100] ^= 0x10;
+			m->fuse[8] = 0;
+			memset(m->flash, 0xff, 0x2000);		/* back to the erased state */
+			avr_reset(m);
+#undef C
+		}
 
 		printf("== AVR DD NVMCTRL ==\n");
 		{

@@ -47,7 +47,7 @@ extern "C" {
 #include "avr_port_modern.h"
 
 #define AVR_PORTMUX_REGS	4	/* CTRLA..CTRLD */
-#define AVR_PORTMUX_REGS_MAX	6	/* tinyAVR 2-series: EVSYSROUTEA..TCBROUTEA */
+#define AVR_PORTMUX_REGS_MAX	10	/* AVR DD: EVSYSROUTEA..TCDROUTEA (offsets 0-9) */
 
 /* Register offsets within a PORTMUX block (device header PORTMUX_t). */
 enum {
@@ -58,7 +58,7 @@ enum {
 };
 
 #define AVR_PORTMUX_MAX_FUNCS	32	/* routed peripheral output functions */
-#define AVR_PORTMUX_MAX_OPTS	4	/* pin choices per routing field */
+#define AVR_PORTMUX_MAX_OPTS	8	/* pin choices per routing field */
 
 /* A physical pin: PORT letter ('A'..) and bit 0-7. port == 0 means "no pin". */
 typedef struct avr_portmux_pin_t {

@@ -75,6 +75,16 @@ avr_clkctrl_dd_init(
 		avr_io_addr_t base,
 		uint8_t osccfg_fuse_index);
 
+/* Current OSCHF output (Hz) from OSCHFCTRLA.FRQSEL. */
+uint32_t
+avr_clkctrl_dd_oschf_hz(avr_clkctrl_dd_t * p);
+
+/* PLL output (Hz): the PLL source (OSCHF, or the external HF clock) times
+ * PLLCTRLA.MULFAC (2x or 3x); 0 when the PLL is disabled or its source is
+ * unknown. */
+uint32_t
+avr_clkctrl_dd_pll_hz(avr_clkctrl_dd_t * p);
+
 #ifdef __cplusplus
 };
 #endif

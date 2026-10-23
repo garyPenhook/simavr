@@ -51,7 +51,7 @@ extern "C" {
 #include "sim_avr.h"
 
 #define AVR_EVSYS_MAX_CHANNELS	8
-#define AVR_EVSYS_MAX_USERS		24
+#define AVR_EVSYS_MAX_USERS		32
 
 /* Register offsets within an EVSYS block (device header EVSYS_t). */
 enum {
