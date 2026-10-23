@@ -93,6 +93,21 @@
 #define IM_EDGETRIGFREQ	9	/* stop the output on the edge, maintain the frequency */
 #define IM_LVLTRIGFREQ	10	/* stop the output at level, maintain the frequency */
 
+#define IM_EXECWAIT	2
+#define IM_EXECFAULT	3
+#define IM_EXECDT	5
+#define IM_WAIT		6
+#define IM_JMPWAIT	1
+#define IM_EDGETRIG	8
+
+/* EVCTRLx.CFG (25.5.6) */
+#define CFG_gm		0xc0
+#define CFG_FILTERON	0x40
+
+/* DBGCTRL (25.5.18) */
+#define DBGRUN_bm	0x01
+#define FAULTDET_bm	0x04
+
 /* DLYCTRL (25.5.14) */
 #define DLYSEL_gm	0x03
 #define DLYSEL_INBLANK	1
@@ -181,8 +196,10 @@ static void tcd_publish_cd(avr_tcd_t *p)
 }
 
 /* Input-mode override (AVR Dx): a forced output takes the FAULTCTRL.CMPx state
- * (25.5.13). Modes 4 and 7 force both outputs; 9 and 10 only the one of the
- * triggering input. A blocked output is released once its on-time has ended. */
+ * (25.5.13). Modes 4-6 force both outputs while the input is active, mode 7 until
+ * RESTART; 9 and 10 only the output of the triggering input. A blocked output
+ * (modes 9, 10) is released once its on-time has ended; a held one (modes 1-3)
+ * when the flow resumes. */
 static uint8_t tcd_override(avr_tcd_t *p, int b, uint8_t nat)
 {
 	avr_t *avr = p->io.avr;
@@ -193,9 +210,10 @@ static uint8_t tcd_override(avr_tcd_t *p, int b, uint8_t nat)
 
 	if (!nat)
 		*blk = 0;
-	force = p->stopped ||
-		(ma == IM_FREQ && p->act_a) || (mb == IM_FREQ && p->act_b) ||
-		*blk ||
+	force = p->stopped || *blk || (b ? p->hold_b : p->hold_a) ||
+		(p->waiting && (p->wait_all || p->wait_input == b)) ||
+		(p->act_a && ma >= IM_FREQ && ma <= IM_WAIT) ||
+		(p->act_b && mb >= IM_FREQ && mb <= IM_WAIT) ||
 		(b ? (mb == IM_LVLTRIGFREQ && p->act_b) : (ma == IM_LVLTRIGFREQ && p->act_a));
 	return force ? (rd(avr, p->r_faultctrl) >> b) & 1 : nat;
 }
@@ -429,6 +447,8 @@ static uint32_t tcd_count_now(avr_tcd_t *p)
 
 	if (!tcd_enabled(p) || p->stopped || !p->prescale)
 		return 0;
+	if (p->waiting || p->dbg_halted == 2)
+		return p->start_count < 0 ? 0 : (uint32_t)p->start_count;
 	c = p->start_count +
 		(int64_t)((p->io.avr->cycle - p->start_cycle) / p->prescale) * p->dir;
 	return c < 0 ? 0 : (c > 0xfff ? 0xfff : (uint32_t)c);
@@ -527,7 +547,219 @@ static void tcd_reapply(avr_tcd_t *p)
 }
 
 static avr_cycle_count_t
-avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
+avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param);
+static avr_cycle_count_t
+avr_tcd_filter_a(struct avr_t *avr, avr_cycle_count_t when, void *param);
+static avr_cycle_count_t
+avr_tcd_filter_b(struct avr_t *avr, avr_cycle_count_t when, void *param);
+
+/* ---- counter-flow input modes (25.3.3.4.5) ----
+ * A TCD cycle is four segments: 0 DTA, 1 OTA, 2 DTB, 3 OTB. Input A acts on
+ * segments 0-1 ("own" cycle), input B on 2-3; the opposite dead-time is the start
+ * of the other input's cycle. */
+static int tcd_segment(avr_tcd_t *p, uint32_t count)
+{
+	switch (tcd_mode(p)) {
+	case WGMODE_ONERAMP:
+		if (count < reg12(p, p->r_cmpaset)) return 0;
+		if (count < reg12(p, p->r_cmpaclr)) return 1;
+		if (count < reg12(p, p->r_cmpbset)) return 2;
+		return 3;
+	case WGMODE_TWORAMP:
+		return p->phase == 0 ? (count < reg12(p, p->r_cmpaset) ? 0 : 1)
+				     : (count < reg12(p, p->r_cmpbset) ? 2 : 3);
+	case WGMODE_FOURRAMP:
+		return p->phase & 3;
+	default:
+		return 0;
+	}
+}
+
+static uint32_t tcd_seg_start(avr_tcd_t *p, int seg)
+{
+	if (tcd_mode(p) == WGMODE_ONERAMP) {
+		switch (seg) {
+		case 1: return reg12(p, p->r_cmpaset);
+		case 2: return reg12(p, p->r_cmpaclr);
+		case 3: return reg12(p, p->r_cmpbset);
+		default: return 0;
+		}
+	}
+	if (tcd_mode(p) == WGMODE_TWORAMP)
+		return seg == 1 ? reg12(p, p->r_cmpaset) : seg == 3 ? reg12(p, p->r_cmpbset) : 0;
+	return 0;
+}
+
+static int tcd_opp_dt(int cycle) { return cycle ? 0 : 2; }	/* DT of the other cycle */
+static int tcd_own_dt(int cycle) { return cycle ? 2 : 0; }
+
+/* Reposition the counter at the start of 'seg' and carry on running. */
+static void tcd_goto(avr_tcd_t *p, int seg)
+{
+	avr_t *avr = p->io.avr;
+	uint32_t count = tcd_seg_start(p, seg);
+
+	p->waiting = 0;
+	p->phase = tcd_mode(p) == WGMODE_TWORAMP ? seg >> 1 :
+		   tcd_mode(p) == WGMODE_FOURRAMP ? seg : 0;
+	p->dir = 1;
+	p->prescale = tcd_prescale(p);
+	p->start_cycle = avr->cycle;
+	p->start_count = (int32_t)count;
+	tcd_emit_state(p, (int32_t)count);
+	p->dith_done = 0;
+	p->jumped = p->in_tick;
+	if (p->dbg_halted != 2)		/* during a freezing break only the position moves */
+		avr_cycle_timer_register(avr,
+			(avr_cycle_count_t)tcd_next_delta(p, (int32_t)count) * p->prescale,
+			avr_tcd_tick, p);
+}
+
+/* Halt the counter where it is until input 'b' is released. */
+static void tcd_halt(avr_tcd_t *p, int b, int all, int resume, int reposition)
+{
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_tick, p);
+	if (reposition) {	/* "jump to the opposite dead-time and wait" */
+		p->phase = tcd_mode(p) == WGMODE_TWORAMP ? resume >> 1 :
+			   tcd_mode(p) == WGMODE_FOURRAMP ? resume : 0;
+		p->start_count = (int32_t)tcd_seg_start(p, resume);
+		tcd_emit_state(p, p->start_count);
+	} else {
+		p->start_count = (int32_t)tcd_count_now(p);
+	}
+	p->waiting = 1;
+	p->wait_input = b;
+	p->wait_all = all;
+	p->resume_seg = resume;
+	p->dith_done = 0;
+	p->jumped = p->in_tick;
+	tcd_reapply(p);
+}
+
+static void tcd_release(avr_tcd_t *p)
+{
+	p->arm_mode = 0;
+	p->pend6 = 0;
+	p->hold_a = p->hold_b = 0;
+	tcd_goto(p, p->resume_seg);
+}
+
+/* A fault (active edge) on input 'b' in input mode 'mode'; 'changed' && !'active'
+ * is the release. Dual Slope mode supports none of the flow modes (Table 25-5). */
+static void tcd_flow_input(avr_tcd_t *p, int b, uint8_t mode, int changed, int active, int edge)
+{
+	int s, c;
+
+	if (tcd_mode(p) == WGMODE_DUALSLOPE || p->stopped)
+		return;
+	if (changed && !active) {
+		if (p->waiting && p->wait_input == b)
+			tcd_release(p);
+		else if (p->pend6 && p->wait_input == b)
+			p->pend6 = 0;
+	}
+	if (!edge || p->waiting)
+		return;
+	s = tcd_segment(p, tcd_count_now(p));
+	c = s >> 1;
+	switch (mode) {
+	case IM_JMPWAIT:
+		if (c == b) {
+			*(b ? &p->hold_b : &p->hold_a) = 1;
+			tcd_halt(p, b, 0, tcd_opp_dt(b), 1);
+		}
+		break;
+	case IM_EXECWAIT:
+	case IM_EXECFAULT:
+		if (c == b) {
+			*(b ? &p->hold_b : &p->hold_a) = 1;
+			p->arm_mode = mode;
+			p->arm_input = b;
+			tcd_goto(p, tcd_opp_dt(b));
+		}
+		break;
+	case IM_EXECDT:
+		if (s & 1)
+			tcd_goto(p, tcd_opp_dt(c));
+		break;
+	case IM_WAIT:
+		if (s & 1) {
+			tcd_halt(p, b, 1, tcd_opp_dt(c), 1);
+		} else {
+			p->pend6 = 1;
+			p->wait_input = b;
+			p->resume_seg = tcd_opp_dt(c);
+		}
+		break;
+	case IM_EDGETRIG:
+		if ((s & 1) && c == b)
+			tcd_goto(p, tcd_opp_dt(b));
+		break;
+	}
+}
+
+/* Called after the tick enters a segment: apply the mode 2 / 3 / 5 / 6 rules
+ * that act at a segment boundary. */
+static void tcd_flow_entry(avr_tcd_t *p, uint32_t count)
+{
+	uint8_t ma, mb;
+	int s;
+
+	if (!p->ext || tcd_mode(p) == WGMODE_DUALSLOPE)
+		return;
+	s = tcd_segment(p, count);
+	if (count != tcd_seg_start(p, s))
+		return;
+	ma = rd(p->io.avr, p->base + TCDR_INPUTCTRLA) & IM_gm;
+	mb = rd(p->io.avr, p->base + TCDR_INPUTCTRLB) & IM_gm;
+
+	if ((s & 1) && p->pend6) {
+		p->pend6 = 0;
+		if (p->wait_input ? p->act_b : p->act_a) {
+			tcd_halt(p, p->wait_input, 1, p->resume_seg, 0);
+			return;
+		}
+	}
+	if ((s & 1) && ((ma == IM_EXECDT && p->act_a) || (mb == IM_EXECDT && p->act_b))) {
+		tcd_goto(p, tcd_opp_dt(s >> 1));	/* alternate dead-times while active */
+		return;
+	}
+	if (p->arm_mode && s == tcd_own_dt(p->arm_input)) {
+		int x = p->arm_input;
+
+		if (x ? p->act_b : p->act_a) {
+			if (p->arm_mode == IM_EXECFAULT)
+				tcd_goto(p, tcd_opp_dt(x));
+			else
+				tcd_halt(p, x, 0, tcd_own_dt(x), 0);
+		} else {
+			p->arm_mode = 0;
+			*(x ? &p->hold_b : &p->hold_a) = 0;
+			tcd_reapply(p);
+		}
+	}
+}
+
+/* Dithering (25.3.3.5): a 4-bit accumulator takes DITHER at the end of each cycle;
+ * on overflow the cycle is extended by the Table 25-7 number of counter clocks.
+ * The extra clocks are added to the cycle length; where inside the cycle they land
+ * is not modelled. */
+static uint32_t tcd_dither_extra(avr_tcd_t *p)
+{
+	static const uint8_t add[3][4] = {	/* One / Two / Four Ramp x DITHERSEL */
+		{ 1, 1, 0, 0 }, { 1, 2, 0, 0 }, { 1, 2, 1, 2 },
+	};
+	uint8_t mode = tcd_mode(p);
+	uint16_t acc = p->dith_acc + (rd(p->io.avr, p->base + TCDR_DITVAL) & 0x0f);
+
+	p->dith_acc = acc & 0x0f;
+	if (mode == WGMODE_DUALSLOPE || acc < 16)
+		return 0;
+	return add[mode][rd(p->io.avr, p->base + TCDR_DITCTRL) & 3];
+}
+
+static avr_cycle_count_t
+tcd_tick_core(struct avr_t *avr, avr_cycle_count_t when, void *param)
 {
 	avr_tcd_t *p = (avr_tcd_t *)param;
 	uint8_t mode = tcd_mode(p);
@@ -566,17 +798,33 @@ avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
 	}
 
 	if ((uint32_t)count > tcd_phase_limit(p)) {
+		int last = mode == WGMODE_ONERAMP || (mode == WGMODE_TWORAMP && p->phase == 1) ||
+			   (mode == WGMODE_FOURRAMP && p->phase == 3);
+		if (p->ext && last && !p->dith_done) {
+			uint32_t x = tcd_dither_extra(p);
+			if (x) {
+				p->dith_done = 1;
+				return when + (avr_cycle_count_t)x * p->prescale;
+			}
+		}
+		if (last)
+			p->dith_done = 0;
 		p->start_cycle = when;
 		p->start_count = 0;
 
 		if (mode == WGMODE_TWORAMP && p->phase == 0) {
+			tcd_delay_trigger(p, DLY_CMPACLR);
 			p->phase = 1;
 			tcd_emit_state(p, 0);
+			tcd_flow_entry(p, 0);
 			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
 		}
 		if (mode == WGMODE_FOURRAMP && p->phase < 3) {
+			if (p->phase == 1)
+				tcd_delay_trigger(p, DLY_CMPACLR);
 			p->phase++;
 			tcd_emit_state(p, 0);
+			tcd_flow_entry(p, 0);
 			return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
 		}
 
@@ -586,13 +834,33 @@ avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
 		p->top = top;
 		p->prescale = tcd_prescale(p);
 		tcd_emit_state(p, 0);
+		tcd_flow_entry(p, 0);
 		return when + (avr_cycle_count_t)tcd_next_delta(p, 0) * p->prescale;
 	}
 
 	tcd_emit_state(p, count);
 	p->start_cycle = when;
 	p->start_count = count;
+	tcd_flow_entry(p, (uint32_t)count);
 	return when + (avr_cycle_count_t)tcd_next_delta(p, count) * p->prescale;
+}
+
+/* A flow change inside the tick re-registered the timer itself (or halted it). */
+static avr_cycle_count_t
+avr_tcd_tick(struct avr_t *avr, avr_cycle_count_t when, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	avr_cycle_count_t r;
+
+	p->jumped = 0;
+	p->in_tick = 1;
+	r = tcd_tick_core(avr, when, param);
+	p->in_tick = 0;
+	if (p->jumped) {
+		p->jumped = 0;
+		return 0;
+	}
+	return r;
 }
 
 static void
@@ -601,9 +869,10 @@ avr_tcd_reschedule(avr_tcd_t *p)
 	avr_t *avr = p->io.avr;
 
 	avr_cycle_timer_cancel(avr, avr_tcd_tick, p);
-	if (!tcd_enabled(p) || p->stopped)
+	if (!tcd_enabled(p) || p->stopped || p->waiting || p->dbg_halted == 2)
 		return;
 
+	p->dith_done = 0;
 	p->start_cycle = avr->cycle;
 	p->top = tcd_top(p);
 	p->prescale = tcd_prescale(p);
@@ -631,7 +900,12 @@ avr_tcd_ctrla_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *para
 {
 	avr_tcd_t *p = (avr_tcd_t *)param;
 	avr_core_watch_write(avr, addr, v);
-	p->stopped = 0;
+	p->stopped = p->waiting = p->arm_mode = p->pend6 = p->hold_a = p->hold_b = 0;
+	p->dith_acc = p->dith_done = 0;
+	if (!(v & ENABLE_bm)) {
+		avr_cycle_timer_cancel(avr, avr_tcd_filter_a, p);
+		avr_cycle_timer_cancel(avr, avr_tcd_filter_b, p);
+	}
 	avr_tcd_reschedule(p);
 }
 
@@ -692,18 +966,34 @@ avr_tcd_status_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *par
 	avr->data[addr] = (avr->data[addr] & ~(v & (PWMACTA_bm | PWMACTB_bm))) | ENRDY_bm | CMDRDY_bm;
 }
 
-/* An event input edge (EVCTRLx.EDGE: 1 = rising, 0 = falling) with TRIGEI set
+/* The INPUTMODE action of a Fault change on input 'b' (shared with the debug-break
+ * FAULTDET fault). */
+static void tcd_input_fault(avr_tcd_t *p, int b, int changed, int active, int edge)
+{
+	uint8_t mode = rd(p->io.avr, p->base + (b ? TCDR_INPUTCTRLB : TCDR_INPUTCTRLA)) & IM_gm;
+	uint8_t nat = b ? p->wob_nat : p->woa_nat;
+
+	if (edge && mode == IM_EDGETRIGFREQ && nat)
+		*(b ? &p->blk_b : &p->blk_a) = 1;
+	if (changed && !active && mode == IM_LVLTRIGFREQ && nat)
+		*(b ? &p->blk_b : &p->blk_a) = 1;	/* released mid on-time */
+	if (edge && mode == IM_WAITSW) {
+		p->stopped = 1;
+		avr_cycle_timer_cancel(p->io.avr, avr_tcd_tick, p);
+	}
+	tcd_flow_input(p, b, mode, changed, active, edge);
+	tcd_reapply(p);
+}
+
+/* Process input 'b' going to 'level' (after the digital filter, if enabled). An
+ * active edge (EVCTRLx.EDGE: 1 = rising / high, 0 = falling / low) with TRIGEI set
  * flags TRIGA / TRIGB (25.5.9). On the Dx the event also captures the counter
  * (ACTION) and drives the INPUTMODE fault action; input A is ignored while its
  * blanking window is open (25.3.3.4.1). */
-static void
-avr_tcd_input_event(struct avr_irq_t *irq, uint32_t value, void *param)
+static void tcd_process_input(avr_tcd_t *p, int b, uint8_t level)
 {
-	avr_tcd_t *p = (avr_tcd_t *)param;
 	avr_t *avr = p->io.avr;
-	int b = (irq->irq - p->base_irq) == AVR_TCD_IRQ_IN_B;
 	uint8_t *prev = b ? &p->in_b : &p->in_a;
-	uint8_t level = value & 1;
 	uint8_t ev = rd(avr, b ? p->r_evctrla + 1 : p->r_evctrla);
 	uint8_t bit = b ? TRIGB_bm : TRIGA_bm;
 	uint8_t active = level == !!(ev & EDGE_bm);
@@ -713,9 +1003,9 @@ avr_tcd_input_event(struct avr_irq_t *irq, uint32_t value, void *param)
 	*prev = level;
 	if (p->ext) {
 		uint8_t *act = b ? &p->act_b : &p->act_a;
-		uint8_t mode = rd(avr, p->base + (b ? TCDR_INPUTCTRLB : TCDR_INPUTCTRLA)) & IM_gm;
-		uint8_t nat = b ? p->wob_nat : p->woa_nat;
 
+		if (p->dbg_halted == 2)
+			return;		/* the peripheral ignores events during a break */
 		if (!b && p->blanking)
 			changed = edge = 0;
 		if (!tcd_enabled(p) || !(ev & TRIGEI_bm)) {
@@ -725,23 +1015,55 @@ avr_tcd_input_event(struct avr_irq_t *irq, uint32_t value, void *param)
 		}
 		if (changed)
 			*act = active;
-		if (edge && (mode == IM_EDGETRIGFREQ) && nat)
-			*(b ? &p->blk_b : &p->blk_a) = 1;
-		if (changed && !active && mode == IM_LVLTRIGFREQ && nat)
-			*(b ? &p->blk_b : &p->blk_a) = 1;	/* released mid on-time */
-		if (edge && mode == IM_WAITSW) {
-			p->stopped = 1;
-			avr_cycle_timer_cancel(avr, avr_tcd_tick, p);
-		}
 		if (edge && (ev & ACTION_bm))
 			tcd_capture(p, b);
-		tcd_reapply(p);
+		tcd_input_fault(p, b, changed, active, edge);
 	}
 	if (!edge || !(ev & TRIGEI_bm) || !tcd_enabled(p))
 		return;
 	avr_core_watch_write(avr, p->r_intflags, rd(avr, p->r_intflags) | bit);
 	if (p->trig.vector && (rd(avr, p->r_intctrl) & bit))
 		avr_raise_interrupt(avr, &p->trig);
+}
+
+/* EVCTRLx.CFG = FILTERON: a change must hold for four counter clocks before it is
+ * seen (25.3.3.4.2). ASYNCON and the default synchronous path act immediately; the
+ * 2-3 CLK_TCD_SYNC synchroniser latency is not modelled. */
+static avr_cycle_count_t
+avr_tcd_filter_a(struct avr_t *avr, avr_cycle_count_t when, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	tcd_process_input(p, 0, p->filt_level[0]);
+	return 0;
+}
+
+static avr_cycle_count_t
+avr_tcd_filter_b(struct avr_t *avr, avr_cycle_count_t when, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	tcd_process_input(p, 1, p->filt_level[1]);
+	return 0;
+}
+
+static void
+avr_tcd_input_event(struct avr_irq_t *irq, uint32_t value, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+	avr_t *avr = p->io.avr;
+	int b = (irq->irq - p->base_irq) == AVR_TCD_IRQ_IN_B;
+	uint8_t level = value & 1;
+
+	if (p->ext && (rd(avr, b ? p->r_evctrla + 1 : p->r_evctrla) & CFG_gm) == CFG_FILTERON) {
+		avr_cycle_timer_t fn = b ? avr_tcd_filter_b : avr_tcd_filter_a;
+
+		p->filt_level[b] = level;
+		if (level == (b ? p->in_b : p->in_a))
+			avr_cycle_timer_cancel(avr, fn, p);	/* spike: back to the accepted level */
+		else
+			avr_cycle_timer_register(avr, 4 * (avr_cycle_count_t)tcd_prescale(p), fn, p);
+		return;
+	}
+	tcd_process_input(p, b, level);
 }
 
 /* CTRLE strobes (Dx): SCAPTUREA/B capture the counter, RESTART restarts it (a
@@ -760,9 +1082,76 @@ avr_tcd_ctrle_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *para
 		uint8_t mb = rd(avr, p->base + TCDR_INPUTCTRLB) & IM_gm;
 
 		p->stopped = (ma == IM_WAITSW && p->act_a) || (mb == IM_WAITSW && p->act_b);
+		p->waiting = p->arm_mode = p->pend6 = p->hold_a = p->hold_b = 0;
 		avr_tcd_reschedule(p);
 		tcd_reapply(p);
 	}
+}
+
+void
+avr_tcd_debug_halt(avr_t * avr, avr_tcd_t * p, int halted)
+{
+	uint8_t dbg = rd(avr, p->base + TCDR_DBGCTRL);
+	int frozen;
+
+	if (!p->ext || !!halted == !!p->dbg_halted)
+		return;
+	if (halted && !tcd_enabled(p))
+		return;
+	if (halted) {
+		p->dbg_halted = 1;
+		if (!(dbg & DBGRUN_bm)) {	/* DBGRUN = 0: freeze the counter for the break */
+			p->start_count = (int32_t)tcd_count_now(p);
+			p->dbg_halted = 2;
+			avr_cycle_timer_cancel(avr, avr_tcd_tick, p);
+			avr_cycle_timer_cancel(avr, avr_tcd_filter_a, p);
+			avr_cycle_timer_cancel(avr, avr_tcd_filter_b, p);
+		}
+		if (dbg & FAULTDET_bm) {
+			/* A Fault on both input channels for as long as the break lasts. */
+			p->act_a = p->act_b = 1;
+			avr_core_watch_write(avr, p->r_intflags,
+					rd(avr, p->r_intflags) | TRIGA_bm | TRIGB_bm);
+			if (p->trig.vector && (rd(avr, p->r_intctrl) & (TRIGA_bm | TRIGB_bm)))
+				avr_raise_interrupt(avr, &p->trig);
+			for (int b = 0; b < 2; b++)
+				tcd_input_fault(p, b, 1, 1, 1);
+			tcd_reapply(p);
+		}
+		return;
+	}
+	frozen = p->dbg_halted == 2;
+	p->dbg_halted = 0;
+	for (int b = 0; b < 2; b++) {	/* back to the real input levels */
+		uint8_t ev = rd(avr, b ? p->r_evctrla + 1 : p->r_evctrla);
+		uint8_t now = (ev & TRIGEI_bm) && ((b ? p->in_b : p->in_a) == !!(ev & EDGE_bm));
+		uint8_t was = b ? p->act_b : p->act_a;
+
+		*(b ? &p->act_b : &p->act_a) = now;
+		if (was && !now)
+			tcd_flow_input(p, b,
+				rd(avr, p->base + (b ? TCDR_INPUTCTRLB : TCDR_INPUTCTRLA)) & IM_gm,
+				1, 0, 0);
+	}
+	if (frozen && tcd_enabled(p) && !p->waiting && !p->stopped) {	/* resume where the break stopped it */
+		p->start_cycle = avr->cycle;
+		p->prescale = tcd_prescale(p);
+		avr_cycle_timer_register(avr,
+			(avr_cycle_count_t)tcd_next_delta(p, p->start_count) * p->prescale,
+			avr_tcd_tick, p);
+	}
+	tcd_reapply(p);
+}
+
+/* Changing EVCTRLx.CFG drops a change still being qualified by the filter. */
+static void
+avr_tcd_evctrl_write(struct avr_t *avr, avr_io_addr_t addr, uint8_t v, void *param)
+{
+	avr_tcd_t *p = (avr_tcd_t *)param;
+
+	avr_core_watch_write(avr, addr, v);
+	if ((v & CFG_gm) != CFG_FILTERON)
+		avr_cycle_timer_cancel(avr, addr == p->r_evctrla ? avr_tcd_filter_a : avr_tcd_filter_b, p);
 }
 
 /* A new INPUTMODE changes how the live outputs are forced. */
@@ -792,6 +1181,8 @@ avr_tcd_set_trig_vector(
 	avr_register_io_write(avr, p->base + TCDR_CTRLE, avr_tcd_ctrle_write, p);
 	avr_register_io_read(avr, p->base + TCDR_CAPTUREAL + 1, avr_tcd_capture_high_read, p);
 	avr_register_io_read(avr, p->base + TCDR_CAPTUREBL + 1, avr_tcd_capture_high_read, p);
+	avr_register_io_write(avr, p->r_evctrla, avr_tcd_evctrl_write, p);
+	avr_register_io_write(avr, p->r_evctrla + 1, avr_tcd_evctrl_write, p);
 	avr_register_io_write(avr, p->base + TCDR_INPUTCTRLA, avr_tcd_inputctrl_write, p);
 	avr_register_io_write(avr, p->base + TCDR_INPUTCTRLB, avr_tcd_inputctrl_write, p);
 }
@@ -819,6 +1210,10 @@ avr_tcd_reset(avr_io_t *io)
 	p->in_a = p->in_b = 0;
 	p->woa_nat = p->wob_nat = p->act_a = p->act_b = p->blk_a = p->blk_b = 0;
 	p->stopped = p->blanking = p->cap_lock_a = p->cap_lock_b = 0;
+	p->waiting = p->wait_all = p->pend6 = p->arm_mode = p->hold_a = p->hold_b = 0;
+	p->jumped = p->dith_acc = p->dith_done = p->dbg_halted = 0;
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_filter_a, p);
+	avr_cycle_timer_cancel(p->io.avr, avr_tcd_filter_b, p);
 	avr_cycle_timer_cancel(p->io.avr, avr_tcd_blank_end, p);
 	avr_cycle_timer_cancel(p->io.avr, avr_tcd_progev, p);
 	p->io.avr->data[p->r_status] = ENRDY_bm | CMDRDY_bm;

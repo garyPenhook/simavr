@@ -67,6 +67,9 @@ enum {
 	TCDR_INPUTCTRLB = 0x11,
 	TCDR_DLYCTRL = 0x14,	/* input blanking / programmable event (AVR Dx) */
 	TCDR_DLYVAL = 0x15,
+	TCDR_DITCTRL = 0x18,	/* dithering (AVR Dx) */
+	TCDR_DITVAL = 0x19,
+	TCDR_DBGCTRL = 0x1e,
 	TCDR_CAPTUREAL = 0x22,	/* CAPTUREA L/H, CAPTUREB L/H (AVR Dx) */
 	TCDR_CAPTUREBL = 0x24,
 	TCDR_INTCTRL = 0x0c,
@@ -142,6 +145,18 @@ typedef struct avr_tcd_t {
 	uint8_t		stopped;		/* input mode 7: counter halted until RESTART */
 	uint8_t		blanking;		/* input A blanking window open */
 	uint8_t		cap_lock_a, cap_lock_b;	/* capture held until the high byte is read */
+	/* Counter-flow input modes (1-3, 5, 6, 8). Segments: 0 DTA, 1 OTA, 2 DTB, 3 OTB. */
+	uint8_t		waiting;		/* counter halted until the input is released */
+	uint8_t		wait_all;		/* ... and both outputs forced (mode 6) */
+	uint8_t		wait_input;		/* input (0 = A, 1 = B) whose release resumes */
+	uint8_t		resume_seg;		/* segment started on release */
+	uint8_t		pend6;			/* mode 6: wait at the next on-time start */
+	uint8_t		arm_mode, arm_input;	/* mode 2 / 3 armed for 'arm_input' */
+	uint8_t		hold_a, hold_b;		/* output held at the fault level */
+	uint8_t		jumped, in_tick;			/* the counter was repositioned inside a tick */
+	uint8_t		dith_acc, dith_done;	/* dither accumulator, cycle-end hold done */
+	uint8_t		dbg_halted;
+	uint8_t		filt_level[2];		/* digital filter: level being qualified */
 } avr_tcd_t;
 
 /*
@@ -172,6 +187,20 @@ avr_tcd_set_trig_vector(
 		avr_t * avr,
 		avr_tcd_t * p,
 		uint8_t vec_trig);
+
+/*
+ * Tell the TCD the CPU entered (halted = 1) or left Debug break. simavr has no
+ * debug-halt notification of its own, so the embedder / debugger front end calls
+ * this. DBGCTRL.DBGRUN = 0 freezes the timer and ignores events during the break;
+ * DBGCTRL.FAULTDET = 1 raises a Fault on both inputs for as long as the break lasts
+ * and sets TRIGA / TRIGB (DS40002413B 25.3.7). Call it from the simulation thread
+ * (the one running avr_run()); nothing in the library calls it yet.
+ */
+void
+avr_tcd_debug_halt(
+		avr_t * avr,
+		avr_tcd_t * p,
+		int halted);
 
 #define AVR_IOCTL_TCD_GETIRQ(_name) AVR_IOCTL_DEF('t','c','d',(_name))
 

@@ -66,6 +66,10 @@ is not modelled; they are not registered yet.
   until the high byte is read; `INPUTMODE` 0, 4, 7 (stop until `CTRLE.RESTART`), 9 and
   10, forcing the outputs to the `FAULTCTRL.CMPx` level; input-A blanking and the
   programmable event output (`DLYCTRL`/`DLYVAL`, EVSYS generator 0xB3).
+  Counter-flow modes 1, 2, 3, 5, 6 and 8 (Table 25-6) run on a four-segment model of
+  the cycle (DTA, OTA, DTB, OTB); the digital filter (`EVCTRLx.CFG = FILTERON`, four
+  counter clocks); dithering (`DITCTRL` / `DITVAL`, Table 25-7, as extra counts at the
+  end of the cycle); `DBGCTRL.DBGRUN` / `FAULTDET` through `avr_tcd_debug_halt()`.
 * **CRCSCAN** (`avr_crcscan.c`): CRC16 and CRC32 with the 512-byte `BOOTSIZE`/`CODESIZE`
   units and the Dx `CRCSRC` / `CRCSEL` fuse encoding.
 * **CCL** input sources (31.5.7): AC0, ZCD3, TCA0 WO0-2, TCB0/1 WO.
@@ -80,9 +84,10 @@ is not modelled; they are not registered yet.
 
 ## Not modelled yet (registers read and write as plain memory or are inert)
 
-CCL inputs from USART TxD and SPI (no line-level IRQs), TCD0 input modes 1-3, 5, 6
-and 8 (counter-flow modes), the event input digital filter / asynchronous detection
-(`EVCTRLx.CFG`), dithering, `DBGCTRL.FAULTDET`, CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
+CCL inputs from USART TxD and SPI (no line-level IRQs), TCD0 synchroniser latency
+(2-3 CLK_TCD_SYNC) and the separate asynchronous output override (`EVCTRLx.CFG =
+ASYNCON` acts like the default, immediately), the GDB stub calling
+`avr_tcd_debug_halt()` (simavr has no debug-halt notification), CLKCTRL PLL as a main-clock source / auto-tune / clock failure detection,
 `SLPCTRL.VREGCTRL`, SPM decoding, `BOOTRP` read protection, `FLMAP` for parts with
 more than 32 KB of flash, MVIO pin tri-stating, ADC `RUNSTDBY` and the
 PRESC-dependent CLK_ADC limits, AC `INITVAL` and POWER response times.
@@ -114,6 +119,13 @@ re-evaluated when the window closes); the blanking / PROGEV delay is the data-sh
 `DLYPRESC * DLYVAL` CLK_TCD_SYNC periods rounded to whole CLK_PER cycles;
 `DLYTRIG` value 3 is treated as CMPBCLR (the data sheet table text says CMPASET);
 CMPACLR is signalled at the phase boundary in Two / Four Ramp mode.
+
+TCD0 flow modes are built from the text and Table 25-6 only (the timing diagrams are
+not in the text extraction): mode 6 from an on-time behaves like mode 1 on both
+outputs, and from a dead-time waits at the next on-time start, resuming with the
+dead-time of the other compare. Dither only lengthens the cycle by the Table 25-7
+count; the extra counts are not placed in the selected state, `DITHER` is not
+double-buffered, and the compare registers are not double-buffered either.
 
 ## Testing
 
